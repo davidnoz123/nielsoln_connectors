@@ -1,0 +1,4 @@
+{
+  "note": "Which branch of each sibling this repo is built and tested against. versholn reads this; see AGENTS.md in the workspace standards.",
+  "requires": {}
+}

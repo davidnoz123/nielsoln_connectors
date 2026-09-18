@@ -1,0 +1,72 @@
+# .goreleaser.yaml -- how the connector is built for every machine a
+# participant might be sitting at.
+#
+#   BRIDGE_HOST=bridge.nielsoln.com goreleaser build --snapshot --clean
+#
+# `build`, not `release`. GoReleaser is the build system here and not the
+# distribution channel, because the download's FILENAME carries the session
+# key -- that is the whole pairing mechanism, and a participant has no command
+# line to type one into. A GitHub Release artifact has a fixed name, so
+# publishing there would cost every participant an eight-character code typed
+# by hand. provision.sh copies these builds onto the server and demo_page
+# names each download as it hands it over.
+#
+# Worth revisiting: this repository is public, so release assets here WOULD be
+# downloadable without a token -- which was the other objection. What remains
+# is the filename, and the fact that a release artifact bakes one hostname,
+# which is wrong while the server is still moving.
+
+version: 2
+project_name: nielsoln-bridge
+
+builds:
+  - id: connector
+    main: .
+    binary: nielsoln-bridge
+    env:
+      - CGO_ENABLED=0
+    goos: [windows, darwin]
+    goarch: [amd64, arm64]
+    ignore:
+      # Windows on ARM exists and nobody is bringing one to this room. Left
+      # out rather than shipped untested.
+      - goos: windows
+        goarch: arm64
+
+    # GoReleaser's DEFAULT ldflags are `-s -w -X main.version=...`, and -s -w
+    # is exactly what got four downloads quarantined as
+    # Trojan:Win32/Sabsik.TE.A!ml on 18 Sep. Naming ldflags here REPLACES that
+    # default, which is the point: do not add -s -w back.
+    #
+    # The host is stamped rather than compiled in because it depends on who is
+    # serving the binary. Unstamped it defaults to 127.0.0.1, and a connector
+    # downloaded from the internet would quietly dial the participant's own
+    # machine -- a failure that looks like a broken download rather than a
+    # wrong address.
+    ldflags:
+      - -X main.defaultHost={{ .Env.BRIDGE_HOST }}
+
+    # No -trimpath. It only rewrites paths in debug info and is normally
+    # harmless, but Defender's verdict on this binary already turned on how
+    # much information it carries, and that behaviour is understood well
+    # enough to avoid poking without a way to test the result.
+
+universal_binaries:
+  - id: connector-macos
+    ids: [connector]
+    name_template: nielsoln-bridge
+    # replace: false -- keep the single-architecture builds as well as the
+    # universal one. The page offers the universal, because it needs no
+    # decision from the participant, and keeps the other two behind a
+    # disclosure for the one failure a fat binary can produce that a
+    # single-arch one cannot: macOS refusing it as damaged.
+    replace: false
+
+# No `archives:` block. The Mac download is zipped per request so the file
+# INSIDE it can be named with the session key -- see macpack.zip_bytes -- and
+# the Windows connector is served as a bare .exe, which is what a participant
+# double-clicks. An archive stage here would produce files nothing reads.
+
+# No `release:` block either, for the reason at the top: the filename is the
+# pairing mechanism, and a release artifact has a fixed name. Everything else
+# needed to publish releases from here is in place.

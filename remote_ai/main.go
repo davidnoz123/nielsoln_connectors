@@ -584,12 +584,129 @@ func opGetFileInfo(root string, args json.RawMessage) (any, error) {
 	}, nil
 }
 
+const (
+	searchLimit   = 200              // matches returned unless asked for fewer
+	searchSeconds = 10               // the walk's own deadline, inside the bridge's
+	searchMaxScan = 200000           // entries looked at before stopping regardless
+)
+
+type searchFilesArgs struct {
+	Pattern string `json:"pattern"`
+	Path    string `json:"path"`
+	Limit   int    `json:"limit"`
+}
+
+type searchMatch struct {
+	Path string `json:"path"`
+	Kind string `json:"kind"`
+	Size int64  `json:"size"`
+}
+
+type searchFilesResult struct {
+	Matches  []searchMatch `json:"matches"`
+	Complete bool          `json:"complete"`
+	Scanned  int           `json:"scanned"`
+}
+
+// opSearchFiles finds files by name without a round trip per directory.
+//
+// It exists because walking cost sixty calls at a drive root, found nothing,
+// and ended by asking the participant where to look.
+//
+// Every limit here sets Complete to false, and that field is the point. A
+// search that stops quietly reports "not found" -- a stronger claim than "I
+// stopped looking", and read as fact. That has already been said about a
+// drive that did contain the file.
+func opSearchFiles(root string, args json.RawMessage) (any, error) {
+	var a searchFilesArgs
+	json.Unmarshal(args, &a)
+	start, err := resolve(root, a.Path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(start)
+	if err != nil {
+		return nil, refuse("not_found", "There is no folder called %s there.",
+			filepath.Base(start))
+	}
+	if !info.IsDir() {
+		return nil, refuse("not_dir", "%s is a file, not a folder.", filepath.Base(start))
+	}
+	pattern := strings.TrimSpace(a.Pattern)
+	if pattern == "" {
+		return nil, refuse("bad_request", "Searching needs a pattern, like *.pdf.")
+	}
+	limit := a.Limit
+	if limit <= 0 || limit > searchLimit {
+		limit = searchLimit
+	}
+	// Matched lowercased rather than with a case-insensitive matcher, because
+	// filepath.Match has none and the filesystems this runs on fold case
+	// anyway -- see caseInsensitiveFS.
+	lowered := strings.ToLower(pattern)
+
+	deadline := time.Now().Add(searchSeconds * time.Second)
+	result := searchFilesResult{Matches: []searchMatch{}, Complete: true}
+	stack := []string{start}
+	for len(stack) > 0 {
+		if time.Now().After(deadline) || result.Scanned >= searchMaxScan {
+			result.Complete = false
+			break
+		}
+		here := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		entries, err := os.ReadDir(here)
+		if err != nil {
+			// A drive root is full of these. Skipping is right; pretending we
+			// looked is not, so it costs Complete.
+			result.Complete = false
+			continue
+		}
+		for _, it := range entries {
+			result.Scanned++
+			full := filepath.Join(here, it.Name())
+			// The same rule as reading: a link is neither followed nor
+			// reported, so a search cannot name something read_file would
+			// refuse, and cannot walk out of the shared folder.
+			if skipEntry(full) {
+				continue
+			}
+			ok, _ := filepath.Match(lowered, strings.ToLower(it.Name()))
+			if ok {
+				if len(result.Matches) >= limit {
+					result.Complete = false
+					stack = nil
+					break
+				}
+				m := searchMatch{Path: full, Kind: "file"}
+				if it.IsDir() {
+					m.Kind = "dir"
+				} else if st, err := it.Info(); err == nil {
+					m.Size = st.Size()
+				} else {
+					m.Size = -1
+				}
+				result.Matches = append(result.Matches, m)
+			}
+			if it.IsDir() {
+				stack = append(stack, full)
+			}
+		}
+	}
+	sort.Slice(result.Matches, func(i, j int) bool {
+		return strings.ToLower(result.Matches[i].Path) <
+			strings.ToLower(result.Matches[j].Path)
+	})
+	return result, nil
+}
+
 var ops = map[string]func(string, json.RawMessage) (any, error){
 	"ping":           opPing,
 	"list_directory": opListDirectory,
 	"read_file":      opReadFile,
 	"write_file":     opWriteFile,
 	"get_file_info":  opGetFileInfo,
+	"search_files":   opSearchFiles,
 }
 
 // -- the session -----------------------------------------------------------

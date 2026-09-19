@@ -16,6 +16,25 @@
 // It dials out and never listens. A listening socket on a participant's laptop
 // raises Windows Firewall's "Allow access?" with an admin prompt, and that
 // stops people dead.
+//
+// ONE FILE, and the rule is not a preference. Everything the connector does
+// belongs here: path containment, UTF-8 boundaries, magic bytes, the six ops,
+// the id cache, WebSocket framing. The only files allowed beside it are
+// links_windows.go and links_other.go, and they are split because the
+// compiler requires it rather than because it reads better:
+// syscall.Win32FileAttributeData does not exist off Windows, and provision.sh
+// builds and vets this on a Linux VM. Merging them in was tried -- the
+// Windows build succeeds and the Linux build fails with "undefined:
+// syscall.Win32FileAttributeData". Build constraints are per file, so there
+// is no arrangement that keeps that code here and still compiles there. The
+// _windows suffix is itself an implicit constraint, so the split is doubly
+// enforced.
+//
+// Why one file at all: the claim this binary makes is that it is a
+// thousand-odd lines of Go and nothing else, checkable in an afternoon by
+// somebody deciding whether to run it on their own laptop. A package tree
+// makes that audit harder, not easier. Resist splitting by concern; the
+// concern is the program.
 package main
 
 import (

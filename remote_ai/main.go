@@ -40,12 +40,18 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
+	"crypto/sha1"
+	"crypto/tls"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -732,6 +738,8 @@ var ops = map[string]func(string, json.RawMessage) (any, error){
 
 type connector struct {
 	host, port, root, token string
+	// "auto", "tcp" or "wss". See dial().
+	wire string
 	record                  string
 	session                 string
 	// id -> response, for the life of the session including across a resume.
@@ -740,44 +748,93 @@ type connector struct {
 	done map[int][]byte
 }
 
-func (c *connector) send(w io.Writer, v any) error {
+func (c *connector) send(t transport, v any) error {
 	line, err := encode(v)
 	if err != nil {
 		return err
 	}
-	_, err = w.Write(line)
-	return err
+	return t.sendRaw(line)
 }
 
 func (c *connector) runOnce() error {
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(c.host, c.port), 30*time.Second)
+	t, err := c.dial()
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
-	logf("connected to %s:%s", c.host, c.port)
-
-	r := bufio.NewReaderSize(conn, 64*1024)
-	if err := c.hello(conn, r); err != nil {
+	defer t.Close()
+	if err := c.hello(t); err != nil {
 		return err
 	}
-	return c.serve(conn, r)
+	return c.serve(t)
 }
 
-func (c *connector) readLine(r *bufio.Reader) ([]byte, error) {
-	line, err := r.ReadBytes('\n')
+// wsPath is the single route Caddy forwards to the bridge. The bridge
+// refuses a handshake for anything else, which test_ws_transport.py checks.
+const wsPath = "/bridge"
+
+// dial opens whichever transport this session uses.
+//
+// "auto" means wss on 443 and plain TCP anywhere else. That rule is what
+// keeps the 25 recorded fixtures and every local test working unchanged
+// while the shipped build talks WSS: the harness runs on 8790 and stays on
+// newline-delimited JSON, exactly as PROTOCOL.md says it should.
+//
+// Only ever dials out, never listens. A listening socket on a participant's
+// laptop raises Windows Firewall's "Allow access?" with an admin prompt, and
+// that stops people dead.
+func (c *connector) dial() (transport, error) {
+	addr := net.JoinHostPort(c.host, c.port)
+
+	// "ws" is the same framing without TLS. It exists because the bridge
+	// itself serves plain WebSocket on loopback and Caddy is what terminates
+	// TLS in front of it -- so this is the mode that lets framing be tested
+	// end to end against bridge_mcp.py with no certificate anywhere.
+	useWS := c.wire == "wss" || c.wire == "ws"
+	useTLS := c.wire != "ws"
+	if c.wire == "" || c.wire == "auto" {
+		useWS = c.port == "443"
+	}
+
+	if !useWS {
+		conn, err := net.DialTimeout("tcp", addr, 30*time.Second)
+		if err != nil {
+			return nil, err
+		}
+		logf("connected to %s, plain TCP", addr)
+		return &plainTransport{conn: conn, r: bufio.NewReaderSize(conn, 64*1024)}, nil
+	}
+
+	var conn net.Conn
+	var err error
+	if useTLS {
+		// ServerName set explicitly: the certificate is checked against the
+		// hostname stamped into this binary, not against whatever a network
+		// in the middle would prefer we accepted.
+		conn, err = tls.DialWithDialer(
+			&net.Dialer{Timeout: 30 * time.Second}, "tcp", addr,
+			&tls.Config{ServerName: c.host})
+	} else {
+		conn, err = net.DialTimeout("tcp", addr, 30*time.Second)
+	}
 	if err != nil {
 		return nil, err
 	}
-	if len(line) > maxLine {
-		logf("dropping a %d-byte line; ceiling is %d", len(line), maxLine)
-		return nil, nil
+	r := bufio.NewReaderSize(conn, 64*1024)
+	if err := wsClientHandshake(conn, r, c.host, wsPath); err != nil {
+		conn.Close()
+		return nil, err
 	}
-	return bytes.TrimSpace(line), nil
+	scheme := "wss"
+	if !useTLS {
+		scheme = "ws"
+	}
+	logf("connected to %s://%s%s", scheme, addr, wsPath)
+	return &wsTransport{conn: conn, r: r}, nil
 }
 
-func (c *connector) hello(conn net.Conn, r *bufio.Reader) error {
-	err := c.send(conn, map[string]any{
+
+func (c *connector) hello(t transport) error {
+	err := c.send(t, map[string]any{
 		"id": 0, "op": "hello",
 		"args": helloArgs{
 			Token:        c.token,
@@ -792,7 +849,7 @@ func (c *connector) hello(conn net.Conn, r *bufio.Reader) error {
 		return err
 	}
 	for {
-		line, err := c.readLine(r)
+		line, err := t.readLine()
 		if err != nil {
 			return err
 		}
@@ -836,9 +893,9 @@ func (c *connector) hello(conn net.Conn, r *bufio.Reader) error {
 	}
 }
 
-func (c *connector) serve(conn net.Conn, r *bufio.Reader) error {
+func (c *connector) serve(t transport) error {
 	for {
-		line, err := c.readLine(r)
+		line, err := t.readLine()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil
@@ -863,7 +920,7 @@ func (c *connector) serve(conn net.Conn, r *bufio.Reader) error {
 			// happened, and the bridge is only asking because the answer was
 			// lost on the way back.
 			logf("<- %d %s (already done; replaying the cached answer)", req.ID, req.Op)
-			if _, err := conn.Write(cached); err != nil {
+			if err := t.sendRaw(cached); err != nil {
 				return err
 			}
 			continue
@@ -875,7 +932,7 @@ func (c *connector) serve(conn net.Conn, r *bufio.Reader) error {
 			return err
 		}
 		c.done[req.ID] = out
-		if _, err := conn.Write(out); err != nil {
+		if err := t.sendRaw(out); err != nil {
 			return err
 		}
 		c.appendRecord(req, out)
@@ -1098,6 +1155,8 @@ func main() {
 	token := flag.String("token", "", "pairing token, sent in hello")
 	record := flag.String("record", "", "append every exchange here as JSON lines")
 	once := flag.Bool("once", false, "do not reconnect; exit when the socket closes")
+	wire := flag.String("transport", "auto",
+		"auto, tcp, ws or wss. auto means wss on 443 and tcp elsewhere")
 	flag.Parse()
 
 	// The key rides in this program's own filename, because a participant has
@@ -1129,7 +1188,7 @@ func main() {
 
 	c := &connector{
 		host: *host, port: fmt.Sprint(*port), root: abs,
-		token: *token, record: *record, done: map[int][]byte{},
+		token: *token, record: *record, wire: *wire, done: map[int][]byte{},
 	}
 	// The resolved folder, not what was typed. A participant should be able to
 	// read back exactly what they have shared before anything is read from it.
@@ -1157,3 +1216,325 @@ func main() {
 		}
 	}
 }
+
+// ---------------------------------------------------------------- wsframe --
+//
+// RFC 6455, client side only, translated from nielsoln_bridge/wsframe.py.
+//
+// That file is the reference and it is tested, including against the
+// handshake example published in RFC 6455 section 1.3. This is a translation
+// with an oracle rather than a fresh design, which is the entire basis for
+// trusting hand-rolled framing here. If the two ever disagree, the Python is
+// right until proven otherwise.
+//
+// Stdlib only, deliberately. The connector is the file a stranger in a
+// library is asked to download and run, and "a thousand-odd lines of Go and
+// nothing else" is a claim that has to stay true. A WebSocket library would
+// have been three lines of go.mod and the end of that sentence.
+
+const (
+	wsGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+	// Prefixed wsOp, not op: this file already uses "op" for the six
+	// protocol operations, and opPing is one of them. The compiler caught
+	// the collision, which is the second near-identical pair of names to
+	// surface in two days.
+	wsOpCont   = 0x0
+	wsOpText   = 0x1
+	wsOpBinary = 0x2
+	wsOpClose  = 0x8
+	wsOpPing   = 0x9
+	wsOpPong   = 0xA
+
+	wsMaxControl = 125
+)
+
+// wsAcceptKey is the value the server must echo: base64(sha1(key + GUID)).
+// The GUID is not a hash of anything, it is a constant published in the RFC,
+// and getting one character wrong produces a handshake that fails only
+// against conforming servers.
+func wsAcceptKey(key string) string {
+	sum := sha1.Sum([]byte(key + wsGUID))
+	return base64.StdEncoding.EncodeToString(sum[:])
+}
+
+// wsClientHandshake completes the upgrade and VERIFIES the accept value.
+//
+// Verified rather than assumed, because a proxy or captive portal answering
+// with a cheerful 200 is the exact failure this transport was chosen to
+// survive. An unchecked handshake turns that into a connection that looks
+// open and never delivers a byte, which is indistinguishable from a hang.
+func wsClientHandshake(conn net.Conn, r *bufio.Reader, host, path string) error {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return fmt.Errorf("no randomness for the websocket key: %w", err)
+	}
+	key := base64.StdEncoding.EncodeToString(raw)
+
+	req := strings.Join([]string{
+		"GET " + path + " HTTP/1.1",
+		"Host: " + host,
+		"Upgrade: websocket",
+		"Connection: Upgrade",
+		"Sec-WebSocket-Key: " + key,
+		"Sec-WebSocket-Version: 13",
+	}, "\r\n") + "\r\n\r\n"
+	if _, err := conn.Write([]byte(req)); err != nil {
+		return err
+	}
+
+	resp, err := http.ReadResponse(r, nil)
+	if err != nil {
+		return fmt.Errorf("no HTTP response to the upgrade: %w", err)
+	}
+	// The body is never read: on 101 there is none, and on anything else the
+	// status is the whole story. Closing it is still correct.
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		return fmt.Errorf("server refused the upgrade: %s", resp.Status)
+	}
+	if got := resp.Header.Get("Sec-WebSocket-Accept"); got != wsAcceptKey(key) {
+		return errors.New("Sec-WebSocket-Accept did not match the key we sent")
+	}
+	return nil
+}
+
+// wsSendFrame writes one frame, always masked. This end is a client and
+// RFC 6455 section 5.1 makes masking a MUST; a conforming server closes the
+// connection on an unmasked frame rather than warning about it. The bridge
+// enforces exactly that, and test_ws_transport.py checks that it does.
+func wsSendFrame(w io.Writer, opcode byte, payload []byte) error {
+	if opcode >= wsOpClose && len(payload) > wsMaxControl {
+		return fmt.Errorf("control frame of %d bytes", len(payload))
+	}
+	var head []byte
+	head = append(head, 0x80|opcode) // FIN always set: we never fragment on send
+
+	n := len(payload)
+	switch {
+	case n < 126:
+		head = append(head, 0x80|byte(n))
+	case n < 1<<16:
+		head = append(head, 0x80|126)
+		head = binary.BigEndian.AppendUint16(head, uint16(n))
+	default:
+		head = append(head, 0x80|127)
+		head = binary.BigEndian.AppendUint64(head, uint64(n))
+	}
+
+	var mask [4]byte
+	if _, err := rand.Read(mask[:]); err != nil {
+		return fmt.Errorf("no randomness for the frame mask: %w", err)
+	}
+	head = append(head, mask[:]...)
+
+	// Masked into a copy. Masking in place would corrupt a caller's buffer,
+	// and the caller here hands us the encoded JSON line it may still log.
+	body := make([]byte, n)
+	for i := 0; i < n; i++ {
+		body[i] = payload[i] ^ mask[i%4]
+	}
+	if _, err := w.Write(append(head, body...)); err != nil {
+		return err
+	}
+	return nil
+}
+
+// wsReadFrame reads exactly one frame.
+//
+// io.ReadFull everywhere, never Read. A frame arriving across several TCP
+// segments is the single most common hand-rolled WebSocket bug, and it hides
+// until the network is slow -- which, for this tool, means it hides until the
+// venue.
+func wsReadFrame(r io.Reader) (fin bool, opcode byte, payload []byte, err error) {
+	var h [2]byte
+	if _, err = io.ReadFull(r, h[:]); err != nil {
+		return
+	}
+	fin = h[0]&0x80 != 0
+	if h[0]&0x70 != 0 {
+		// RSV1-3 are legal only once an extension has been negotiated, and
+		// this client negotiates none. Set bits mean the peer believes we
+		// agreed to something we did not.
+		err = errors.New("reserved bits set, but no extension was agreed")
+		return
+	}
+	opcode = h[0] & 0x0F
+	masked := h[1]&0x80 != 0
+	if masked {
+		// A server MUST NOT mask. One that does is not the bridge, or the
+		// stream has been rewritten on the way through.
+		err = errors.New("masked frame from a server")
+		return
+	}
+
+	length := uint64(h[1] & 0x7F)
+	switch length {
+	case 126:
+		var b [2]byte
+		if _, err = io.ReadFull(r, b[:]); err != nil {
+			return
+		}
+		length = uint64(binary.BigEndian.Uint16(b[:]))
+	case 127:
+		var b [8]byte
+		if _, err = io.ReadFull(r, b[:]); err != nil {
+			return
+		}
+		length = binary.BigEndian.Uint64(b[:])
+	}
+
+	if opcode >= wsOpClose {
+		if !fin {
+			err = errors.New("fragmented control frame")
+			return
+		}
+		if length > wsMaxControl {
+			err = fmt.Errorf("control frame of %d bytes", length)
+			return
+		}
+	}
+	if length > uint64(maxLine) {
+		err = fmt.Errorf("frame of %d bytes exceeds the %d ceiling", length, maxLine)
+		return
+	}
+	if length > 0 {
+		payload = make([]byte, length)
+		_, err = io.ReadFull(r, payload)
+	}
+	return
+}
+
+// ------------------------------------------------------------- transports --
+//
+// The bridge only ever does three things with its connection: get a line,
+// send a line, close. Both transports offer exactly those, and nothing above
+// this point knows which it has. bridge_mcp.py draws the same seam in the
+// same place, and test_ws_transport.py drives one conversation through both
+// and compares the JSON objects to prove the contract does not move.
+
+type transport interface {
+	// sendRaw takes an already-encoded line. The exactly-once cache holds
+	// encoded bytes and has to replay them unchanged, so the seam is bytes
+	// rather than values.
+	sendRaw(raw []byte) error
+	readLine() ([]byte, error)
+	Close() error
+}
+
+// plainTransport is newline-delimited JSON on a bare socket: the harness
+// transport, and what every fixture in fixtures/ was recorded over.
+type plainTransport struct {
+	conn net.Conn
+	r    *bufio.Reader
+}
+
+func (t *plainTransport) sendRaw(raw []byte) error {
+	_, err := t.conn.Write(raw)
+	return err
+}
+
+func (t *plainTransport) readLine() ([]byte, error) {
+	line, err := t.r.ReadBytes('\n')
+	if err != nil {
+		return nil, err
+	}
+	if len(line) > maxLine {
+		logf("dropping a %d-byte line; ceiling is %d", len(line), maxLine)
+		return nil, nil
+	}
+	return bytes.TrimSpace(line), nil
+}
+
+func (t *plainTransport) Close() error { return t.conn.Close() }
+
+// wsTransport is the same messages under RFC 6455 framing: the production
+// transport, because a library's wifi will pass 443 and will not pass 8790.
+type wsTransport struct {
+	conn net.Conn
+	r    *bufio.Reader
+}
+
+func (t *wsTransport) sendRaw(raw []byte) error {
+	// encode() ends the line with a newline for the byte-stream
+	// transport. A frame carries its own length, so that newline is
+	// noise which would arrive inside the message the far end parses.
+	return wsSendFrame(t.conn, wsOpText, bytes.TrimRight(raw, "\r\n"))
+}
+
+// readLine returns one complete message, reassembling fragments and
+// answering control frames on the way past.
+//
+// Fragmentation is handled even though the bridge does not fragment: whether
+// a message arrives in one frame is the SENDER's choice, and there is a
+// reverse proxy in the path whose behaviour is not ours to assume.
+func (t *wsTransport) readLine() ([]byte, error) {
+	var (
+		parts   [][]byte
+		size    int
+		started bool
+		isText  bool
+	)
+	for {
+		fin, opcode, payload, err := wsReadFrame(t.r)
+		if err != nil {
+			return nil, err
+		}
+
+		if opcode >= wsOpClose {
+			// Control frames may arrive BETWEEN the fragments of a message,
+			// which is why they are handled here rather than by the caller.
+			switch opcode {
+			case wsOpPing:
+				if err := wsSendFrame(t.conn, wsOpPong, payload); err != nil {
+					return nil, err
+				}
+			case wsOpClose:
+				// Echo the close and let the read fail next time round, which
+				// the reconnect loop already treats as a dropped connection.
+				_ = wsSendFrame(t.conn, wsOpClose, payload)
+				return nil, io.EOF
+			}
+			continue
+		}
+
+		if opcode == wsOpCont {
+			if !started {
+				return nil, errors.New("continuation frame with nothing to continue")
+			}
+		} else {
+			if started {
+				return nil, errors.New("a new message began before the last finished")
+			}
+			started = true
+			isText = opcode == wsOpText
+		}
+
+		parts = append(parts, payload)
+		size += len(payload)
+		if size > maxLine {
+			return nil, fmt.Errorf("message of at least %d bytes exceeds the %d ceiling",
+				size, maxLine)
+		}
+		if !fin {
+			continue
+		}
+
+		if !isText {
+			// Nothing in this protocol is binary: file contents travel as
+			// JSON strings, which PROTOCOL.md decided long before this.
+			return nil, errors.New("binary message, but this protocol is text")
+		}
+		raw := bytes.Join(parts, nil)
+		if !utf8.Valid(raw) {
+			// Replaced rather than fatal, and loud -- the same rule the TCP
+			// transport follows. Corruption must not end the session and must
+			// not pass unremarked.
+			logf("WARNING: invalid UTF-8 in a %d-byte message; replacing", len(raw))
+			raw = []byte(strings.ToValidUTF8(string(raw), "\uFFFD"))
+		}
+		return bytes.TrimSpace(raw), nil
+	}
+}
+
+func (t *wsTransport) Close() error { return t.conn.Close() }

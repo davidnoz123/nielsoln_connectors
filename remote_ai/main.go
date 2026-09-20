@@ -64,7 +64,6 @@ import (
 )
 
 const (
-	defaultPort  = 8790
 	defaultLimit = 64 * 1024
 	maxLine      = 1 << 20
 	version      = "draft-1" // the protocol draft implemented, not a repo version
@@ -87,6 +86,17 @@ var capabilities = []string{"utf8_text"}
 // participant's own machine and finds nothing -- the failure looks like a
 // broken download rather than a wrong address.
 var defaultHost = "127.0.0.1"
+
+// defaultPort is stamped the same way, and is a string for the same reason
+// defaultHost is one: -X writes into a string symbol and does nothing
+// whatsoever to anything else. It was an int in the const block above until
+// 21 Sep, which would have produced a binary that builds, links, reports no
+// error and dials 8790 for ever.
+//
+// 443 in the shipped build, because --transport auto reads this: 443 means
+// wss through Caddy, anything else means plain TCP. 8790 unstamped keeps
+// every local test and all 25 fixtures on the harness transport.
+var defaultPort = "8790"
 
 // -- wire ------------------------------------------------------------------
 
@@ -1150,7 +1160,7 @@ func keepWindowOpen() {
 func main() {
 	defer keepWindowOpen()
 	host := flag.String("host", defaultHost, "bridge address")
-	port := flag.Int("port", defaultPort, "bridge port")
+	port := flag.String("port", defaultPort, "bridge port")
 	root := flag.String("root", "", "the only folder this session may read or write")
 	token := flag.String("token", "", "pairing token, sent in hello")
 	record := flag.String("record", "", "append every exchange here as JSON lines")
@@ -1187,7 +1197,7 @@ func main() {
 	}
 
 	c := &connector{
-		host: *host, port: fmt.Sprint(*port), root: abs,
+		host: *host, port: *port, root: abs,
 		token: *token, record: *record, wire: *wire, done: map[int][]byte{},
 	}
 	// The resolved folder, not what was typed. A participant should be able to

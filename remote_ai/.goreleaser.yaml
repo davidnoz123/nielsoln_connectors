@@ -45,6 +45,7 @@ builds:
     # wrong address.
     ldflags:
       - -X main.defaultHost={{ .Env.BRIDGE_HOST }}
+      - -X main.defaultPort={{ .Env.BRIDGE_PORT }}
 
     # No -trimpath. It only rewrites paths in debug info and is normally
     # harmless, but Defender's verdict on this binary already turned on how

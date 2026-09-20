@@ -1023,8 +1023,16 @@ func askForFolder() string {
 	}
 
 	fmt.Println()
-	fmt.Println("  This lets Claude read files on this computer, and nothing else.")
-	fmt.Println("  Nothing is uploaded: Claude asks, and this program answers.")
+	fmt.Println("  This lets Claude read files in one folder on this computer.")
+	// "Nothing is uploaded" was here until 21 Sep 2026 and was not true. The
+	// contents of whatever Claude reads DO leave this machine: that is what
+	// read_file returns, and Claude cannot read a file it never receives.
+	// The demo page carried the same sentence and was corrected on the 19th;
+	// this copy was missed because that sweep looked at documents and not at
+	// Go source. It is the more load-bearing of the two, because it is read
+	// at the moment somebody chooses what to share.
+	fmt.Println("  Whatever it reads is sent over the internet to answer you,")
+	fmt.Println("  encrypted, the same as pasting text into a chat.")
 	fmt.Println()
 	fmt.Println("  Which folder should it be allowed to read?")
 	if suggested != "" {

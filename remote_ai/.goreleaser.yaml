@@ -71,3 +71,39 @@ universal_binaries:
 # No `release:` block either, for the reason at the top: the filename is the
 # pairing mechanism, and a release artifact has a fixed name. Everything else
 # needed to publish releases from here is in place.
+
+# --------------------------------------------------------------- signing --
+# Gatekeeper's "cannot be opened because Apple cannot check it for malicious
+# software" is a hard stop for every Mac participant, and unlike Defender it
+# is not a heuristic that might go the other way tomorrow. An Apple Developer
+# Program membership was bought on 20 Sep 2026 to answer it.
+#
+# Established by experiment against goreleaser 2.18.2, not from the docs:
+# this runs under `build --snapshot`, which is what provision.sh calls. The
+# build log prints "sign & notarize macOS binaries" and a bad certificate
+# fails the build at that step. anchore/quill is therefore not needed.
+#
+# certificate and key are BASE64 of the .p12 and .p8. Both come from Secret
+# Manager at deploy time; neither is ever in this repository.
+#
+# enabled is templated so a deploy with no secrets still builds. A signing
+# step that breaks every build the day a credential expires is worse than an
+# unsigned binary, and this tool is picked up months apart.
+notarize:
+  macos:
+    - enabled: "{{ .Env.MACOS_SIGN_ENABLED }}"
+      # The universal binary only. The Windows build is a separate problem
+      # with a separate price; see TODO 2.
+      ids: [connector-macos]
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}"
+        # Waited on rather than fired and forgotten. Apple usually answers in
+        # a minute or two, and a build that does not wait cannot say whether
+        # the thing it just produced is the thing participants can run.
+        wait: true
+        timeout: 20m

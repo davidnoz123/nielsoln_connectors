@@ -40,6 +40,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"compress/flate"
 	"crypto/rand"
 	"crypto/sha1"
 	"crypto/tls"
@@ -830,7 +831,12 @@ func (c *connector) dial() (transport, error) {
 		return nil, err
 	}
 	r := bufio.NewReaderSize(conn, 64*1024)
-	if err := wsClientHandshake(conn, r, c.host, wsPath); err != nil {
+	// Offered every time. A bridge that has not been updated yet simply does
+	// not confirm it, and this end drops back to plain frames: the binary a
+	// participant downloaded last week has to keep working, because there is
+	// no way to make them download it again.
+	deflate, err := wsClientHandshake(conn, r, c.host, wsPath, true)
+	if err != nil {
 		conn.Close()
 		return nil, err
 	}
@@ -839,7 +845,10 @@ func (c *connector) dial() (transport, error) {
 		scheme = "ws"
 	}
 	logf("connected to %s://%s%s", scheme, addr, wsPath)
-	return &wsTransport{conn: conn, r: r}, nil
+	if deflate != nil {
+		logf("  compression agreed: %s", wsExtDeflate)
+	}
+	return &wsTransport{conn: conn, r: r, d: deflate}, nil
 }
 
 
@@ -1319,6 +1328,21 @@ const (
 	// protocol operations, and opPing is one of them. The compiler caught
 	// the collision, which is the second near-identical pair of names to
 	// surface in two days.
+	// RFC 7692, offered bare: no window-bits or no-context-takeover
+	// parameters, because both ends of this protocol are ours and a
+	// negotiation with nothing to negotiate is only more surface.
+	wsExtDeflate = "permessage-deflate"
+
+	// Level 6 rather than 1 or 9. Measured in the bridge repo's
+	// spike/flate_cost.go on 22 Sep 2026: level 6 beats level 1 on any link
+	// below 120 Mbps, level 9 costs 27 ms more for 7,764 bytes, and level 6
+	// stops paying for itself only above 519 Mbps of uplink.
+	wsDeflateLevel = 6
+
+	// The deflate window. The read side keeps exactly this much history,
+	// which is what makes a dictionary equivalent to context takeover.
+	wsDeflateWindow = 32 << 10
+
 	wsOpCont   = 0x0
 	wsOpText   = 0x1
 	wsOpBinary = 0x2
@@ -1333,6 +1357,86 @@ const (
 // The GUID is not a hash of anything, it is a constant published in the RFC,
 // and getting one character wrong produces a handshake that fails only
 // against conforming servers.
+// wsSyncTail is what Flush appends and RFC 7692 section 7.2.1 says to strip.
+var wsSyncTail = []byte{0x00, 0x00, 0xff, 0xff}
+
+// wsInflateTail is that same tail followed by a final empty stored block.
+// Without the final block the inflater sits waiting for input that will never
+// arrive, because a message ends and a deflate stream does not.
+var wsInflateTail = []byte{0x00, 0x00, 0xff, 0xff, 0x01, 0x00, 0x00, 0xff, 0xff}
+
+// wsDeflate is one connection's compression state. See the note at the top of
+// the file on why the two directions are built differently.
+type wsDeflate struct {
+	out bytes.Buffer
+	w   *flate.Writer
+	win []byte // the last wsDeflateWindow bytes we have inflated
+}
+
+func newWSDeflate() (*wsDeflate, error) {
+	d := &wsDeflate{}
+	w, err := flate.NewWriter(&d.out, wsDeflateLevel)
+	if err != nil {
+		return nil, fmt.Errorf("could not start the compressor: %w", err)
+	}
+	d.w = w
+	return d, nil
+}
+
+// compress returns the payload of a compressed message: deflate, sync-flushed,
+// with the four tail bytes removed.
+//
+// There is deliberately no "send it raw if it did not get smaller" path. The
+// window persists, so feeding the compressor a message and then not sending it
+// would leave the two ends holding different history, and everything after it
+// would decode to plausible rubbish rather than an error. Skipping has to be
+// decided before this is called. Nothing skips today: it is all JSON.
+func (d *wsDeflate) compress(payload []byte) ([]byte, error) {
+	d.out.Reset()
+	if _, err := d.w.Write(payload); err != nil {
+		return nil, err
+	}
+	if err := d.w.Flush(); err != nil {
+		return nil, err
+	}
+	b := d.out.Bytes()
+	if len(b) < len(wsSyncTail) || !bytes.HasSuffix(b, wsSyncTail) {
+		return nil, errors.New("sync flush did not end as RFC 7692 requires")
+	}
+	return append([]byte(nil), b[:len(b)-len(wsSyncTail)]...), nil
+}
+
+// inflate expands one message, refusing to produce more than max bytes.
+//
+// The ceiling is on the OUTPUT, which is the whole point: a few hundred bytes
+// on the wire can become gigabytes in memory, and a limit applied to what
+// arrived would be no limit at all. This runs on a participant's laptop.
+func (d *wsDeflate) inflate(payload []byte, max int) ([]byte, error) {
+	src := io.MultiReader(bytes.NewReader(payload), bytes.NewReader(wsInflateTail))
+	fr := flate.NewReaderDict(src, d.win)
+	defer fr.Close()
+
+	out, err := io.ReadAll(io.LimitReader(fr, int64(max)+1))
+	if err != nil {
+		return nil, fmt.Errorf("could not inflate a compressed message: %w", err)
+	}
+	if len(out) > max {
+		return nil, fmt.Errorf("compressed message inflates past the %d ceiling", max)
+	}
+	d.win = wsKeepWindow(d.win, out)
+	return out, nil
+}
+
+// wsKeepWindow keeps the tail of what we have inflated, so the next message
+// can reference it exactly as the peer's persistent window expects.
+func wsKeepWindow(win, add []byte) []byte {
+	win = append(win, add...)
+	if len(win) > wsDeflateWindow {
+		win = append([]byte(nil), win[len(win)-wsDeflateWindow:]...)
+	}
+	return win
+}
+
 func wsAcceptKey(key string) string {
 	sum := sha1.Sum([]byte(key + wsGUID))
 	return base64.StdEncoding.EncodeToString(sum[:])
@@ -1344,51 +1448,87 @@ func wsAcceptKey(key string) string {
 // with a cheerful 200 is the exact failure this transport was chosen to
 // survive. An unchecked handshake turns that into a connection that looks
 // open and never delivers a byte, which is indistinguishable from a hang.
-func wsClientHandshake(conn net.Conn, r *bufio.Reader, host, path string) error {
+// wsClientHandshake upgrades the connection and returns the compression
+// state, which is nil unless permessage-deflate was both offered and
+// confirmed. An intermediary that strips the header therefore costs us
+// compression rather than the connection, and there is an intermediary in the
+// path: every production connection goes through Caddy.
+func wsClientHandshake(conn net.Conn, r *bufio.Reader, host, path string, offerDeflate bool) (*wsDeflate, error) {
 	raw := make([]byte, 16)
 	if _, err := rand.Read(raw); err != nil {
-		return fmt.Errorf("no randomness for the websocket key: %w", err)
+		return nil, fmt.Errorf("no randomness for the websocket key: %w", err)
 	}
 	key := base64.StdEncoding.EncodeToString(raw)
 
-	req := strings.Join([]string{
+	lines := []string{
 		"GET " + path + " HTTP/1.1",
 		"Host: " + host,
 		"Upgrade: websocket",
 		"Connection: Upgrade",
 		"Sec-WebSocket-Key: " + key,
 		"Sec-WebSocket-Version: 13",
-	}, "\r\n") + "\r\n\r\n"
+	}
+	if offerDeflate {
+		lines = append(lines, "Sec-WebSocket-Extensions: "+wsExtDeflate)
+	}
+	req := strings.Join(lines, "\r\n") + "\r\n\r\n"
 	if _, err := conn.Write([]byte(req)); err != nil {
-		return err
+		return nil, err
 	}
 
 	resp, err := http.ReadResponse(r, nil)
 	if err != nil {
-		return fmt.Errorf("no HTTP response to the upgrade: %w", err)
+		return nil, fmt.Errorf("no HTTP response to the upgrade: %w", err)
 	}
 	// The body is never read: on 101 there is none, and on anything else the
 	// status is the whole story. Closing it is still correct.
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusSwitchingProtocols {
-		return fmt.Errorf("server refused the upgrade: %s", resp.Status)
+		return nil, fmt.Errorf("server refused the upgrade: %s", resp.Status)
 	}
 	if got := resp.Header.Get("Sec-WebSocket-Accept"); got != wsAcceptKey(key) {
-		return errors.New("Sec-WebSocket-Accept did not match the key we sent")
+		return nil, errors.New("Sec-WebSocket-Accept did not match the key we sent")
 	}
-	return nil
+
+	agreed := false
+	for _, offer := range strings.Split(resp.Header.Get("Sec-WebSocket-Extensions"), ",") {
+		if strings.TrimSpace(strings.Split(offer, ";")[0]) == wsExtDeflate {
+			agreed = true
+		}
+	}
+	if !agreed {
+		return nil, nil
+	}
+	if !offerDeflate {
+		// We would have no decompressor for what follows, and RSV1 would be
+		// refused frame by frame a moment later. Saying so here names the
+		// fault instead of leaving it looking like corruption.
+		return nil, errors.New("server confirmed an extension we did not offer")
+	}
+	return newWSDeflate()
 }
 
 // wsSendFrame writes one frame, always masked. This end is a client and
 // RFC 6455 section 5.1 makes masking a MUST; a conforming server closes the
 // connection on an unmasked frame rather than warning about it. The bridge
 // enforces exactly that, and test_ws_transport.py checks that it does.
-func wsSendFrame(w io.Writer, opcode byte, payload []byte) error {
+// The d argument compresses the payload and sets RSV1. Control frames are
+// never compressed, which RFC 7692 section 6.1 requires: a ping has to stay
+// readable by anything that speaks RFC 6455, extension or not.
+func wsSendFrame(w io.Writer, opcode byte, payload []byte, d *wsDeflate) error {
 	if opcode >= wsOpClose && len(payload) > wsMaxControl {
 		return fmt.Errorf("control frame of %d bytes", len(payload))
 	}
+	var rsv1 byte
+	if d != nil && opcode < wsOpClose {
+		var err error
+		if payload, err = d.compress(payload); err != nil {
+			return err
+		}
+		rsv1 = 0x40
+	}
 	var head []byte
-	head = append(head, 0x80|opcode) // FIN always set: we never fragment on send
+	head = append(head, 0x80|rsv1|opcode) // FIN always set: we never fragment on send
 
 	n := len(payload)
 	switch {
@@ -1426,16 +1566,25 @@ func wsSendFrame(w io.Writer, opcode byte, payload []byte) error {
 // segments is the single most common hand-rolled WebSocket bug, and it hides
 // until the network is slow -- which, for this tool, means it hides until the
 // venue.
-func wsReadFrame(r io.Reader) (fin bool, opcode byte, payload []byte, err error) {
+// allowRSV1 is set only when permessage-deflate was agreed. The payload comes
+// back still compressed: RSV1 marks the first frame of a message rather than
+// every frame of it, so inflating has to wait for reassembly.
+func wsReadFrame(r io.Reader, allowRSV1 bool) (fin, rsv1 bool, opcode byte, payload []byte, err error) {
 	var h [2]byte
 	if _, err = io.ReadFull(r, h[:]); err != nil {
 		return
 	}
 	fin = h[0]&0x80 != 0
-	if h[0]&0x70 != 0 {
-		// RSV1-3 are legal only once an extension has been negotiated, and
-		// this client negotiates none. Set bits mean the peer believes we
-		// agreed to something we did not.
+	rsv1 = h[0]&0x40 != 0
+	reserved := byte(0x70)
+	if allowRSV1 {
+		reserved = 0x30
+	}
+	if h[0]&reserved != 0 {
+		// RSV1-3 are legal only once an extension has been negotiated. A bit
+		// set for something we did not agree means the peer believes it is
+		// talking to a different implementation, and every byte after this
+		// would be misread rather than merely unexpected.
 		err = errors.New("reserved bits set, but no extension was agreed")
 		return
 	}
@@ -1533,13 +1682,14 @@ func (t *plainTransport) Close() error { return t.conn.Close() }
 type wsTransport struct {
 	conn net.Conn
 	r    *bufio.Reader
+	d    *wsDeflate // nil unless permessage-deflate was agreed
 }
 
 func (t *wsTransport) sendRaw(raw []byte) error {
 	// encode() ends the line with a newline for the byte-stream
 	// transport. A frame carries its own length, so that newline is
 	// noise which would arrive inside the message the far end parses.
-	return wsSendFrame(t.conn, wsOpText, bytes.TrimRight(raw, "\r\n"))
+	return wsSendFrame(t.conn, wsOpText, bytes.TrimRight(raw, "\r\n"), t.d)
 }
 
 // readLine returns one complete message, reassembling fragments and
@@ -1550,13 +1700,14 @@ func (t *wsTransport) sendRaw(raw []byte) error {
 // reverse proxy in the path whose behaviour is not ours to assume.
 func (t *wsTransport) readLine() ([]byte, error) {
 	var (
-		parts   [][]byte
-		size    int
-		started bool
-		isText  bool
+		parts      [][]byte
+		size       int
+		started    bool
+		isText     bool
+		compressed bool
 	)
 	for {
-		fin, opcode, payload, err := wsReadFrame(t.r)
+		fin, rsv1, opcode, payload, err := wsReadFrame(t.r, t.d != nil)
 		if err != nil {
 			return nil, err
 		}
@@ -1566,13 +1717,13 @@ func (t *wsTransport) readLine() ([]byte, error) {
 			// which is why they are handled here rather than by the caller.
 			switch opcode {
 			case wsOpPing:
-				if err := wsSendFrame(t.conn, wsOpPong, payload); err != nil {
+				if err := wsSendFrame(t.conn, wsOpPong, payload, nil); err != nil {
 					return nil, err
 				}
 			case wsOpClose:
 				// Echo the close and let the read fail next time round, which
 				// the reconnect loop already treats as a dropped connection.
-				_ = wsSendFrame(t.conn, wsOpClose, payload)
+				_ = wsSendFrame(t.conn, wsOpClose, payload, nil)
 				return nil, io.EOF
 			}
 			continue
@@ -1582,12 +1733,19 @@ func (t *wsTransport) readLine() ([]byte, error) {
 			if !started {
 				return nil, errors.New("continuation frame with nothing to continue")
 			}
+			if rsv1 {
+				// RFC 7692 section 6.1: RSV1 belongs on the first frame of a
+				// message. On a continuation it means the peer is fragmenting
+				// in a way we would reassemble wrongly.
+				return nil, errors.New("RSV1 set on a continuation frame")
+			}
 		} else {
 			if started {
 				return nil, errors.New("a new message began before the last finished")
 			}
 			started = true
 			isText = opcode == wsOpText
+			compressed = rsv1
 		}
 
 		parts = append(parts, payload)
@@ -1606,6 +1764,13 @@ func (t *wsTransport) readLine() ([]byte, error) {
 			return nil, errors.New("binary message, but this protocol is text")
 		}
 		raw := bytes.Join(parts, nil)
+		if compressed {
+			inflated, ierr := t.d.inflate(raw, maxLine)
+			if ierr != nil {
+				return nil, ierr
+			}
+			raw = inflated
+		}
 		if !utf8.Valid(raw) {
 			// Replaced rather than fatal, and loud -- the same rule the TCP
 			// transport follows. Corruption must not end the session and must

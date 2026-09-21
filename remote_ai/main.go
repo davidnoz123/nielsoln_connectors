@@ -1011,6 +1011,10 @@ func fatal(format string, a ...any) {
 // Deliberately not defaulting silently: a participant should see the folder
 // name before anything is shared from it, and "just press Enter" is a low
 // enough bar that offering the default costs nobody anything.
+// newline is the delimiter ReadString wants; named so the confirmation
+// below reads without an escape sequence buried in it.
+const newline = 10
+
 func askForFolder() string {
 	suggested := ""
 	if home, err := os.UserHomeDir(); err == nil {
@@ -1064,7 +1068,58 @@ func askForFolder() string {
 		fatal("%q is not a full folder path, so nothing was shared.\n%s", line,
 			howToGiveAFolder())
 	}
+	if why := tooBroad(line); why != "" {
+		fmt.Println()
+		fmt.Printf("  %s is %s.\n", line, why)
+		fmt.Println("  Everything inside it becomes readable, including saved")
+		fmt.Println("  passwords, keys and anything downloaded.")
+		fmt.Println()
+		fmt.Print("  Share it anyway? Type yes to confirm: ")
+		answer, _ := reader.ReadString(newline)
+		if strings.ToLower(strings.TrimSpace(answer)) != "yes" {
+			fatal("Nothing was shared. Run this again and give a narrower folder.")
+		}
+		logf("sharing %s after an explicit confirmation", line)
+	}
 	return line
+}
+
+// tooBroad reports why a folder is a bad thing to share, or "" if it is fine.
+//
+// A confirmation rather than a refusal: somebody may genuinely mean it, and
+// this program cannot know. But the default prompt offers Documents, and the
+// gap between pressing Enter and typing a drive letter should not be the gap
+// between sharing a folder and sharing a machine.
+//
+// Written after a test session shared C:\ without comment, on a drive that
+// held a code-signing private key.
+func tooBroad(p string) string {
+	clean := filepath.Clean(p)
+
+	// A drive root or /: Dir of a root is itself.
+	if filepath.Dir(clean) == clean {
+		return "the whole drive"
+	}
+	// One level down from a root, which catches C:\Users, C:\Windows,
+	// /home and /Users.
+	parent := filepath.Dir(clean)
+	if filepath.Dir(parent) == parent {
+		base := strings.ToLower(filepath.Base(clean))
+		for _, risky := range []string{"users", "windows", "home", "system32",
+			"program files", "program files (x86)", "etc", "var"} {
+			if base == risky {
+				return "a system folder holding every account on this computer"
+			}
+		}
+	}
+	// The home directory itself: everything the person owns, which is the
+	// case people actually reach for without meaning all of it.
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if strings.EqualFold(filepath.Clean(home), clean) {
+			return "your whole home folder"
+		}
+	}
+	return ""
 }
 
 // howToGiveAFolder is the advice that follows a refused path, in the terms of
@@ -1198,6 +1253,13 @@ func main() {
 		if real, err2 := filepath.EvalSymlinks(abs); err2 == nil {
 			abs = real
 		}
+	}
+	// --root skips the prompt, and with it the confirmation. Scripts and the
+	// test suite pass it deliberately, so refusing here would break them for
+	// no gain -- but saying nothing would mean the one path with no human in
+	// it is also the one that shares a drive in silence.
+	if why := tooBroad(abs); why != "" {
+		logf("WARNING: %s is %s. Everything inside it is readable.", abs, why)
 	}
 	info, err := os.Stat(abs)
 	if err != nil || !info.IsDir() {

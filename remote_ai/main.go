@@ -141,11 +141,19 @@ type writeFileArgs struct {
 	Path       string `json:"path"`
 	Content    string `json:"content"`
 	CreateOnly bool   `json:"create_only"`
+	// Offset is a POINTER so that absent and zero are different. Absent means
+	// "replace the file", which is what every caller before 25 Sep meant and
+	// what the op must keep doing. Zero means "write at the start and leave
+	// the rest", which is a different thing and now sayable.
+	Offset   *int64 `json:"offset"`
+	Truncate bool   `json:"truncate"`
 }
 
 type writeFileResult struct {
 	Path         string `json:"path"`
 	BytesWritten int    `json:"bytes_written"`
+	Offset       int64  `json:"offset"`
+	Size         int64  `json:"size"`
 }
 
 type entry struct {
@@ -555,12 +563,35 @@ func opReadFile(root string, args json.RawMessage) (any, error) {
 	}, nil
 }
 
+// opWriteFile writes a file, whole or in pieces.
+//
+// read_file has always chunked and write_file never did, so a file larger than
+// the message ceiling could be read and not written back. Worse, the failure
+// was a dropped connection: the bridge framed a message it knew the far end
+// must refuse, the connector refused it, and the socket died without the
+// request ever being answered. Nothing in that sequence says "too big", which
+// is the one thing the caller could act on.
+//
+// With `offset` the caller writes in pieces, and the message ceiling stops
+// being a ceiling on the FILE.
 func opWriteFile(root string, args json.RawMessage) (any, error) {
 	var a writeFileArgs
 	json.Unmarshal(args, &a)
 	path, err := resolve(root, a.Path)
 	if err != nil {
 		return nil, err
+	}
+	if a.Offset != nil && *a.Offset < 0 {
+		return nil, refuse("bad_request",
+			"An offset cannot be negative, and %d is.", *a.Offset)
+	}
+	if a.Offset != nil && *a.Offset > 0 && a.CreateOnly {
+		// create_only asks "does this file already exist"; a non-zero offset
+		// says "carry on with the one that does". Together they are a
+		// contradiction rather than a combination.
+		return nil, refuse("bad_request",
+			"create_only writes a new file and an offset continues an "+
+				"existing one, so they cannot both apply.")
 	}
 	if a.CreateOnly {
 		if _, err := os.Stat(path); err == nil {
@@ -574,6 +605,41 @@ func opWriteFile(root string, args json.RawMessage) (any, error) {
 	}
 
 	data := []byte(a.Content)
+
+	// A piece of a file, written in place. NOT the rename dance: a rename
+	// replaces the whole file, which is exactly what the caller is trying to
+	// avoid by sending pieces. The cost is that an interrupted chunked write
+	// leaves a partly written file, which is why the op reports the size it
+	// left behind and why a caller resuming one should ask for it.
+	if a.Offset != nil {
+		f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
+		if err != nil {
+			return nil, refuse("not_allowed", "%s could not be written.",
+				filepath.Base(path))
+		}
+		defer f.Close()
+		if _, err := f.WriteAt(data, *a.Offset); err != nil {
+			return nil, refuse("not_allowed", "%s could not be written at %d.",
+				filepath.Base(path), *a.Offset)
+		}
+		if a.Truncate {
+			if err := f.Truncate(*a.Offset + int64(len(data))); err != nil {
+				return nil, refuse("not_allowed",
+					"%s could not be shortened.", filepath.Base(path))
+			}
+		}
+		if err := f.Sync(); err != nil {
+			return nil, refuse("not_allowed", "%s could not be written.",
+				filepath.Base(path))
+		}
+		size := int64(0)
+		if st, err := f.Stat(); err == nil {
+			size = st.Size()
+		}
+		return writeFileResult{Path: path, BytesWritten: len(data),
+			Offset: *a.Offset, Size: size}, nil
+	}
+
 	// Write beside the target and rename. An interrupted write then leaves the
 	// original intact rather than a half-written file.
 	tmp := path + ".part"
@@ -592,7 +658,8 @@ func opWriteFile(root string, args json.RawMessage) (any, error) {
 		os.Remove(tmp)
 		return nil, refuse("not_allowed", "%s could not be written.", filepath.Base(path))
 	}
-	return writeFileResult{Path: path, BytesWritten: len(data)}, nil
+	return writeFileResult{Path: path, BytesWritten: len(data),
+		Offset: 0, Size: int64(len(data))}, nil
 }
 
 // -- edit_file -------------------------------------------------------------

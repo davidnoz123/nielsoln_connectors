@@ -624,6 +624,14 @@ const (
 	searchLimit   = 200              // matches returned unless asked for fewer
 	searchSeconds = 10               // the walk's own deadline, inside the bridge's
 	searchMaxScan = 200000           // entries looked at before stopping regardless
+
+	// search_content reads files rather than listing them, so it needs its own
+	// ceilings. A repository of source is a few megabytes; a folder someone
+	// shared might hold a disk image.
+	grepLimit    = 100        // matching lines returned unless asked for fewer
+	grepMaxBytes = 2 << 20    // a file larger than this is skipped, and said so
+	grepMaxLine  = 64 << 10   // a longer line is not prose and not worth carrying
+	grepContext  = 2          // lines either side, when asked for
 )
 
 type searchFilesArgs struct {
@@ -642,6 +650,92 @@ type searchFilesResult struct {
 	Matches  []searchMatch `json:"matches"`
 	Complete bool          `json:"complete"`
 	Scanned  int           `json:"scanned"`
+}
+
+// globToRegexp turns a shell-style pattern into a regular expression.
+//
+// filepath.Match cannot do this job. It has no ** at all, so every pattern
+// naming a directory matched nothing and search_files reported complete:true,
+// which says "I looked everywhere and there are none". That is the exact false
+// claim the complete field was added to prevent, reachable through the field's
+// own op, and with the pattern a model writes first.
+//
+//	**      any number of path segments, separators included
+//	*       anything within one segment
+//	?       one character, not a separator
+//	[abc]   passed through as a character class
+//
+// Anchored at both ends, because a pattern is a description of the whole name
+// and not a substring search. That is what search_content is for.
+func globToRegexp(pattern string) (*regexp.Regexp, error) {
+	var b strings.Builder
+	b.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		switch c := pattern[i]; c {
+		case '*':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				i++
+				// **/ swallows the separator too, so **/x matches a bare x at
+				// the root as well as a/b/x. Without that, the commonest
+				// pattern of all would miss the files directly in front of it.
+				if i+1 < len(pattern) && pattern[i+1] == '/' {
+					i++
+					b.WriteString("(?:.*/)?")
+				} else {
+					b.WriteString(".*")
+				}
+			} else {
+				b.WriteString("[^/]*")
+			}
+		case '?':
+			b.WriteString("[^/]")
+		case '[':
+			end := strings.IndexByte(pattern[i:], ']')
+			if end < 0 {
+				return nil, fmt.Errorf("unclosed [ in %q", pattern)
+			}
+			b.WriteString(pattern[i : i+end+1])
+			i += end
+		default:
+			b.WriteString(regexp.QuoteMeta(string(c)))
+		}
+	}
+	b.WriteString("$")
+	return regexp.Compile(b.String())
+}
+
+// globMatcher decides what a pattern is matched AGAINST, which is the whole
+// substance of the fix.
+//
+// No separator in the pattern: the basename, because *.pdf has never meant
+// anything else and every caller since 19 Sep has relied on it.
+//
+// A separator: the path relative to the search root, because docs/*.pdf can
+// mean nothing else and matching it against a basename is how it silently
+// found nothing.
+type globMatcher struct {
+	re      *regexp.Regexp
+	onPath  bool
+	pattern string
+}
+
+func newGlobMatcher(pattern string) (*globMatcher, error) {
+	lowered := strings.ToLower(strings.ReplaceAll(pattern, "\\", "/"))
+	re, err := globToRegexp(lowered)
+	if err != nil {
+		return nil, err
+	}
+	return &globMatcher{re: re, onPath: strings.Contains(lowered, "/"),
+		pattern: pattern}, nil
+}
+
+// match takes both because which one is used is the matcher's decision, and
+// the caller has them already from the walk.
+func (g *globMatcher) match(rel, base string) bool {
+	if g.onPath {
+		return g.re.MatchString(strings.ToLower(filepath.ToSlash(rel)))
+	}
+	return g.re.MatchString(strings.ToLower(base))
 }
 
 // opSearchFiles finds files by name without a round trip per directory.
@@ -676,10 +770,15 @@ func opSearchFiles(root string, args json.RawMessage) (any, error) {
 	if limit <= 0 || limit > searchLimit {
 		limit = searchLimit
 	}
-	// Matched lowercased rather than with a case-insensitive matcher, because
-	// filepath.Match has none and the filesystems this runs on fold case
-	// anyway -- see caseInsensitiveFS.
-	lowered := strings.ToLower(pattern)
+	// Case folding is inside the matcher now, for the same reason it was
+	// here: the filesystems this runs on fold case anyway, see
+	// caseInsensitiveFS.
+	matcher, err := newGlobMatcher(pattern)
+	if err != nil {
+		return nil, refuse("bad_request",
+			"%s is not a pattern I can read. Try something like *.pdf or "+
+				"docs/**/*.txt.", pattern)
+	}
 
 	deadline := time.Now().Add(searchSeconds * time.Second)
 	result := searchFilesResult{Matches: []searchMatch{}, Complete: true}
@@ -707,8 +806,15 @@ func opSearchFiles(root string, args json.RawMessage) (any, error) {
 			if skipEntry(full) {
 				continue
 			}
-			ok, _ := filepath.Match(lowered, strings.ToLower(it.Name()))
-			if ok {
+			// rel is what a pattern carrying a separator is matched
+			// against, and it is relative to the folder the search STARTED
+			// in rather than to the shared root: a caller who asked about
+			// docs/ means docs/*.pdf to be about what is under docs.
+			rel, relErr := filepath.Rel(start, full)
+			if relErr != nil {
+				rel = it.Name()
+			}
+			if matcher.match(rel, it.Name()) {
 				if len(result.Matches) >= limit {
 					result.Complete = false
 					stack = nil
@@ -736,6 +842,215 @@ func opSearchFiles(root string, args json.RawMessage) (any, error) {
 	return result, nil
 }
 
+// -- search_content --------------------------------------------------------
+//
+// The op that answers Claude Code's Grep, and the last denied tool that had no
+// answer at all. search_files could never take this job: it matches NAMES,
+// which is what Glob asks for, and TOOLING.md records the correction.
+//
+// Why it belongs on this end rather than the server's: searching a hundred
+// pages by pulling every chunk across the wire and scanning it in the model is
+// not practical, and matching on the machine the files are already on is
+// nearly free. That is the same argument read_file's chunking makes.
+
+type searchContentArgs struct {
+	Query         string `json:"query"`
+	Path          string `json:"path"`
+	Glob          string `json:"glob"`
+	Regex         bool   `json:"regex"`
+	CaseSensitive bool   `json:"case_sensitive"`
+	Limit         int    `json:"limit"`
+	Context       int    `json:"context"`
+}
+
+type contentMatch struct {
+	Path   string   `json:"path"`
+	Line   int      `json:"line"`
+	Text   string   `json:"text"`
+	Before []string `json:"before,omitempty"`
+	After  []string `json:"after,omitempty"`
+}
+
+type searchContentResult struct {
+	Matches  []contentMatch `json:"matches"`
+	Complete bool           `json:"complete"`
+	Scanned  int            `json:"scanned"`
+	Read     int            `json:"read"`
+	Binary   int            `json:"binary"`
+	TooBig   int            `json:"too_big"`
+}
+
+func opSearchContent(root string, args json.RawMessage) (any, error) {
+	var a searchContentArgs
+	json.Unmarshal(args, &a)
+	start, err := resolve(root, a.Path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(start)
+	if err != nil {
+		return nil, refuse("not_found", "There is no folder called %s there.",
+			filepath.Base(start))
+	}
+	if !info.IsDir() {
+		return nil, refuse("not_dir", "%s is a file, not a folder.",
+			filepath.Base(start))
+	}
+	query := strings.TrimSpace(a.Query)
+	if query == "" {
+		return nil, refuse("bad_request",
+			"Searching needs something to look for.")
+	}
+
+	// Case-INSENSITIVE unless asked otherwise, which is not what grep does and
+	// is deliberate. These are somebody's documents rather than source, and a
+	// missed match is reported as an absence. That is the failure this whole
+	// family of ops keeps having to design around.
+	expr := query
+	if !a.Regex {
+		expr = regexp.QuoteMeta(query)
+	}
+	if !a.CaseSensitive {
+		expr = "(?i)" + expr
+	}
+	re, err := regexp.Compile(expr)
+	if err != nil {
+		return nil, refuse("bad_request",
+			"%s is not a regular expression I can read: %v", query, err)
+	}
+
+	var matcher *globMatcher
+	if strings.TrimSpace(a.Glob) != "" {
+		if matcher, err = newGlobMatcher(a.Glob); err != nil {
+			return nil, refuse("bad_request",
+				"%s is not a pattern I can read. Try something like *.md or "+
+					"docs/**/*.txt.", a.Glob)
+		}
+	}
+
+	limit := a.Limit
+	if limit <= 0 || limit > grepLimit {
+		limit = grepLimit
+	}
+	around := a.Context
+	if around < 0 {
+		around = 0
+	} else if around > grepContext {
+		around = grepContext
+	}
+
+	deadline := time.Now().Add(searchSeconds * time.Second)
+	result := searchContentResult{Matches: []contentMatch{}, Complete: true}
+	stack := []string{start}
+	for len(stack) > 0 {
+		if time.Now().After(deadline) || result.Scanned >= searchMaxScan {
+			result.Complete = false
+			break
+		}
+		here := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		entries, err := os.ReadDir(here)
+		if err != nil {
+			// A drive root is full of these. Skipping is right; pretending we
+			// looked is not, so it costs Complete.
+			result.Complete = false
+			continue
+		}
+		for _, it := range entries {
+			result.Scanned++
+			full := filepath.Join(here, it.Name())
+			// The same rule as reading: a link is neither followed nor
+			// reported, so a search cannot name something read_file would
+			// refuse, and cannot walk out of the shared folder.
+			if skipEntry(full) {
+				continue
+			}
+			if it.IsDir() {
+				stack = append(stack, full)
+				continue
+			}
+			if matcher != nil {
+				rel, relErr := filepath.Rel(start, full)
+				if relErr != nil {
+					rel = it.Name()
+				}
+				if !matcher.match(rel, it.Name()) {
+					continue
+				}
+			}
+			st, err := it.Info()
+			if err != nil {
+				result.Complete = false
+				continue
+			}
+			// COUNTED, not silently passed over. A search that skipped the one
+			// file the answer was in and said nothing would be the same lie as
+			// stopping early and claiming completeness.
+			if st.Size() > grepMaxBytes {
+				result.TooBig++
+				continue
+			}
+			body, err := os.ReadFile(full)
+			if err != nil {
+				result.Complete = false
+				continue
+			}
+			// Sniffed rather than decoded, for read_file's reason: the first
+			// chunk of a PDF is mostly ASCII object headers, so a decode test
+			// reads one happily and hands back line noise.
+			head := body
+			if len(head) > 16 {
+				head = head[:16]
+			}
+			if magicName(head) != "" {
+				result.Binary++
+				continue
+			}
+			result.Read++
+
+			lines := strings.Split(strings.ReplaceAll(string(body), "\r\n", "\n"), "\n")
+			for n, line := range lines {
+				if len(line) > grepMaxLine {
+					// Not prose. Carrying it would blow the message ceiling
+					// for one minified file.
+					continue
+				}
+				if !re.MatchString(line) {
+					continue
+				}
+				if len(result.Matches) >= limit {
+					result.Complete = false
+					stack = nil
+					break
+				}
+				m := contentMatch{Path: full, Line: n + 1,
+					Text: strings.ToValidUTF8(line, "\uFFFD")}
+				for i := n - around; i < n; i++ {
+					if i >= 0 {
+						m.Before = append(m.Before,
+							strings.ToValidUTF8(lines[i], "\uFFFD"))
+					}
+				}
+				for i := n + 1; i <= n+around && i < len(lines); i++ {
+					m.After = append(m.After,
+						strings.ToValidUTF8(lines[i], "\uFFFD"))
+				}
+				result.Matches = append(result.Matches, m)
+			}
+			if stack == nil {
+				break
+			}
+		}
+	}
+	sort.Slice(result.Matches, func(i, j int) bool {
+		if result.Matches[i].Path != result.Matches[j].Path {
+			return result.Matches[i].Path < result.Matches[j].Path
+		}
+		return result.Matches[i].Line < result.Matches[j].Line
+	})
+	return result, nil
+}
+
 var ops = map[string]func(string, json.RawMessage) (any, error){
 	"ping":           opPing,
 	"list_directory": opListDirectory,
@@ -743,6 +1058,7 @@ var ops = map[string]func(string, json.RawMessage) (any, error){
 	"write_file":     opWriteFile,
 	"get_file_info":  opGetFileInfo,
 	"search_files":   opSearchFiles,
+	"search_content": opSearchContent,
 }
 
 // -- the session -----------------------------------------------------------

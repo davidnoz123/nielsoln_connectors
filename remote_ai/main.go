@@ -595,6 +595,142 @@ func opWriteFile(root string, args json.RawMessage) (any, error) {
 	return writeFileResult{Path: path, BytesWritten: len(data)}, nil
 }
 
+// -- edit_file -------------------------------------------------------------
+//
+// Answers Claude Code's Edit. Without it the model reads a file and writes it
+// back whole, which for a short file is correct and for a long one is two full
+// transfers and a window in which somebody else's change is lost. It also
+// cannot be done at all to a file only partially read, which chunked reads
+// make the normal case.
+//
+// The refusals are the substance. An edit that matched more places than the
+// caller meant is the one mistake here that destroys work rather than failing,
+// so ambiguity returns zero and changes nothing.
+
+type editFileArgs struct {
+	Path string `json:"path"`
+	Old  string `json:"old"`
+	New  string `json:"new"`
+	All  bool   `json:"all"`
+}
+
+type editFileResult struct {
+	Path         string `json:"path"`
+	Replacements int    `json:"replacements"`
+	BytesWritten int    `json:"bytes_written"`
+	LineEndings  string `json:"line_endings"`
+}
+
+func opEditFile(root string, args json.RawMessage) (any, error) {
+	var a editFileArgs
+	json.Unmarshal(args, &a)
+	path, err := resolve(root, a.Path)
+	if err != nil {
+		return nil, err
+	}
+	if a.Old == "" {
+		return nil, refuse("bad_request",
+			"An edit needs the text to replace. To create or overwrite a file, "+
+				"use write_file.")
+	}
+	if a.Old == a.New {
+		return nil, refuse("bad_request",
+			"The old and new text are identical, so there is nothing to do.")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, refuse("not_found", "There is no file called %s there.",
+			filepath.Base(path))
+	}
+	if info.IsDir() {
+		return nil, refuse("not_dir", "%s is a folder, not a file.",
+			filepath.Base(path))
+	}
+	if info.Size() > editMaxBytes {
+		return nil, refuse("too_large",
+			"%s is %d bytes, and editing reads the whole file. The ceiling is %d.",
+			filepath.Base(path), info.Size(), editMaxBytes)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, refuse("not_allowed", "%s could not be read.",
+			filepath.Base(path))
+	}
+	head := body
+	if len(head) > 16 {
+		head = head[:16]
+	}
+	if name := magicName(head); name != "" {
+		return nil, refuse("not_text",
+			"%s looks like %s, so it cannot be edited as text.",
+			filepath.Base(path), name)
+	}
+
+	// CRLF, and it has to be handled rather than hoped about. The model sends
+	// "a\nb" because that is what it read: read_file hands back the bytes on
+	// disk, but a model composing new text writes \n. On a CRLF file the
+	// literal match then finds nothing and the edit refuses a change that is
+	// plainly there. So: try exactly, and if that finds nothing on a CRLF
+	// file, try again in the file's own endings. The result says which.
+	oldText, newText := a.Old, a.New
+	endings := "as written"
+	count := strings.Count(string(body), oldText)
+	if count == 0 && bytes.Contains(body, []byte("\r\n")) {
+		crlfOld := strings.ReplaceAll(oldText, "\n", "\r\n")
+		if n := strings.Count(string(body), crlfOld); n > 0 {
+			oldText = crlfOld
+			newText = strings.ReplaceAll(newText, "\n", "\r\n")
+			count, endings = n, "crlf"
+		}
+	}
+
+	if count == 0 {
+		return nil, refuse("not_found",
+			"That text is not in %s, so nothing was changed. Read the file "+
+				"again: it may have moved on since you last saw it.",
+			filepath.Base(path))
+	}
+	if count > 1 && !a.All {
+		// The one mistake here that destroys work rather than failing. Naming
+		// the count is what lets the caller decide between more context and
+		// meaning all of them.
+		return nil, refuse("ambiguous",
+			"That text appears %d times in %s, so nothing was changed. Include "+
+				"enough surrounding lines to name one of them, or set all to "+
+				"replace every occurrence.", count, filepath.Base(path))
+	}
+
+	replacements := 1
+	if a.All {
+		replacements = count
+	}
+	updated := strings.Replace(string(body), oldText, newText, replacements)
+
+	// Beside the target and renamed, the same as write_file: an interrupted
+	// edit leaves the original rather than half of it.
+	tmp := path + ".part"
+	f, err := os.Create(tmp)
+	if err != nil {
+		return nil, refuse("not_allowed", "%s could not be written.",
+			filepath.Base(path))
+	}
+	if _, err := f.WriteString(updated); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return nil, refuse("not_allowed", "%s could not be written.",
+			filepath.Base(path))
+	}
+	f.Sync()
+	f.Close()
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return nil, refuse("not_allowed", "%s could not be written.",
+			filepath.Base(path))
+	}
+	return editFileResult{Path: path, Replacements: replacements,
+		BytesWritten: len(updated), LineEndings: endings}, nil
+}
+
 func opGetFileInfo(root string, args json.RawMessage) (any, error) {
 	var a pathArgs
 	json.Unmarshal(args, &a)
@@ -632,6 +768,11 @@ const (
 	grepMaxBytes = 2 << 20    // a file larger than this is skipped, and said so
 	grepMaxLine  = 64 << 10   // a longer line is not prose and not worth carrying
 	grepContext  = 2          // lines either side, when asked for
+
+	// edit_file reads the whole file to replace inside it. Generous, because
+	// editing a large document is a reasonable thing to ask, and bounded
+	// because the file arrives in this process's memory.
+	editMaxBytes = 8 << 20
 )
 
 type searchFilesArgs struct {
@@ -1059,6 +1200,7 @@ var ops = map[string]func(string, json.RawMessage) (any, error){
 	"get_file_info":  opGetFileInfo,
 	"search_files":   opSearchFiles,
 	"search_content": opSearchContent,
+	"edit_file":      opEditFile,
 }
 
 // -- the session -----------------------------------------------------------

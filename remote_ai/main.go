@@ -66,6 +66,11 @@ import (
 
 const (
 	defaultLimit = 64 * 1024
+	// What Claude Code's Read returns when nobody says otherwise, matched
+	// so a caller that omits `lines` gets the same amount of file it is
+	// used to. Still bounded by defaultLimit in bytes, because 2000 lines
+	// of a minified file is not 2000 lines of prose.
+	defaultReadLines = 2000
 	maxLine      = 1 << 20
 	version      = "draft-1" // the protocol draft implemented, not a repo version
 )
@@ -127,6 +132,15 @@ type readFileArgs struct {
 	Path   string `json:"path"`
 	Offset int64  `json:"offset"`
 	Limit  int    `json:"limit"`
+	// Line addressing, added 27 Sep. Claude Code's Read takes LINE numbers and
+	// this took bytes, so "read lines 500 to 600" could not be said at all and
+	// the model read the whole file to find them.
+	//
+	// FirstLine is 1-based, like every editor and like Read. Zero means absent,
+	// which is why it is not a pointer: line 0 does not exist, so there is no
+	// value to confuse with the default.
+	FirstLine int `json:"first_line"`
+	Lines     int `json:"lines"`
 }
 
 type readFileResult struct {
@@ -135,6 +149,72 @@ type readFileResult struct {
 	EOF        bool   `json:"eof"`
 	BytesSent  int    `json:"bytes_sent"`
 	TotalBytes int64  `json:"total_bytes"`
+	// Only set when the caller asked in lines, so a byte reader sees exactly
+	// what it saw before. FirstLine echoes what was asked; LinesSent is what
+	// came back, which is fewer at the end of the file.
+	FirstLine int `json:"first_line,omitempty"`
+	LinesSent int `json:"lines_sent,omitempty"`
+	NextLine  int `json:"next_line,omitempty"`
+}
+
+// lineWindow finds the byte range covering `count` lines starting at line
+// `first`, 1-based. Returns the start offset, the end offset and how many
+// lines that actually is, which is fewer than asked at the end of the file.
+//
+// It SCANS rather than buffering. Finding line 500 costs reading the first 499
+// lines, which is unavoidable without an index and is still one pass with a
+// fixed buffer rather than the whole file in memory. A caller reading forward
+// should pass next_line back, not re-count from the top each time.
+func lineWindow(f *os.File, first, count int) (start, end int64, lines int, err error) {
+	if _, err = f.Seek(0, io.SeekStart); err != nil {
+		return
+	}
+	r := bufio.NewReaderSize(f, 64*1024)
+	var pos int64
+	at := 1
+	for at < first {
+		var chunk []byte
+		chunk, err = r.ReadSlice('\n')
+		pos += int64(len(chunk))
+		if err != nil {
+			if err == bufio.ErrBufferFull {
+				// A line longer than the buffer. Keep going: it is still one
+				// line, it just takes several reads to cross.
+				err = nil
+				continue
+			}
+			if err == io.EOF {
+				// Asked to start past the end. Not an error: an empty answer
+				// with eof set says so, the same as a byte offset past the end.
+				err = nil
+				return pos, pos, 0, nil
+			}
+			return
+		}
+		at++
+	}
+	start = pos
+	for lines < count {
+		var chunk []byte
+		chunk, err = r.ReadSlice('\n')
+		pos += int64(len(chunk))
+		if err != nil {
+			if err == bufio.ErrBufferFull {
+				err = nil
+				continue
+			}
+			if err == io.EOF {
+				err = nil
+				if len(chunk) > 0 {
+					lines++ // a last line with no newline after it
+				}
+				return start, pos, lines, nil
+			}
+			return
+		}
+		lines++
+	}
+	return start, pos, lines, nil
 }
 
 type writeFileArgs struct {
@@ -510,6 +590,19 @@ func opReadFile(root string, args json.RawMessage) (any, error) {
 	}
 	total := info.Size()
 
+	if a.FirstLine < 0 {
+		return nil, refuse("bad_request",
+			"A first line cannot be negative, and %d is.", a.FirstLine)
+	}
+	if a.FirstLine > 0 && a.Offset > 0 {
+		// One asks in lines and the other in bytes. Honouring both would mean
+		// choosing which the caller meant, and the wrong choice returns
+		// plausible text from the wrong part of the file.
+		return nil, refuse("bad_request",
+			"first_line counts lines and offset counts bytes, so they cannot "+
+				"both apply. Use one or the other.")
+	}
+
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, refuse("not_allowed", "%s could not be opened.", filepath.Base(path))
@@ -519,6 +612,31 @@ func opReadFile(root string, args json.RawMessage) (any, error) {
 	head := make([]byte, 16)
 	nHead, _ := io.ReadFull(f, head)
 	head = head[:nHead]
+
+	// Line addressing turns into a byte window here and nowhere else, so the
+	// whole of the rest of this op, the UTF-8 boundary walk included, is the
+	// code that was already proved.
+	lineCount := 0
+	if a.FirstLine > 0 {
+		want := a.Lines
+		if want <= 0 {
+			want = defaultReadLines
+		}
+		start, end, got, lerr := lineWindow(f, a.FirstLine, want)
+		if lerr != nil {
+			return nil, refuse("internal", "%s could not be read.",
+				filepath.Base(path))
+		}
+		offset, lineCount = start, got
+		if span := int(end - start); span < limit {
+			limit = span
+		}
+		if limit == 0 {
+			// Past the last line. An empty answer with eof set, which is what
+			// a byte offset past the end already does.
+			limit = 1
+		}
+	}
 
 	raw := make([]byte, limit)
 	n, err := f.ReadAt(raw, offset)
@@ -542,6 +660,13 @@ func opReadFile(root string, args json.RawMessage) (any, error) {
 			filepath.Base(path))
 	}
 
+	if a.FirstLine > 0 && lineCount == 0 {
+		// Started past the last line. Say so rather than returning whatever
+		// byte happened to be at that offset.
+		raw = raw[:0]
+		atEOF = true
+	}
+
 	text, used, ok := trimToRune(raw, atEOF)
 	if !ok {
 		return nil, refuse("not_text", "%s is not a text file, so it cannot be read as text.",
@@ -554,13 +679,30 @@ func opReadFile(root string, args json.RawMessage) (any, error) {
 			"That chunk was too small to hold a single character. Ask again with a larger limit.")
 	}
 
-	return readFileResult{
+	out := readFileResult{
 		Path:       path,
 		Content:    text,
 		EOF:        offset+int64(used) >= total,
 		BytesSent:  used,
 		TotalBytes: total,
-	}, nil
+	}
+	if a.FirstLine > 0 {
+		// Counted from the text ACTUALLY returned, not from what the window
+		// found: the UTF-8 boundary walk above can drop the tail of the last
+		// line, and reporting a line as sent when half of it was trimmed is
+		// how a caller reading forward loses a line without noticing.
+		out.FirstLine = a.FirstLine
+		out.LinesSent = strings.Count(text, "\n")
+		if out.EOF && text != "" && !strings.HasSuffix(text, "\n") {
+			// A final line with no newline after it still counts. A PARTIAL
+			// last line mid-file does not: the boundary walk may have cut it,
+			// and calling it sent is how a caller reading forward skips the
+			// rest of it without noticing.
+			out.LinesSent++
+		}
+		out.NextLine = a.FirstLine + out.LinesSent
+	}
+	return out, nil
 }
 
 // opWriteFile writes a file, whole or in pieces.
@@ -834,7 +976,15 @@ const (
 	grepLimit    = 100        // matching lines returned unless asked for fewer
 	grepMaxBytes = 2 << 20    // a file larger than this is skipped, and said so
 	grepMaxLine  = 64 << 10   // a longer line is not prose and not worth carrying
-	grepContext  = 2          // lines either side, when asked for
+	// Raised from 2 on 27 Sep. Two was a guess and Grep has no such cap;
+	// ten is still small enough that a hundred matches cannot blow the
+	// message ceiling, and large enough to see a function around a line.
+	grepContext = 10
+
+	// Sorting newest-first cannot stop early: you have to see every candidate
+	// before you know which are newest. This bounds what is held while doing
+	// so, and hitting it costs `complete`, as every other ceiling here does.
+	searchMaxCollect = 5000
 
 	// edit_file reads the whole file to replace inside it. Generous, because
 	// editing a large document is a reasonable thing to ask, and bounded
@@ -846,11 +996,18 @@ type searchFilesArgs struct {
 	Pattern string `json:"pattern"`
 	Path    string `json:"path"`
 	Limit   int    `json:"limit"`
+	// "path" (default) or "modified". Claude Code's Glob always sorts newest
+	// first, which is often the whole reason for reaching for it, and this op
+	// could only sort by path.
+	Sort string `json:"sort"`
 }
 
 type searchMatch struct {
 	Path string `json:"path"`
 	Kind string `json:"kind"`
+	// Only carried when sorting by it. A caller who asked for newest-first
+	// and cannot see the times has to take the order on trust.
+	Modified string `json:"modified,omitempty"`
 	Size int64  `json:"size"`
 }
 
@@ -987,6 +1144,23 @@ func opSearchFiles(root string, args json.RawMessage) (any, error) {
 			"%s is not a pattern I can read. Try something like *.pdf or "+
 				"docs/**/*.txt.", pattern)
 	}
+	byTime := false
+	switch strings.ToLower(strings.TrimSpace(a.Sort)) {
+	case "", "path":
+	case "modified":
+		byTime = true
+	default:
+		return nil, refuse("bad_request",
+			"sort is \"path\" or \"modified\", not %q.", a.Sort)
+	}
+	// Newest-first cannot stop at the limit, because the newest file may be
+	// the last one the walk reaches. So the limit stops applying to the WALK
+	// and starts applying to the answer, and the collection ceiling takes
+	// over as the thing that bounds the work.
+	collect := limit
+	if byTime {
+		collect = searchMaxCollect
+	}
 
 	deadline := time.Now().Add(searchSeconds * time.Second)
 	result := searchFilesResult{Matches: []searchMatch{}, Complete: true}
@@ -1023,18 +1197,22 @@ func opSearchFiles(root string, args json.RawMessage) (any, error) {
 				rel = it.Name()
 			}
 			if matcher.match(rel, it.Name()) {
-				if len(result.Matches) >= limit {
+				if len(result.Matches) >= collect {
 					result.Complete = false
 					stack = nil
 					break
 				}
 				m := searchMatch{Path: full, Kind: "file"}
+				st, stErr := it.Info()
 				if it.IsDir() {
 					m.Kind = "dir"
-				} else if st, err := it.Info(); err == nil {
+				} else if stErr == nil {
 					m.Size = st.Size()
 				} else {
 					m.Size = -1
+				}
+				if byTime && stErr == nil {
+					m.Modified = st.ModTime().UTC().Format(time.RFC3339)
 				}
 				result.Matches = append(result.Matches, m)
 			}
@@ -1043,10 +1221,29 @@ func opSearchFiles(root string, args json.RawMessage) (any, error) {
 			}
 		}
 	}
-	sort.Slice(result.Matches, func(i, j int) bool {
-		return strings.ToLower(result.Matches[i].Path) <
-			strings.ToLower(result.Matches[j].Path)
-	})
+	if byTime {
+		// Newest first, and the path settles a tie so the answer is the same
+		// twice running. Two files written in the same second are common when
+		// something generated them.
+		sort.Slice(result.Matches, func(i, j int) bool {
+			if result.Matches[i].Modified != result.Matches[j].Modified {
+				return result.Matches[i].Modified > result.Matches[j].Modified
+			}
+			return strings.ToLower(result.Matches[i].Path) <
+				strings.ToLower(result.Matches[j].Path)
+		})
+		if len(result.Matches) > limit {
+			// Truncated AFTER sorting, so these really are the newest, and
+			// complete is false because there were more.
+			result.Matches = result.Matches[:limit]
+			result.Complete = false
+		}
+	} else {
+		sort.Slice(result.Matches, func(i, j int) bool {
+			return strings.ToLower(result.Matches[i].Path) <
+				strings.ToLower(result.Matches[j].Path)
+		})
+	}
 	return result, nil
 }
 
@@ -1069,6 +1266,19 @@ type searchContentArgs struct {
 	CaseSensitive bool   `json:"case_sensitive"`
 	Limit         int    `json:"limit"`
 	Context       int    `json:"context"`
+	// "content" (default), "files" or "count". Grep calls the middle one
+	// files_with_matches; the shorter name is used here because the answer
+	// carries it back in a field of that name.
+	OutputMode string `json:"output_mode"`
+	// Skip this many results before the limit applies, which is how a caller
+	// pages past what it has already seen. Grep spells it offset; that word
+	// means a byte position everywhere else in this protocol.
+	Skip int `json:"skip"`
+}
+
+type fileCount struct {
+	Path  string `json:"path"`
+	Count int    `json:"count"`
 }
 
 type contentMatch struct {
@@ -1080,7 +1290,12 @@ type contentMatch struct {
 }
 
 type searchContentResult struct {
-	Matches  []contentMatch `json:"matches"`
+	Matches []contentMatch `json:"matches"`
+	// Only one of these is ever populated, decided by output_mode. Empty
+	// rather than absent so a caller can tell "asked and found none" from
+	// "did not ask".
+	Files  []string    `json:"files,omitempty"`
+	Counts []fileCount `json:"counts,omitempty"`
 	Complete bool           `json:"complete"`
 	Scanned  int            `json:"scanned"`
 	Read     int            `json:"read"`
@@ -1136,6 +1351,21 @@ func opSearchContent(root string, args json.RawMessage) (any, error) {
 		}
 	}
 
+	mode := strings.ToLower(strings.TrimSpace(a.OutputMode))
+	switch mode {
+	case "":
+		mode = "content"
+	case "content", "files", "count":
+	default:
+		return nil, refuse("bad_request",
+			"output_mode is \"content\", \"files\" or \"count\", not %q.",
+			a.OutputMode)
+	}
+	if a.Skip < 0 {
+		return nil, refuse("bad_request",
+			"skip cannot be negative, and %d is.", a.Skip)
+	}
+
 	limit := a.Limit
 	if limit <= 0 || limit > grepLimit {
 		limit = grepLimit
@@ -1149,6 +1379,10 @@ func opSearchContent(root string, args json.RawMessage) (any, error) {
 
 	deadline := time.Now().Add(searchSeconds * time.Second)
 	result := searchContentResult{Matches: []contentMatch{}, Complete: true}
+	// Counted across the whole walk, not per file: skip pages through the
+	// answer, and an answer that restarted its numbering in every folder
+	// would page over the same results forever.
+	kept := 0
 	stack := []string{start}
 	for len(stack) > 0 {
 		if time.Now().After(deadline) || result.Scanned >= searchMaxScan {
@@ -1217,6 +1451,7 @@ func opSearchContent(root string, args json.RawMessage) (any, error) {
 			result.Read++
 
 			lines := strings.Split(strings.ReplaceAll(string(body), "\r\n", "\n"), "\n")
+			inFile := 0
 			for n, line := range lines {
 				if len(line) > grepMaxLine {
 					// Not prose. Carrying it would blow the message ceiling
@@ -1225,6 +1460,19 @@ func opSearchContent(root string, args json.RawMessage) (any, error) {
 				}
 				if !re.MatchString(line) {
 					continue
+				}
+				inFile++
+				if mode == "files" {
+					// One is enough to know the file matched, and reading on
+					// costs the rest of the file for an answer already known.
+					break
+				}
+				if mode != "content" {
+					continue
+				}
+				kept++
+				if kept <= a.Skip {
+					continue // paged past
 				}
 				if len(result.Matches) >= limit {
 					result.Complete = false
@@ -1245,6 +1493,20 @@ func opSearchContent(root string, args json.RawMessage) (any, error) {
 				}
 				result.Matches = append(result.Matches, m)
 			}
+			if inFile > 0 && mode != "content" {
+				kept++
+				if kept > a.Skip {
+					if len(result.Files)+len(result.Counts) >= limit {
+						result.Complete = false
+						stack = nil
+					} else if mode == "files" {
+						result.Files = append(result.Files, full)
+					} else {
+						result.Counts = append(result.Counts,
+							fileCount{Path: full, Count: inFile})
+					}
+				}
+			}
 			if stack == nil {
 				break
 			}
@@ -1255,6 +1517,10 @@ func opSearchContent(root string, args json.RawMessage) (any, error) {
 			return result.Matches[i].Path < result.Matches[j].Path
 		}
 		return result.Matches[i].Line < result.Matches[j].Line
+	})
+	sort.Strings(result.Files)
+	sort.Slice(result.Counts, func(i, j int) bool {
+		return result.Counts[i].Path < result.Counts[j].Path
 	})
 	return result, nil
 }

@@ -141,6 +141,11 @@ type readFileArgs struct {
 	// value to confuse with the default.
 	FirstLine int `json:"first_line"`
 	Lines     int `json:"lines"`
+	// "text" (default) or "base64". The CALLER asks, rather than the
+	// connector deciding per file: a read that silently changed shape
+	// depending on what it found would make every caller handle both, and
+	// the text path is the one that must not move.
+	Encoding string `json:"encoding"`
 }
 
 type readFileResult struct {
@@ -152,9 +157,13 @@ type readFileResult struct {
 	// Only set when the caller asked in lines, so a byte reader sees exactly
 	// what it saw before. FirstLine echoes what was asked; LinesSent is what
 	// came back, which is fewer at the end of the file.
-	FirstLine int `json:"first_line,omitempty"`
-	LinesSent int `json:"lines_sent,omitempty"`
-	NextLine  int `json:"next_line,omitempty"`
+	FirstLine  int `json:"first_line,omitempty"`
+	LinesSent  int `json:"lines_sent,omitempty"`
+	NextLine   int `json:"next_line,omitempty"`
+	// Set only when it is not utf8, so a text result is byte for byte what
+	// it was before this existed and every fixture recorded until 27 Sep
+	// still describes it exactly.
+	Encoding string `json:"encoding,omitempty"`
 }
 
 // lineWindow finds the byte range covering `count` lines starting at line
@@ -590,6 +599,22 @@ func opReadFile(root string, args json.RawMessage) (any, error) {
 	}
 	total := info.Size()
 
+	binary := false
+	switch strings.ToLower(strings.TrimSpace(a.Encoding)) {
+	case "", "text", "utf8":
+	case "base64":
+		binary = true
+	default:
+		return nil, refuse("bad_request",
+			"encoding is \"text\" or \"base64\", not %q.", a.Encoding)
+	}
+	if binary && a.FirstLine > 0 {
+		// Lines are a property of text. Asking for line 3 of a JPEG is a
+		// question with no answer, so it is refused rather than guessed at.
+		return nil, refuse("bad_request",
+			"first_line counts lines, which binary content does not have. "+
+				"Use offset and limit with encoding base64.")
+	}
 	if a.FirstLine < 0 {
 		return nil, refuse("bad_request",
 			"A first line cannot be negative, and %d is.", a.FirstLine)
@@ -646,17 +671,37 @@ func opReadFile(root string, args json.RawMessage) (any, error) {
 	raw = raw[:n]
 	atEOF := offset+int64(n) >= total
 
+	if binary {
+		// Returns BEFORE every check below, because all of them are about
+		// text: the magic-byte refusal, the NUL sentinel and the rune
+		// boundary walk. A byte range has no character boundaries to respect
+		// and no encoding to get wrong, which is the whole reason this is
+		// the primitive rather than a format reader.
+		return readFileResult{
+			Path:       path,
+			Content:    base64.StdEncoding.EncodeToString(raw),
+			EOF:        offset+int64(n) >= total,
+			BytesSent:  n,
+			TotalBytes: total,
+			Encoding:   "base64",
+		}, nil
+	}
+
 	// Sniff before decoding, not after. A failed decode is not a reliable test
 	// for binary: the first chunk of a real PDF is mostly ASCII object headers,
 	// and NUL is perfectly valid UTF-8 -- so a decode-only check reads a PDF
 	// happily and hands Claude line noise it will try to interpret.
 	if name := magicName(head); name != "" {
-		return nil, refuse("not_text", "%s looks like %s, so it cannot be read as text.",
+		return nil, refuse("not_text",
+			"%s looks like %s, so it cannot be read as text. Ask again with "+
+				"encoding base64 to get the bytes.",
 			filepath.Base(path), name)
 	}
 	if bytes.IndexByte(raw, 0) >= 0 {
 		// The same sentinel git uses. No real text file carries a NUL.
-		return nil, refuse("not_text", "%s is not a text file, so it cannot be read as text.",
+		return nil, refuse("not_text",
+			"%s is not a text file, so it cannot be read as text. Ask again "+
+				"with encoding base64 to get the bytes.",
 			filepath.Base(path))
 	}
 

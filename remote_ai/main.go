@@ -1026,6 +1026,20 @@ const (
 	// message ceiling, and large enough to see a function around a line.
 	grepContext = 10
 
+	// Multiline matching scans a file as one string instead of line by
+	// line, so a pattern's cost stops being bounded by the length of a
+	// line. Python's engine backtracks and this one does not, so the same
+	// pattern can be cheap here and ruinous there, and a ceiling is the
+	// only thing that keeps the two answering together. A file above this
+	// is skipped and counted in TooBig, exactly as the larger ceiling
+	// already does.
+	grepMultilineMaxBytes = 256 << 10
+	// Matches CONSIDERED in one file before the search gives up on the
+	// rest of it. A pattern that can match at nearly every position finds
+	// one per byte, and hitting this costs Complete like every other
+	// ceiling here.
+	grepMaxPerFile = 20000
+
 	// Sorting newest-first cannot stop early: you have to see every candidate
 	// before you know which are newest. This bounds what is held while doing
 	// so, and hitting it costs `complete`, as every other ceiling here does.
@@ -1060,6 +1074,120 @@ type searchFilesResult struct {
 	Matches  []searchMatch `json:"matches"`
 	Complete bool          `json:"complete"`
 	Scanned  int           `json:"scanned"`
+}
+
+// grepTypes is `type`: sugar over `glob`, a language name standing for the
+// extensions that language is written in.
+//
+// It is matched as an EXTENSION rather than expanded into a glob, and that is
+// a decision rather than a shortcut. Every language here with more than one
+// extension would need *.{py,pyi}, and the glob engine has no brace syntax.
+// Adding one would change search_files too, in two languages, for a feature
+// only this op asked for, and brace expansion has its own arguments to have
+// (nesting, a comma inside a character class). An extension set has none.
+//
+// Deliberately small. A name that is not here is a refusal that says so and
+// names what there is, because a `type` silently matching nothing is the
+// absence-reported-as-fact failure this whole op is built around.
+var grepTypes = map[string][]string{
+	"c":    {".c", ".h"},
+	"cpp":  {".cpp", ".cc", ".cxx", ".hpp", ".hh"},
+	"cs":   {".cs"},
+	"css":  {".css"},
+	"csv":  {".csv"},
+	"go":   {".go"},
+	"html": {".html", ".htm"},
+	"ini":  {".ini", ".cfg", ".conf"},
+	"java": {".java"},
+	"js":   {".js", ".mjs", ".cjs", ".jsx"},
+	"json": {".json"},
+	"log":  {".log"},
+	"md":   {".md", ".markdown"},
+	"php":  {".php"},
+	"ps1":  {".ps1", ".psm1"},
+	"py":   {".py", ".pyi"},
+	"rb":   {".rb"},
+	"rs":   {".rs"},
+	"sh":   {".sh", ".bash", ".zsh"},
+	"sql":  {".sql"},
+	"tex":  {".tex"},
+	"toml": {".toml"},
+	"ts":   {".ts", ".mts", ".cts", ".tsx"},
+	"txt":  {".txt", ".text"},
+	"vb":   {".vb", ".bas", ".cls", ".frm"},
+	"xml":  {".xml"},
+	"yaml": {".yaml", ".yml"},
+}
+
+// The spellings a model actually writes. Claude Code's own Grep description
+// offers "py" and "rust" in one breath, so both have to work or the parameter
+// refuses the example it was given.
+var grepTypeAliases = map[string]string{
+	"bash": "sh", "c++": "cpp", "csharp": "cs", "golang": "go",
+	"htm": "html", "javascript": "js", "markdown": "md", "powershell": "ps1",
+	"python": "py", "ruby": "rb", "rust": "rs", "shell": "sh", "text": "txt",
+	"typescript": "ts", "vba": "vb", "yml": "yaml",
+}
+
+// grepTypeNames is the sorted list of what grepTypes knows, for the refusal.
+// Built once: a map's order is randomised in Go, and a refusal that named the
+// same types in a different order every time would be a diff for no reason.
+func grepTypeNames() string {
+	names := make([]string, 0, len(grepTypes))
+	for name := range grepTypes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
+// extensionOf is the lowercased extension of a file name, or "" when it has
+// none.
+//
+// Spelled out rather than taken from the standard library, because the two
+// libraries disagree. filepath.Ext(".gitignore") calls the extension
+// ".gitignore" and Python's os.path.splitext calls it empty, so a dotfile
+// would have matched a `type` on one connector and not the other. A leading
+// dot is a name here, not an extension.
+func extensionOf(name string) string {
+	cut := strings.LastIndexByte(name, '.')
+	if cut > 0 {
+		return strings.ToLower(name[cut:])
+	}
+	return ""
+}
+
+// typeSuffixes is the extensions a `type` names, or a refusal saying what
+// there is.
+//
+// Several may be named, comma-separated, because asking for Python and Go at
+// once is an ordinary thing to want and the alternative is two searches.
+func typeSuffixes(spec string) (map[string]bool, error) {
+	out := map[string]bool{}
+	for _, word := range strings.Split(spec, ",") {
+		name := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(word)), ".")
+		if name == "" {
+			continue
+		}
+		if alias, ok := grepTypeAliases[name]; ok {
+			name = alias
+		}
+		exts, ok := grepTypes[name]
+		if !ok {
+			return nil, refuse("bad_request",
+				"I do not know a file type called %q. The ones I know are: %s. "+
+					"For anything else, use glob.",
+				strings.TrimSpace(word), grepTypeNames())
+		}
+		for _, ext := range exts {
+			out[ext] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil, refuse("bad_request",
+			"type was given as %q, which names no file type.", spec)
+	}
+	return out, nil
 }
 
 // globToRegexp turns a shell-style pattern into a regular expression.
@@ -1302,15 +1430,25 @@ func opSearchFiles(root string, args json.RawMessage) (any, error) {
 // pages by pulling every chunk across the wire and scanning it in the model is
 // not practical, and matching on the machine the files are already on is
 // nearly free. That is the same argument read_file's chunking makes.
+//
+// Type narrows by language and Multiline lets a pattern cross a newline.
+// Both are Grep's, and both had to land on this end: the filter because
+// the walk happens here, and the matching because the files are here.
 
 type searchContentArgs struct {
-	Query         string `json:"query"`
-	Path          string `json:"path"`
-	Glob          string `json:"glob"`
-	Regex         bool   `json:"regex"`
-	CaseSensitive bool   `json:"case_sensitive"`
-	Limit         int    `json:"limit"`
-	Context       int    `json:"context"`
+	Query string `json:"query"`
+	Path  string `json:"path"`
+	Glob  string `json:"glob"`
+	// A language name, or several comma-separated, standing for the
+	// extensions it is written in. Sugar over Glob, and ANDed with it.
+	Type string `json:"type"`
+	// Let a pattern cross a newline: the file is matched as one string
+	// rather than line by line, and `.` crosses a line ending.
+	Multiline     bool `json:"multiline"`
+	Regex         bool `json:"regex"`
+	CaseSensitive bool `json:"case_sensitive"`
+	Limit         int  `json:"limit"`
+	Context       int  `json:"context"`
 	// "content" (default), "files" or "count". Grep calls the middle one
 	// files_with_matches; the shorter name is used here because the answer
 	// carries it back in a field of that name.
@@ -1327,11 +1465,14 @@ type fileCount struct {
 }
 
 type contentMatch struct {
-	Path   string   `json:"path"`
-	Line   int      `json:"line"`
-	Text   string   `json:"text"`
-	Before []string `json:"before,omitempty"`
-	After  []string `json:"after,omitempty"`
+	Path string `json:"path"`
+	Line int    `json:"line"`
+	// Where a multiline match stopped. Absent when it did not span,
+	// so a match inside one line answers as it always did.
+	EndLine int      `json:"end_line,omitempty"`
+	Text    string   `json:"text"`
+	Before  []string `json:"before,omitempty"`
+	After   []string `json:"after,omitempty"`
 }
 
 type searchContentResult struct {
@@ -1374,12 +1515,25 @@ func opSearchContent(root string, args json.RawMessage) (any, error) {
 	// is deliberate. These are somebody's documents rather than source, and a
 	// missed match is reported as an absence. That is the failure this whole
 	// family of ops keeps having to design around.
+	flags := ""
+	if !a.CaseSensitive {
+		flags = "i"
+	}
+	if a.Multiline {
+		// `s` so `.` crosses a newline, which is the whole point of the
+		// parameter. `m` so `^` and `$` are line anchors, and that one is
+		// about parity rather than taste: Python's `$` matches before a
+		// file's trailing newline and this engine's does not, so without
+		// `m` the two connectors disagree on the commonest pattern there
+		// is.
+		flags += "sm"
+	}
 	expr := query
 	if !a.Regex {
 		expr = regexp.QuoteMeta(query)
 	}
-	if !a.CaseSensitive {
-		expr = "(?i)" + expr
+	if flags != "" {
+		expr = "(?" + flags + ")" + expr
 	}
 	re, err := regexp.Compile(expr)
 	if err != nil {
@@ -1393,6 +1547,16 @@ func opSearchContent(root string, args json.RawMessage) (any, error) {
 			return nil, refuse("bad_request",
 				"%s is not a pattern I can read. Try something like *.md or "+
 					"docs/**/*.txt.", a.Glob)
+		}
+	}
+
+	// AND, not OR. type="py" with glob="tests/**" means the Python files
+	// under tests, which is the only reading either one can have
+	// alongside the other.
+	var suffixes map[string]bool
+	if strings.TrimSpace(a.Type) != "" {
+		if suffixes, err = typeSuffixes(strings.TrimSpace(a.Type)); err != nil {
+			return nil, err
 		}
 	}
 
@@ -1456,6 +1620,9 @@ func opSearchContent(root string, args json.RawMessage) (any, error) {
 				stack = append(stack, full)
 				continue
 			}
+			if suffixes != nil && !suffixes[extensionOf(it.Name())] {
+				continue
+			}
 			if matcher != nil {
 				rel, relErr := filepath.Rel(start, full)
 				if relErr != nil {
@@ -1473,9 +1640,23 @@ func opSearchContent(root string, args json.RawMessage) (any, error) {
 			// COUNTED, not silently passed over. A search that skipped the one
 			// file the answer was in and said nothing would be the same lie as
 			// stopping early and claiming completeness.
-			if st.Size() > grepMaxBytes {
+			ceiling := int64(grepMaxBytes)
+			if a.Multiline {
+				ceiling = grepMultilineMaxBytes
+			}
+			if st.Size() > ceiling {
 				result.TooBig++
 				continue
+			}
+			// The walk's own deadline was only checked once per DIRECTORY, so a
+			// flat one of five thousand files did all its reading inside one
+			// iteration and never looked at the clock. Multiline turns each of
+			// those reads into a whole-file match, which is where that stops
+			// being theoretical.
+			if time.Now().After(deadline) {
+				result.Complete = false
+				stack = nil
+				break
 			}
 			body, err := os.ReadFile(full)
 			if err != nil {
@@ -1495,48 +1676,135 @@ func opSearchContent(root string, args json.RawMessage) (any, error) {
 			}
 			result.Read++
 
-			lines := strings.Split(strings.ReplaceAll(string(body), "\r\n", "\n"), "\n")
+			text := strings.ReplaceAll(string(body), "\r\n", "\n")
+			lines := strings.Split(text, "\n")
 			inFile := 0
-			for n, line := range lines {
-				if len(line) > grepMaxLine {
-					// Not prose. Carrying it would blow the message ceiling
-					// for one minified file.
-					continue
+			// Two loops rather than one, because a multiline match is a
+			// different object from a matching line: it has two line numbers,
+			// it is found by position rather than by iterating lines, and it
+			// has its own ceilings. Folding them together meant a generator
+			// in one language and a slice in the other, which is exactly the
+			// shape the two connectors drift apart in.
+			if a.Multiline {
+				// Every line's start offset, so a match's position becomes a
+				// line number. Built once per file, not once per match.
+				starts := make([]int, 0, len(lines))
+				at := 0
+				for _, one := range lines {
+					starts = append(starts, at)
+					at += len(one) + 1
 				}
-				if !re.MatchString(line) {
-					continue
-				}
-				inFile++
-				if mode == "files" {
-					// One is enough to know the file matched, and reading on
-					// costs the rest of the file for an answer already known.
-					break
-				}
-				if mode != "content" {
-					continue
-				}
-				kept++
-				if kept <= a.Skip {
-					continue // paged past
-				}
-				if len(result.Matches) >= limit {
-					result.Complete = false
-					stack = nil
-					break
-				}
-				m := contentMatch{Path: full, Line: n + 1,
-					Text: strings.ToValidUTF8(line, "\uFFFD")}
-				for i := n - around; i < n; i++ {
-					if i >= 0 {
-						m.Before = append(m.Before,
+				// The engine's own enumeration, asked for one more than the
+				// ceiling so that hitting it is distinguishable from ending on
+				// it. Sliced by hand it would re-anchor `^` at the cut, and
+				// Python's search-from-offset does not, which is a divergence
+				// on the first pattern anyone writes.
+				spans := re.FindAllStringIndex(text, grepMaxPerFile+1)
+				for k, span := range spans {
+					if k >= grepMaxPerFile {
+						result.Complete = false
+						break
+					}
+					atStart, atEnd := span[0], span[1]
+					if atEnd == atStart {
+						// A zero-width match is not something anyone searched
+						// for, and the two engines need not agree on where one
+						// lands. Dropping them is what lets this op promise the
+						// same answer in both languages.
+						continue
+					}
+					first := sort.SearchInts(starts, atStart+1) - 1
+					last := sort.SearchInts(starts, atEnd) - 1
+					// A match returns the whole LINES it touches rather than the
+					// character range, so what comes back reads as the file
+					// reads and Line still means what it means everywhere else.
+					// EndLine says where it stopped.
+					found := strings.Join(lines[first:last+1], "\n")
+					if len(found) > grepMaxLine {
+						// The same judgement as the per-line ceiling: past this
+						// it is not prose. Dropping it costs Complete rather
+						// than truncating, because half a match is not a match.
+						result.Complete = false
+						continue
+					}
+					inFile++
+					if mode == "files" {
+						break
+					}
+					if mode != "content" {
+						continue
+					}
+					kept++
+					if kept <= a.Skip {
+						continue // paged past
+					}
+					if len(result.Matches) >= limit {
+						result.Complete = false
+						stack = nil
+						break
+					}
+					m := contentMatch{Path: full, Line: first + 1,
+						Text: strings.ToValidUTF8(found, "\uFFFD")}
+					if last != first {
+						// Only when it really spans more than one line, so a
+						// multiline search that happened to match inside one
+						// line answers exactly as it would without the flag.
+						m.EndLine = last + 1
+					}
+					for i := first - around; i < first; i++ {
+						if i >= 0 {
+							m.Before = append(m.Before,
+								strings.ToValidUTF8(lines[i], "\uFFFD"))
+						}
+					}
+					for i := last + 1; i <= last+around && i < len(lines); i++ {
+						m.After = append(m.After,
 							strings.ToValidUTF8(lines[i], "\uFFFD"))
 					}
+					result.Matches = append(result.Matches, m)
 				}
-				for i := n + 1; i <= n+around && i < len(lines); i++ {
-					m.After = append(m.After,
-						strings.ToValidUTF8(lines[i], "\uFFFD"))
+			} else {
+				for n, line := range lines {
+					if len(line) > grepMaxLine {
+						// Not prose. Carrying it would blow the message ceiling
+						// for one minified file.
+						continue
+					}
+					if !re.MatchString(line) {
+						continue
+					}
+					inFile++
+					if mode == "files" {
+						// One is enough to know the file matched, and reading on
+						// costs the rest of the file for an answer already known.
+						break
+					}
+					if mode != "content" {
+						continue
+					}
+					kept++
+					if kept <= a.Skip {
+						continue // paged past
+					}
+					if len(result.Matches) >= limit {
+						result.Complete = false
+						stack = nil
+						break
+					}
+					m := contentMatch{Path: full, Line: n + 1,
+						Text: strings.ToValidUTF8(line, "\uFFFD")}
+					for i := n - around; i < n; i++ {
+						if i >= 0 {
+							m.Before = append(m.Before,
+								strings.ToValidUTF8(lines[i], "\uFFFD"))
+						}
+					}
+					for i := n + 1; i <= n+around && i < len(lines); i++ {
+						m.After = append(m.After,
+							strings.ToValidUTF8(lines[i], "\uFFFD"))
+					}
+					result.Matches = append(result.Matches, m)
 				}
-				result.Matches = append(result.Matches, m)
 			}
 			if inFile > 0 && mode != "content" {
 				kept++

@@ -25,7 +25,20 @@ builds:
     binary: nielsoln-bridge
     env:
       - CGO_ENABLED=0
-    goos: [windows, darwin]
+    # Linux added 29 Sep 2026. It cross-compiles from anywhere, because
+    # this is stdlib only with CGO off and links_other.go has carried the
+    # !windows half since the start. Built rather than assumed: both
+    # architectures compile clean, and the amd64 binary replays 56 of the
+    # 57 recorded fixtures under WSL.
+    #
+    # The 57th is NOT a defect and must not be fixed by changing the Go. A
+    # path like /mnt/c/x is not absolute on Windows, so it is refused as
+    # "not inside the folder shared". On Linux it IS absolute, so it is
+    # cleaned and then refused by containment as "outside the folder
+    # shared". Same code, same not_allowed, different and equally true
+    # reason. The fixture records the Windows judgement because that is
+    # where it was recorded.
+    goos: [windows, darwin, linux]
     goarch: [amd64, arm64]
     ignore:
       # Windows on ARM exists and nobody is bringing one to this room. Left

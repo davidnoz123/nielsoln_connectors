@@ -54,7 +54,10 @@ func aclOf(t *testing.T, path string) string {
 
 func TestTheWorkspaceGrantIsTakenBackAtTheEnd(t *testing.T) {
 	dir := t.TempDir()
-	name := cageNameFor("granttest1", dir)
+	name, err := newCageName()
+	if err != nil {
+		t.Fatal(err)
+	}
 	sid, err := cageSID(name)
 	if err != nil {
 		t.Skipf("no container profile available here: %v", err)
@@ -87,40 +90,32 @@ func TestTheWorkspaceGrantIsTakenBackAtTheEnd(t *testing.T) {
 	}
 }
 
-func TestTwoSessionsNeverShareAnIdentity(t *testing.T) {
-	// The second half of the fix, and the half that still holds when a machine
-	// loses power before anything can be taken back. A grant left on a folder
-	// must name an identity no later session runs as.
-	a := cageNameFor("sessionAAA", "")
-	b := cageNameFor("sessionBBB", "")
-	if a == b {
-		t.Fatalf("two sessions produced one identity: %s", a)
-	}
-
-	sidA, err := cageSID(a)
-	if err != nil {
-		t.Skipf("no container profile available here: %v", err)
-	}
-	t.Cleanup(func() { deleteCageProfile(a) })
-	sidB, err := cageSID(b)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { deleteCageProfile(b) })
-	strA, _ := sidString(sidA)
-	strB, _ := sidString(sidB)
-	if strA == strB {
-		t.Fatalf("two names hashed to one SID, so a leak would be inherited: %s",
-			strA)
-	}
-}
-
-func TestAResumedSessionKeepsItsOwnCage(t *testing.T) {
-	// The reason the name comes from the pairing token rather than from
-	// something random per run: a session that drops and reconnects must land
-	// in the SAME cage, or every reconnect leaves another grant behind and the
-	// leak this file exists to close comes back by a different route.
-	if cageNameFor("KEY123", "") != cageNameFor("key123", "") {
-		t.Error("the same session produced two identities across a reconnect")
+// The identity must not be derivable from anything a later run can repeat.
+//
+// It WAS derived from the pairing token, so a session could resume into the
+// same cage. A token can be quoted again, so a grant a crash left on one
+// folder was inherited by the next run using that token -- which might be
+// sharing a different folder entirely. An outside review of 5d8a4d8 found it,
+// and the comment claiming no future session would hold that SID was the thing
+// it disproved.
+//
+// Resuming never needed it: the reconnect loop runs INSIDE the caged child, so
+// a dropped socket does not leave the cage and there is nothing for the name
+// to survive.
+func TestAnIdentityCannotBeRepeatedByAnyLaterRun(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 64; i++ {
+		name, err := newCageName()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if seen[name] {
+			t.Fatalf("an identity came round again after %d: %s", i, name)
+		}
+		if !strings.HasPrefix(name, cagePrefix) {
+			t.Fatalf("%s is not recognisable as ours, so a sweep would miss it",
+				name)
+		}
+		seen[name] = true
 	}
 }

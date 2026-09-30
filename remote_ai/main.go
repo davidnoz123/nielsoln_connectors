@@ -2572,7 +2572,7 @@ func main() {
 			// failure would look like a broken connector.
 			logf("not confining this session: the bridge is on this machine "+
 				"(%s), and a confined process cannot reach it", *host)
-		} else if code, err := enterCage(abs, *token); err == nil {
+		} else if code, err := enterCage(abs); err == nil {
 			os.Exit(code)
 		} else {
 			logf("WARNING: this session could not be confined to %s (%v)",

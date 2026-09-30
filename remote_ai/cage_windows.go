@@ -40,10 +40,11 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
-	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -181,31 +182,34 @@ func inCage() bool {
 	return r != 0 && isContainer != 0
 }
 
-// cageNameFor is this session's container name.
+// newCageName invents a container name that has never existed and will never
+// exist again.
 //
-// Derived from the pairing token, so a session that drops and resumes gets the
-// SAME cage and the same grant rather than accumulating one per reconnect,
-// while two different sessions never share an identity. Where there is no
-// token, the workspace path stands in: it is the thing the grant is about.
+// It was DERIVED FROM THE PAIRING TOKEN, so a session that dropped and resumed
+// would land back in the same cage. An outside review of 5d8a4d8 pointed out
+// that this makes the claim above it false: a token can be quoted again, so a
+// grant left on a folder by a crash IS inherited by the next run using that
+// token, and that run may be sharing a different folder entirely. The escape
+// the per-session identity existed to close was still open, through the one
+// door left ajar.
 //
-// Only letters and digits survive, because the name becomes a filesystem
-// directory under AppData\Local\Packages.
-func cageNameFor(token, workspace string) string {
-	seed := token
-	if seed == "" {
-		seed = workspace
+// The reason for deriving it was mistaken anyway. Reconnecting does not
+// restart this process: the `for { runOnce() }` loop is INSIDE the caged
+// child, so a dropped socket never leaves the cage and there was nothing for
+// the name to survive. Random per invocation costs nothing.
+//
+// That is what turns cleanup from a security requirement into housekeeping. A
+// crash now leaves an untidy entry naming an identity nothing will ever run as
+// again, which is where you want the consequence of a missed cleanup to sit.
+func newCageName() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// Refused, not fallen back on. Every weaker source of a name is one
+		// somebody could predict, and a predictable name is the bug this
+		// function was just rewritten to remove.
+		return "", fmt.Errorf("no random source for a cage name: %w", err)
 	}
-	var b strings.Builder
-	b.WriteString(cagePrefix)
-	for _, r := range seed {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case r >= 'A' && r <= 'Z':
-			b.WriteRune(r + 32)
-		}
-	}
-	return b.String()
+	return cagePrefix + hex.EncodeToString(b[:]), nil
 }
 
 // cageSID returns the container's SID, creating the profile the first time.
@@ -291,8 +295,11 @@ func grantToCage(path string, sid uintptr, rights uint32) error {
 
 // enterCage relaunches this executable inside the container and waits for it,
 // returning the child's exit code.
-func enterCage(workspace, token string) (int, error) {
-	cageName := cageNameFor(token, workspace)
+func enterCage(workspace string) (int, error) {
+	cageName, err := newCageName()
+	if err != nil {
+		return 0, err
+	}
 	self, err := os.Executable()
 	if err != nil {
 		return 0, err
@@ -306,6 +313,11 @@ func enterCage(workspace, token string) (int, error) {
 	if err := grantToCage(workspace, sid, genericAll); err != nil {
 		return 0, err
 	}
+	// Every path out from here hands it back, including the error ones.
+	// Before this, a failure in any later setup step returned with the
+	// workspace grant still installed and nothing to remove it: a leak with no
+	// crash involved, found by an outside review of 5d8a4d8.
+	defer releaseCage(workspace, self, sid, cageName)
 	// And this binary, read and execute, or the container cannot start it.
 	// Under `go run` the binary lives in %TEMP%\go-build..., which carries no
 	// container ACE at all, and that is the route the page recommends.
@@ -383,19 +395,15 @@ func enterCage(workspace, token string) (int, error) {
 	var code uint32
 	syscall.GetExitCodeProcess(pi.Process, &code)
 
-	// Hand the folder back. This process is the UNCAGED parent, which is the
-	// only one that can: the confined copy cannot change permissions on the
-	// thing confining it.
-	//
-	// Best-effort by necessity -- a machine that loses power skips it -- which
-	// is why the identity is per session as well. Belt and braces, because a
-	// grant that outlives its session is what an outside review of b6c835a
-	// found, and one of the two has to hold when the other does not.
-	releaseCage(workspace, self, sid, cageName)
 	return int(code), nil
 }
 
 // releaseCage takes back what enterCage granted, and removes the profile.
+//
+// Run by the UNCAGED parent, which is the only process that can: the confined
+// copy cannot change permissions on the thing confining it. Best-effort by
+// necessity, since a machine that loses power skips it -- which is why the
+// cage identity is random per invocation as well. Neither alone is enough.
 func releaseCage(workspace, self string, sid uintptr, cageName string) {
 	for _, p := range []string{workspace, self} {
 		if err := revokeFromCage(p, sid); err != nil {

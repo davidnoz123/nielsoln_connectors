@@ -23,7 +23,7 @@ func inCage() bool { return false }
 // operations, their path checking, and no exec.
 func cageSupported() bool { return false }
 
-func enterCage(workspace string) (int, error) {
+func enterCage(workspace, token string) (int, error) {
 	panic("enterCage on a platform with no cage: guard with cageSupported()")
 }
 

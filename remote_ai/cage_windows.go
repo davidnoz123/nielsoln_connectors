@@ -43,6 +43,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -54,6 +55,7 @@ var (
 
 	procCreateAppContainerProfile = userenvDLL.NewProc("CreateAppContainerProfile")
 	procDeriveAppContainerSid     = userenvDLL.NewProc("DeriveAppContainerSidFromAppContainerName")
+	procDeleteAppContainerProfile = userenvDLL.NewProc("DeleteAppContainerProfile")
 
 	procConvertStringSidToSid = advapi32DLL.NewProc("ConvertStringSidToSidW")
 	procGetNamedSecurityInfo  = advapi32DLL.NewProc("GetNamedSecurityInfoW")
@@ -69,10 +71,25 @@ var (
 )
 
 const (
-	// The profile is a persistent Windows object, so it is named per machine
-	// rather than per session. One per session would leave a participant's
-	// machine littered with profiles nobody ever removes.
-	cageName = "nielsoln.bridge.session"
+	// Every name this program makes begins with this, so its own leavings can
+	// be told from somebody else's.
+	//
+	// The name USED to be a single per-machine "nielsoln.bridge.session", on
+	// the reasoning that one profile per session would litter the machine.
+	// That reasoning was the bug, and an outside review of b6c835a found it.
+	// A container name hashes to a SID, the workspace grant is an inheritable
+	// ACE for that SID, and nothing removed it. So every folder ever shared
+	// kept a permanent full-control grant for the identity that EVERY later
+	// session would run as -- and since exec is confined by that ACL rather
+	// than by any path check, a later session could read and write every
+	// earlier one's folder. Measured on this machine: a folder shared hours
+	// before still carried (OI)(CI)(F) for the shared SID.
+	//
+	// So the identity is per session now. A grant left behind by a crash then
+	// names a SID no future session will ever run as, which makes the leak
+	// untidy instead of dangerous. Tidiness was the thing being optimised for
+	// in the first place, and it was the wrong thing.
+	cagePrefix = "nielsoln.bridge."
 
 	// Creating a profile that exists is an error rather than a no-op, so this
 	// is the expected result on every run after the first.
@@ -95,6 +112,7 @@ const (
 	seFileObject                   = 1
 	daclSecurityInfo               = 0x00000004
 	grantAccess                    = 1
+	revokeAccess                   = 4
 	trusteeIsSID                   = 0
 	trusteeIsGroup                 = 2
 	subContainersAndObjectsInherit = 0x00000003
@@ -163,8 +181,35 @@ func inCage() bool {
 	return r != 0 && isContainer != 0
 }
 
+// cageNameFor is this session's container name.
+//
+// Derived from the pairing token, so a session that drops and resumes gets the
+// SAME cage and the same grant rather than accumulating one per reconnect,
+// while two different sessions never share an identity. Where there is no
+// token, the workspace path stands in: it is the thing the grant is about.
+//
+// Only letters and digits survive, because the name becomes a filesystem
+// directory under AppData\Local\Packages.
+func cageNameFor(token, workspace string) string {
+	seed := token
+	if seed == "" {
+		seed = workspace
+	}
+	var b strings.Builder
+	b.WriteString(cagePrefix)
+	for _, r := range seed {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r + 32)
+		}
+	}
+	return b.String()
+}
+
 // cageSID returns the container's SID, creating the profile the first time.
-func cageSID() (uintptr, error) {
+func cageSID(cageName string) (uintptr, error) {
 	name, err := syscall.UTF16PtrFromString(cageName)
 	if err != nil {
 		return 0, err
@@ -246,12 +291,13 @@ func grantToCage(path string, sid uintptr, rights uint32) error {
 
 // enterCage relaunches this executable inside the container and waits for it,
 // returning the child's exit code.
-func enterCage(workspace string) (int, error) {
+func enterCage(workspace, token string) (int, error) {
+	cageName := cageNameFor(token, workspace)
 	self, err := os.Executable()
 	if err != nil {
 		return 0, err
 	}
-	sid, err := cageSID()
+	sid, err := cageSID(cageName)
 	if err != nil {
 		return 0, err
 	}
@@ -336,7 +382,87 @@ func enterCage(workspace string) (int, error) {
 	syscall.WaitForSingleObject(pi.Process, syscall.INFINITE)
 	var code uint32
 	syscall.GetExitCodeProcess(pi.Process, &code)
+
+	// Hand the folder back. This process is the UNCAGED parent, which is the
+	// only one that can: the confined copy cannot change permissions on the
+	// thing confining it.
+	//
+	// Best-effort by necessity -- a machine that loses power skips it -- which
+	// is why the identity is per session as well. Belt and braces, because a
+	// grant that outlives its session is what an outside review of b6c835a
+	// found, and one of the two has to hold when the other does not.
+	releaseCage(workspace, self, sid, cageName)
 	return int(code), nil
+}
+
+// releaseCage takes back what enterCage granted, and removes the profile.
+func releaseCage(workspace, self string, sid uintptr, cageName string) {
+	for _, p := range []string{workspace, self} {
+		if err := revokeFromCage(p, sid); err != nil {
+			// Said, not swallowed. A grant that quietly outlived its session
+			// is the bug this function exists for, so a failure to remove one
+			// is the last thing that should be silent.
+			logf("WARNING: could not take back this session's access to %s "+
+				"(%v). It is granted to an identity no later session uses, so "+
+				"nothing inherits it, but it is still there.", p, err)
+		}
+	}
+	deleteCageProfile(cageName)
+}
+
+// deleteCageProfile removes the container profile and the directory Windows
+// made for it under AppData\Local\Packages.
+func deleteCageProfile(cageName string) {
+	name, err := syscall.UTF16PtrFromString(cageName)
+	if err == nil {
+		procDeleteAppContainerProfile.Call(uintptr(unsafe.Pointer(name)))
+	}
+}
+
+// revokeFromCage removes the ACEs this session added for *sid*.
+//
+// REVOKE_ACCESS rather than DENY: a deny ACE would be a second permanent mark
+// on the participant's folder, which is the shape of the problem rather than
+// the fix.
+func revokeFromCage(path string, sid uintptr) error {
+	target, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return err
+	}
+	var oldDACL, secDesc uintptr
+	r, _, _ := procGetNamedSecurityInfo.Call(
+		uintptr(unsafe.Pointer(target)), seFileObject, daclSecurityInfo,
+		0, 0, uintptr(unsafe.Pointer(&oldDACL)), 0,
+		uintptr(unsafe.Pointer(&secDesc)))
+	if r != 0 {
+		return fmt.Errorf("could not read the permissions (%d)", r)
+	}
+	defer procLocalFree.Call(secDesc)
+
+	access := explicitAccessW{
+		accessMode: revokeAccess,
+		trustee: trusteeW{
+			trusteeForm: trusteeIsSID,
+			trusteeType: trusteeIsGroup,
+			name:        sid,
+		},
+	}
+	var newDACL uintptr
+	r, _, _ = procSetEntriesInAcl.Call(1,
+		uintptr(unsafe.Pointer(&access)), oldDACL,
+		uintptr(unsafe.Pointer(&newDACL)))
+	if r != 0 {
+		return fmt.Errorf("could not build the permissions (%d)", r)
+	}
+	defer procLocalFree.Call(newDACL)
+
+	r, _, _ = procSetNamedSecurityInfo.Call(
+		uintptr(unsafe.Pointer(target)), seFileObject, daclSecurityInfo,
+		0, 0, newDACL, 0)
+	if r != 0 {
+		return fmt.Errorf("could not set the permissions (%d)", r)
+	}
+	return nil
 }
 
 func parseSID(s string) (uintptr, error) {

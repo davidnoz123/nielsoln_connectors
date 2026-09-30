@@ -2092,6 +2092,10 @@ func (c *connector) appendRecord(req request, out []byte) {
 	}
 	f, err := os.OpenFile(c.record, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
+		// Said out loud. This was a bare `return`, so a record that could not
+		// be opened was indistinguishable from a session in which nothing
+		// happened -- and the file exists to be the account of what happened.
+		logf("could not append to the record at %s (%v)", c.record, err)
 		return
 	}
 	defer f.Close()
@@ -2377,6 +2381,23 @@ func main() {
 	info, err := os.Stat(abs)
 	if err != nil || !info.IsDir() {
 		fatal("There is no folder called %s, so nothing was shared.", abs)
+	}
+
+	// --record wrote through os.OpenFile and never went near resolve(), so
+	// `-record ../outside.jsonl` appended outside the shared folder: exactly
+	// what the line printed below promises cannot happen. Found by an
+	// independent review of commit 8b76568, not by us, which is the whole
+	// argument for publishing the source rather than asking to be trusted.
+	//
+	// Checked HERE, at startup, rather than at the first write. A containment
+	// rule enforced only when it is exercised is one nobody hears about until
+	// something has already been written outside.
+	if *record != "" {
+		if _, err := resolve(abs, *record); err != nil {
+			fatal("The record file %s is outside %s. Nothing was shared, "+
+				"because a record written outside the shared folder would "+
+				"break the only promise this program makes.", *record, abs)
+		}
 	}
 
 	c := &connector{

@@ -2368,22 +2368,19 @@ func probeFold(dir string) (folds, determined bool) {
 	}
 
 	// Nothing inside to ask about: an empty share, or every name in it made of
-	// digits. Ask about the share's own name instead, which is the only
-	// remaining way to put the question.
-	parent, name := filepath.Split(dir)
-	flipped := flipASCIICase(name)
-	if flipped == name {
-		return false, false // a share named "001" tells us nothing
-	}
-	here, err := os.Stat(dir)
-	if err != nil {
-		return false, false
-	}
-	there, err := os.Stat(parent + flipped)
-	if err != nil {
-		return false, true
-	}
-	return os.SameFile(here, there), true
+	// digits. The question goes unanswered, and that is the right outcome.
+	//
+	// There WAS a fallback here that flipped the share's own name and stat'ed
+	// the result, which names a sibling of the share rather than anything in
+	// it. That is the last access outside the share this program made, and the
+	// lesson asks participants to start in a NEW EMPTY FOLDER, so the fallback
+	// would have been the path taken every single time rather than a rare one.
+	//
+	// It costs almost nothing to drop. Undetermined means containment does not
+	// fold, which is the strict answer, and an empty folder has no file whose
+	// spelling could need folding. The moment it holds one, the probe above can
+	// answer properly -- which is why an undetermined answer is never cached.
+	return false, false
 }
 
 func flipASCIICase(s string) string {

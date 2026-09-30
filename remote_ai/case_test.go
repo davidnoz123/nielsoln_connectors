@@ -50,6 +50,38 @@ func caseSensitiveDir(t *testing.T) string {
 	return base
 }
 
+// An empty share cannot be asked whether it folds, and the answer must not be
+// remembered. The lesson tells participants to start in a NEW EMPTY FOLDER, so
+// this is the ordinary case rather than a corner: a wrong answer cached at
+// startup would be wrong for the whole session.
+//
+// This also stands in for a thing no test can assert directly. The probe used
+// to fall back to stat-ing a case-flipped spelling of the share's OWN name,
+// which is a sibling of the share and therefore outside it. There is no seam
+// to observe that call through, so what is pinned here is the behaviour that
+// replaced it.
+func TestAnEmptyShareIsNotAnsweredFromMemory(t *testing.T) {
+	root := t.TempDir()
+
+	if foldsCase(root) {
+		t.Fatal("an empty share cannot have been determined to fold")
+	}
+
+	// Now it can be asked. If the empty answer had been cached, this would
+	// still say false on a filesystem that plainly folds.
+	if err := os.WriteFile(filepath.Join(root, "Report.txt"),
+		[]byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !foldsCase(root) {
+		if _, err := os.Stat(filepath.Join(root, "REPORT.TXT")); err == nil {
+			t.Fatal("REPORT.TXT and Report.txt are the same file here, so " +
+				"this filesystem folds and the empty answer was cached")
+		}
+		t.Skip("this filesystem does not fold, so there is nothing to check")
+	}
+}
+
 // The other direction, which is the one that breaks the product rather than
 // the security claim: on an ordinary folding filesystem the share must still
 // accept a path spelled with different capitals. Without this, a fix for the

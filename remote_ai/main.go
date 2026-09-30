@@ -60,6 +60,7 @@ import (
 	"runtime/debug"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -447,26 +448,31 @@ func skipEntry(full string) bool {
 	return isReparse(full)
 }
 
+// contained reports whether *real* is the share or sits beneath it. Both are
+// cleaned absolute paths by the time they arrive.
+//
+// NOT filepath.Rel. The comment that used to sit here said "Rel is
+// case-sensitive", and on Windows it is not: Rel compares path components with
+// strings.EqualFold, so it folds case whatever it is handed. The explicit
+// lowercasing underneath was therefore compensating for a problem that did not
+// exist, while hiding one that did. With the share at ...\share and a
+// genuinely separate ...\SHARE beside it on a case-sensitive directory, Rel
+// answered "secret.txt" and a folder outside the share read as inside it.
+//
+// A prefix test states the question directly and folds only when the
+// filesystem measurably does. case_test.go is the reproduction.
 func contained(root, real string) bool {
-	rel, err := filepath.Rel(root, real)
-	if err != nil {
-		return false
+	a, b := root, real
+	if foldsCase(root) {
+		a, b = strings.ToLower(a), strings.ToLower(b)
 	}
-	if rel == "." {
+	if a == b {
 		return true
 	}
-	// "Rel" is case-sensitive but these filesystems are not, so a lowercase
-	// root against a capitalised real path would look like an escape and a
-	// folder the participant can see would be reported as outside their own
-	// share.
-	//
-	// macOS belongs here as much as Windows: APFS is case-insensitive by
-	// default. Left out, the Mac connector would refuse legitimate paths for
-	// a reason no participant could act on.
-	if caseInsensitiveFS() {
-		rel, _ = filepath.Rel(strings.ToLower(root), strings.ToLower(real))
+	if !strings.HasSuffix(a, string(filepath.Separator)) {
+		a += string(filepath.Separator)
 	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	return strings.HasPrefix(b, a)
 }
 
 // -- what kind of file is this ---------------------------------------------
@@ -2283,13 +2289,69 @@ func howToGiveAFolder() string {
 	}
 }
 
-// caseInsensitiveFS reports whether this platform's filesystem folds case by
-// default. Both defaults are conventions rather than guarantees -- NTFS can be
-// made case-sensitive per directory and APFS can be formatted that way -- but
-// folding when the filesystem does not is harmless here, while not folding
-// when it does refuses paths that are genuinely inside the share.
-func caseInsensitiveFS() bool {
-	return runtime.GOOS == "windows" || runtime.GOOS == "darwin"
+// foldsCase reports whether the filesystem holding *dir* folds case, by asking
+// it rather than by asking which operating system this is.
+//
+// The answer used to be `runtime.GOOS == "windows" || "darwin"`, under a
+// comment claiming that folding when the filesystem does not is harmless. It
+// is the opposite of harmless. With the share at ...\me\x and a genuinely
+// separate ...\me\X beside it, filepath.Rel correctly answers ..\X\secret.txt
+// and the folding branch overwrites that with secret.txt, so a folder outside
+// the share reads as inside it. case_test.go reproduces exactly that.
+//
+// Both defaults are only defaults: NTFS carries a per-directory case
+// sensitivity flag that `fsutil file setCaseSensitiveInfo` sets WITHOUT
+// elevation, and WSL sets it on directories it creates.
+//
+// Memoised per directory. contained() runs once per path in a search, and an
+// unmemoised probe would add two Stat calls to every one of them.
+func foldsCase(dir string) bool {
+	foldMu.Lock()
+	defer foldMu.Unlock()
+	if known, ok := foldCache[dir]; ok {
+		return known
+	}
+	folds := probeFold(dir)
+	foldCache[dir] = folds
+	return folds
+}
+
+var (
+	foldMu    sync.Mutex
+	foldCache = map[string]bool{}
+)
+
+// probeFold asks whether *dir* and a case-flipped spelling of it are the same
+// directory. Anything other than a clear yes is answered NO, because not
+// folding refuses paths that are inside the share, while folding wrongly
+// admits paths that are outside it. Only one of those two is safe to guess.
+func probeFold(dir string) bool {
+	flipped := flipASCIICase(dir)
+	if flipped == dir {
+		return false // no letters to flip, so nothing can be learnt
+	}
+	here, err := os.Stat(dir)
+	if err != nil {
+		return false
+	}
+	there, err := os.Stat(flipped)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(here, there)
+}
+
+func flipASCIICase(s string) string {
+	out := []byte(s)
+	for i, c := range out {
+		switch {
+		case c >= 'a' && c <= 'z':
+			out[i] = c - 'a' + 'A'
+		case c >= 'A' && c <= 'Z':
+			out[i] = c - 'A' + 'a'
+		}
+	}
+	return string(out)
 }
 
 // keyPattern finds the pairing key inside the downloaded file's name.

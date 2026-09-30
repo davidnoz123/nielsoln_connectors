@@ -2526,6 +2526,44 @@ func main() {
 		}
 	}
 
+	// Confine this session before it reads anything, by relaunching inside a
+	// Windows AppContainer. From here on the kernel refuses the participant's
+	// other files, rather than this program remembering to.
+	//
+	// It warns and carries on rather than refusing, deliberately. Refusing
+	// would take the connector away from every platform that has no cage yet
+	// and every Windows build where the container cannot be made, which is a
+	// working product traded for a claim. What the cage gates instead is what
+	// this program is ALLOWED TO DO: `exec` is offered only when inCage()
+	// says the kernel is holding the boundary, so the capability can never be
+	// on our own say-so.
+	if cageSupported() && !inCage() {
+		if isLoopback(*host) {
+			// An AppContainer cannot reach loopback. Windows blocks it
+			// deliberately, and lifting it means CheckNetIsolation
+			// LoopbackExempt, which needs an administrator and is a
+			// per-machine change we have no business making on somebody's
+			// laptop. Measured: the caged connector timed out dialling
+			// 127.0.0.1 while reaching example.com perfectly well.
+			//
+			// So a bridge on THIS machine and the cage are mutually
+			// exclusive. That is the test suite and the local demo, never a
+			// participant, whose bridge is across the internet. Detected
+			// rather than configured, because a flag the harness has to
+			// remember to pass is a flag it will one day forget, and the
+			// failure would look like a broken connector.
+			logf("not confining this session: the bridge is on this machine "+
+				"(%s), and a confined process cannot reach it", *host)
+		} else if code, err := enterCage(abs); err == nil {
+			os.Exit(code)
+		} else {
+			logf("WARNING: this session could not be confined to %s (%v)",
+				abs, err)
+			logf("WARNING: it runs with your ordinary permissions, and is "+
+				"careful rather than prevented.")
+		}
+	}
+
 	c := &connector{
 		host: *host, port: *port, root: abs,
 		token: *token, record: *record, wire: *wire, done: map[int][]byte{},
@@ -2534,6 +2572,14 @@ func main() {
 	// read back exactly what they have shared before anything is read from it.
 	fmt.Println()
 	logf("Sharing %s", abs)
+	// Said out loud, and asked of the KERNEL rather than of whether we think
+	// we built a cage a moment ago. A participant is being told which of two
+	// quite different promises they have, so the line has to come from the
+	// thing that would enforce it.
+	if inCage() {
+		logf("Windows is holding this boundary: your other files are refused, "+
+			"not merely unasked for.")
+	}
 	logf("Claude can read files here, and nowhere else. Close this window to stop.")
 
 	backoff := time.Second

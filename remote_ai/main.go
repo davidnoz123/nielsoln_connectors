@@ -829,8 +829,28 @@ func opWriteFile(root string, args json.RawMessage) (any, error) {
 
 	// Write beside the target and rename. An interrupted write then leaves the
 	// original intact rather than a half-written file.
+	// The .part file is a path like any other, and it has to earn containment
+	// the same way. It did not: resolve() vetted `path`, then this appended a
+	// suffix and handed the result straight to os.Create, which follows a
+	// symlink. So a pre-existing report.txt.part inside the shared folder,
+	// pointing anywhere, turned a legitimate write of report.txt into a write
+	// outside the folder -- without the requested path ever being suspicious.
+	//
+	// Found by an outside review of 8399b67. Worth noting how it hid: the
+	// containment check was correct, and the escape was on a path derived
+	// AFTER it. A check is only as wide as the paths it is shown.
 	tmp := path + ".part"
-	f, err := os.Create(tmp)
+	// Remove the NAME first, then refuse to create it if anything is still
+	// there. os.Remove deletes the directory entry and never what it points
+	// at, so this defuses both shapes of the attack without touching the
+	// victim's file, and O_EXCL closes the gap between the two calls.
+	//
+	// resolve() alone was not enough. It refuses symlinks and reparse points,
+	// and a HARD link is neither -- so the containment check would have passed
+	// it, and `mklink /H` needs no administrator on Windows. The easier half
+	// of the attack was the half a path check could not see.
+	os.Remove(tmp)
+	f, err := os.OpenFile(tmp, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return nil, refuse("not_allowed", "%s could not be written.", filepath.Base(path))
 	}
@@ -962,8 +982,10 @@ func opEditFile(root string, args json.RawMessage) (any, error) {
 
 	// Beside the target and renamed, the same as write_file: an interrupted
 	// edit leaves the original rather than half of it.
+	// Same derived path, same treatment. See opWriteFile.
 	tmp := path + ".part"
-	f, err := os.Create(tmp)
+	os.Remove(tmp)
+	f, err := os.OpenFile(tmp, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return nil, refuse("not_allowed", "%s could not be written.",
 			filepath.Base(path))

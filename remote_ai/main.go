@@ -76,7 +76,21 @@ const (
 	version      = "draft-1" // the protocol draft implemented, not a repo version
 )
 
-var capabilities = []string{"utf8_text"}
+// capabilitiesNow is what this connector tells the bridge it can do, asked
+// fresh rather than fixed at build time.
+//
+// `exec` appears only when the kernel says this process is confined. The
+// bridge decides from this whether to offer Claude a Bash tool at all, so a
+// session on an unconfined connector never sees one and never tries: a refusal
+// the model has to discover by being refused is a worse experience and a worse
+// boundary than a tool that was never offered.
+func capabilitiesNow() []string {
+	caps := []string{"utf8_text"}
+	if inCage() {
+		caps = append(caps, "exec")
+	}
+	return caps
+}
 
 // defaultHost is where this connector dials when nobody says otherwise.
 //
@@ -1875,6 +1889,10 @@ var ops = map[string]func(string, json.RawMessage) (any, error){
 	"search_files":   opSearchFiles,
 	"search_content": opSearchContent,
 	"edit_file":      opEditFile,
+	// Registered always, refused unless confined. Leaving it out of the map
+	// when uncaged would answer "no such operation", which reads as an old
+	// connector rather than as a boundary doing its job.
+	"exec": opExec,
 }
 
 // -- the session -----------------------------------------------------------
@@ -1992,7 +2010,7 @@ func (c *connector) hello(t transport) error {
 			Platform:     runtime.GOOS,
 			Root:         c.root,
 			Version:      version,
-			Capabilities: capabilities,
+			Capabilities: capabilitiesNow(),
 			ResumeOf:     c.session,
 		},
 	})

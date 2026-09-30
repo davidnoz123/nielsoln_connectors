@@ -50,6 +50,25 @@ func caseSensitiveDir(t *testing.T) string {
 	return base
 }
 
+// The other direction, which is the one that breaks the product rather than
+// the security claim: on an ordinary folding filesystem the share must still
+// accept a path spelled with different capitals. Without this, a fix for the
+// escape above could disable folding everywhere and refuse paths participants
+// can plainly see in their own folder.
+func TestContainmentStillFoldsOnAFoldingFS(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Report.txt"),
+		[]byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !foldsCase(root) {
+		t.Skipf("%s does not fold case, so there is nothing to check", root)
+	}
+	if _, err := resolve(root, "REPORT.TXT"); err != nil {
+		t.Fatalf("a folding filesystem refused a path inside the share: %v", err)
+	}
+}
+
 func TestContainmentDoesNotFoldCaseOnCaseSensitiveFS(t *testing.T) {
 	base := caseSensitiveDir(t)
 
@@ -74,15 +93,10 @@ func TestContainmentDoesNotFoldCaseOnCaseSensitiveFS(t *testing.T) {
 		t.Skip("the two folders are the same one here; nothing to test")
 	}
 
-	t.Logf("root      = %s", root)
-	t.Logf("flipped   = %s", flipASCIICase(root))
-	if st, err := os.Stat(flipASCIICase(root)); err != nil {
-		t.Logf("flipped stat: %v (so probeFold says not folding)", err)
-	} else {
-		here, _ := os.Stat(root)
-		t.Logf("flipped stat: ok, SameFile=%v", os.SameFile(here, st))
+	if foldsCase(root) {
+		t.Fatalf("foldsCase said this filesystem folds, but %s and %s are "+
+			"two different directories on it", root, outside)
 	}
-	t.Logf("foldsCase = %v  (must be false here)", foldsCase(root))
 
 	got, err := resolve(root, filepath.Join("..", "SHARE", "secret.txt"))
 	if err == nil {

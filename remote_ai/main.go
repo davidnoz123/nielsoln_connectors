@@ -2311,8 +2311,14 @@ func foldsCase(dir string) bool {
 	if known, ok := foldCache[dir]; ok {
 		return known
 	}
-	folds := probeFold(dir)
-	foldCache[dir] = folds
+	folds, determined := probeFold(dir)
+	if determined {
+		foldCache[dir] = folds
+	}
+	// An undetermined answer is deliberately NOT cached. An empty share cannot
+	// be asked whether it folds, and the moment it has a file in it, it can.
+	// Caching the guess would keep answering from the one moment the question
+	// was unanswerable.
 	return folds
 }
 
@@ -2325,20 +2331,59 @@ var (
 // directory. Anything other than a clear yes is answered NO, because not
 // folding refuses paths that are inside the share, while folding wrongly
 // admits paths that are outside it. Only one of those two is safe to guess.
-func probeFold(dir string) bool {
-	flipped := flipASCIICase(dir)
-	if flipped == dir {
-		return false // no letters to flip, so nothing can be learnt
+// probeFold asks the filesystem whether it folds case, and says whether it got
+// an answer at all. Undetermined is NOT the same as "does not fold": caching a
+// guess would freeze it for the life of the process.
+//
+// It asks INSIDE the share wherever it can. The first version flipped the
+// share's whole path, which meant asking the filesystem about
+// /HOME/DAVID/PROJECT -- a metadata lookup outside the share, to answer a
+// question about the share. Raised by an outside review of d162dd8, and fair.
+//
+// Falling back to the share's own name is also less accurate than it looks:
+// one case-sensitive PARENT is enough to make the flipped spelling fail to
+// resolve, and the share is then reported as not folding when it does,
+// refusing paths genuinely inside it. WSL sets that flag on directories it
+// creates, so such a parent is ordinary rather than exotic.
+func probeFold(dir string) (folds, determined bool) {
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, e := range entries {
+			name := e.Name()
+			flipped := flipASCIICase(name)
+			if flipped == name {
+				continue // no letters in this one; try the next
+			}
+			here, err := os.Stat(filepath.Join(dir, name))
+			if err != nil {
+				continue
+			}
+			there, err := os.Stat(filepath.Join(dir, flipped))
+			if err != nil {
+				// On a folding filesystem the flipped spelling always names
+				// the same file. It did not, so this one does not fold.
+				return false, true
+			}
+			return os.SameFile(here, there), true
+		}
+	}
+
+	// Nothing inside to ask about: an empty share, or every name in it made of
+	// digits. Ask about the share's own name instead, which is the only
+	// remaining way to put the question.
+	parent, name := filepath.Split(dir)
+	flipped := flipASCIICase(name)
+	if flipped == name {
+		return false, false // a share named "001" tells us nothing
 	}
 	here, err := os.Stat(dir)
 	if err != nil {
-		return false
+		return false, false
 	}
-	there, err := os.Stat(flipped)
+	there, err := os.Stat(parent + flipped)
 	if err != nil {
-		return false
+		return false, true
 	}
-	return os.SameFile(here, there)
+	return os.SameFile(here, there), true
 }
 
 func flipASCIICase(s string) string {

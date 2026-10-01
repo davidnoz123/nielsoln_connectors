@@ -123,6 +123,47 @@ func TestGuard(t *testing.T) {
 	}
 }
 
+// The page carries ?t= but its sub-resources do not, so a token scheme with no
+// cookie serves the page and 403s every image in it. That is what happened on
+// 2 Oct 2026, and it presented as a blank viewer rather than as an auth error.
+func TestGuardSetsACookieSoSubresourcesWork(t *testing.T) {
+	h := guard("SECRET", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// The page, with the token in the URL.
+	w := httptest.NewRecorder()
+	h(w, httptest.NewRequest("GET", "/?t=SECRET", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("the page itself was refused: %d", w.Code)
+	}
+	var jar *http.Cookie
+	for _, c := range w.Result().Cookies() {
+		if c.Name == cookieName {
+			jar = c
+		}
+	}
+	if jar == nil {
+		t.Fatal("no cookie was set, so every sub-resource will 403")
+	}
+
+	// An image, requested the way a browser requests it: no query, no header.
+	w2 := httptest.NewRecorder()
+	r2 := httptest.NewRequest("GET", "/pages/x.jpg", nil)
+	r2.AddCookie(jar)
+	h(w2, r2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("a sub-resource carrying the cookie was refused: %d", w2.Code)
+	}
+
+	// And without it, still refused.
+	w3 := httptest.NewRecorder()
+	h(w3, httptest.NewRequest("GET", "/pages/x.jpg", nil))
+	if w3.Code != http.StatusForbidden {
+		t.Fatalf("a sub-resource with no credential returned %d", w3.Code)
+	}
+}
+
 // An empty -token means no check, and that has to stay true rather than
 // accidentally refusing everything.
 func TestGuardWithoutTokenAllows(t *testing.T) {

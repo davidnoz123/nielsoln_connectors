@@ -50,6 +50,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -120,25 +121,57 @@ func main() {
 
 // -- auth -------------------------------------------------------------------
 
+const cookieName = "pvs_token"
+
 // guard checks the token on every request.
 //
-// A QUERY PARAMETER as well as a header, because EventSource cannot set
-// headers. Any design that is header-only cannot open an SSE stream from a
-// browser, which is the one thing this server exists to do.
+// THREE PLACES, and each earns its keep:
+//
+//   - a HEADER, for anything scripted
+//   - a QUERY PARAMETER, because EventSource cannot set headers. A design that
+//     is header-only cannot open an SSE stream from a browser at all
+//   - a COOKIE, set the first time a valid query parameter arrives
+//
+// The cookie is not a convenience. Measured 2 Oct 2026 in a real browser: the
+// PAGE carries ?t= in its URL, but every sub-resource it then requests -- every
+// <img>, and the PDF that PDF.js would fetch -- does NOT. Those came back 403,
+// and a 403 body decodes as an image about as well as it sounds, so the page
+// rendered its header and caption over a blank space with img.complete true and
+// naturalWidth 0. Nothing in the log said "forbidden" because nothing was
+// looking.
+//
+// A smoke-test page with no sub-resources cannot find this. It took a real one.
 func guard(token string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if token != "" {
-			got := r.Header.Get("X-Token")
-			if got == "" {
-				got = r.URL.Query().Get("t")
+		if token == "" {
+			next(w, r)
+			return
+		}
+		got, fromQuery := r.Header.Get("X-Token"), false
+		if got == "" {
+			if q := r.URL.Query().Get("t"); q != "" {
+				got, fromQuery = q, true
 			}
-			if got != token {
-				// No detail. A refusal that distinguishes "wrong token" from
-				// "no token" is a probing oracle, and there is nothing a
-				// legitimate caller learns from the difference.
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
+		}
+		if got == "" {
+			if c, err := r.Cookie(cookieName); err == nil {
+				got = c.Value
 			}
+		}
+		// Constant time, so a caller cannot learn the token one byte at a time
+		// from how long the refusal takes. Cheap here and awkward to add later.
+		if subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
+			// No detail. A refusal that distinguishes "wrong token" from "no
+			// token" is a probing oracle, and there is nothing a legitimate
+			// caller learns from the difference.
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if fromQuery {
+			http.SetCookie(w, &http.Cookie{
+				Name: cookieName, Value: token, Path: "/",
+				HttpOnly: true, SameSite: http.SameSiteStrictMode,
+			})
 		}
 		next(w, r)
 	}

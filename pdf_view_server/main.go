@@ -105,7 +105,22 @@ func main() {
 		log.Fatalf("%v", err)
 	}
 	if ln == nil {
-		return // already running; listen() has said where
+		// ALREADY RUNNING IS NOT A FAILURE, and the first version treated it
+		// like one: the launcher printed "nothing started / the viewer has
+		// stopped" while a perfectly good server was serving. Somebody who
+		// double-clicks twice -- which everybody does -- was told their
+		// working viewer was broken.
+		//
+		// So open the browser at the one that exists and exit 3, which the
+		// launcher reads as "fine, say something reassuring".
+		existing := fmt.Sprintf("http://%s/", net.JoinHostPort(*host, *port))
+		if *token != "" {
+			existing += "?t=" + *token
+		}
+		if *open {
+			openBrowser(existing)
+		}
+		os.Exit(3)
 	}
 	url := fmt.Sprintf("http://%s/", ln.Addr().String())
 	if *token != "" {
@@ -143,8 +158,7 @@ func listen(host, port, token string) (net.Listener, error) {
 		return ln, nil
 	}
 	if isOurs(addr, token) {
-		log.Printf("already serving on %s -- open http://%s/?t=%s", addr, addr, token)
-		log.Printf("nothing started. Close that one first if you meant to restart.")
+		log.Printf("the viewer is ALREADY RUNNING on %s. Nothing to do.", addr)
 		return nil, nil
 	}
 	log.Printf("port %s is in use by something else, so taking a free one instead.", port)

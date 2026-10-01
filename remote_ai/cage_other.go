@@ -1,12 +1,10 @@
-//go:build !windows
+//go:build !windows && !linux
 
 // cage_other.go -- there is no cage anywhere but Windows yet.
 //
-// Linux is the next one and the cheapest: Landlock restricts a process and
-// every child it goes on to create, cannot be lifted once applied, and does
-// not touch networking, so the connector could confine ITSELF in place with no
-// relaunch at all. macOS is the awkward one, because Apple's supported model
-// is entitlement-based and sandbox_init is deprecated.
+// Windows and Linux both have one now. macOS is what is left, and it is the
+// awkward one: Apple's supported model is entitlement-based, and sandbox_init
+// is deprecated.
 //
 // Saying so out loud matters more than it looks. The page tells participants
 // which platforms the cage covers, and a stub that quietly reported success
@@ -23,10 +21,17 @@ func inCage() bool { return false }
 // operations, their path checking, and no exec.
 func cageSupported() bool { return false }
 
-func enterCage(workspace string) (int, error) {
-	panic("enterCage on a platform with no cage: guard with cageSupported()")
+func applyCage(workspace string) (int, bool, error) {
+	panic("applyCage on a platform with no cage: guard with cageSupported()")
 }
+
+// cageBlocksLoopback is moot where there is no cage.
+func cageBlocksLoopback() bool { return false }
 
 // isLoopback is unused off Windows, where there is no cage to be excluded
 // from, but main.go refers to it on every platform.
 func isLoopback(host string) bool { return false }
+
+// cageAuthority names whatever is enforcing the boundary, for the one line a
+// participant is told to look for. There is no cage here.
+func cageAuthority() string { return "Nothing" }

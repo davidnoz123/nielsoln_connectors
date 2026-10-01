@@ -72,8 +72,8 @@ const (
 	// used to. Still bounded by defaultLimit in bytes, because 2000 lines
 	// of a minified file is not 2000 lines of prose.
 	defaultReadLines = 2000
-	maxLine      = 1 << 20
-	version      = "draft-1" // the protocol draft implemented, not a repo version
+	maxLine          = 1 << 20
+	version          = "draft-1" // the protocol draft implemented, not a repo version
 )
 
 // capabilitiesNow is what this connector tells the bridge it can do, asked
@@ -172,9 +172,9 @@ type readFileResult struct {
 	// Only set when the caller asked in lines, so a byte reader sees exactly
 	// what it saw before. FirstLine echoes what was asked; LinesSent is what
 	// came back, which is fewer at the end of the file.
-	FirstLine  int `json:"first_line,omitempty"`
-	LinesSent  int `json:"lines_sent,omitempty"`
-	NextLine   int `json:"next_line,omitempty"`
+	FirstLine int `json:"first_line,omitempty"`
+	LinesSent int `json:"lines_sent,omitempty"`
+	NextLine  int `json:"next_line,omitempty"`
 	// Set only when it is not utf8, so a text result is byte for byte what
 	// it was before this existed and every fixture recorded until 27 Sep
 	// still describes it exactly.
@@ -1053,16 +1053,16 @@ func opGetFileInfo(root string, args json.RawMessage) (any, error) {
 }
 
 const (
-	searchLimit   = 200              // matches returned unless asked for fewer
-	searchSeconds = 10               // the walk's own deadline, inside the bridge's
-	searchMaxScan = 200000           // entries looked at before stopping regardless
+	searchLimit   = 200    // matches returned unless asked for fewer
+	searchSeconds = 10     // the walk's own deadline, inside the bridge's
+	searchMaxScan = 200000 // entries looked at before stopping regardless
 
 	// search_content reads files rather than listing them, so it needs its own
 	// ceilings. A repository of source is a few megabytes; a folder someone
 	// shared might hold a disk image.
-	grepLimit    = 100        // matching lines returned unless asked for fewer
-	grepMaxBytes = 2 << 20    // a file larger than this is skipped, and said so
-	grepMaxLine  = 64 << 10   // a longer line is not prose and not worth carrying
+	grepLimit    = 100      // matching lines returned unless asked for fewer
+	grepMaxBytes = 2 << 20  // a file larger than this is skipped, and said so
+	grepMaxLine  = 64 << 10 // a longer line is not prose and not worth carrying
 	// Raised from 2 on 27 Sep. Two was a guess and Grep has no such cap;
 	// ten is still small enough that a hundred matches cannot blow the
 	// message ceiling, and large enough to see a function around a line.
@@ -1109,7 +1109,7 @@ type searchMatch struct {
 	// Only carried when sorting by it. A caller who asked for newest-first
 	// and cannot see the times has to take the order on trust.
 	Modified string `json:"modified,omitempty"`
-	Size int64  `json:"size"`
+	Size     int64  `json:"size"`
 }
 
 type searchFilesResult struct {
@@ -1522,13 +1522,13 @@ type searchContentResult struct {
 	// Only one of these is ever populated, decided by output_mode. Empty
 	// rather than absent so a caller can tell "asked and found none" from
 	// "did not ask".
-	Files  []string    `json:"files,omitempty"`
-	Counts []fileCount `json:"counts,omitempty"`
-	Complete bool           `json:"complete"`
-	Scanned  int            `json:"scanned"`
-	Read     int            `json:"read"`
-	Binary   int            `json:"binary"`
-	TooBig   int            `json:"too_big"`
+	Files    []string    `json:"files,omitempty"`
+	Counts   []fileCount `json:"counts,omitempty"`
+	Complete bool        `json:"complete"`
+	Scanned  int         `json:"scanned"`
+	Read     int         `json:"read"`
+	Binary   int         `json:"binary"`
+	TooBig   int         `json:"too_big"`
 }
 
 func opSearchContent(root string, args json.RawMessage) (any, error) {
@@ -1900,9 +1900,9 @@ var ops = map[string]func(string, json.RawMessage) (any, error){
 type connector struct {
 	host, port, root, token string
 	// "auto", "tcp" or "wss". See dial().
-	wire string
-	record                  string
-	session                 string
+	wire    string
+	record  string
+	session string
 	// id -> response, for the life of the session including across a resume.
 	// PROTOCOL.md leaves the bound open; a session is one afternoon, so this
 	// keeps everything, deliberately and on the record.
@@ -2000,7 +2000,6 @@ func (c *connector) dial() (transport, error) {
 	}
 	return &wsTransport{conn: conn, r: r, d: deflate}, nil
 }
-
 
 func (c *connector) hello(t transport) error {
 	err := c.send(t, map[string]any{
@@ -2556,28 +2555,34 @@ func main() {
 	// says the kernel is holding the boundary, so the capability can never be
 	// on our own say-so.
 	if cageSupported() && !inCage() {
-		if isLoopback(*host) {
-			// An AppContainer cannot reach loopback. Windows blocks it
-			// deliberately, and lifting it means CheckNetIsolation
-			// LoopbackExempt, which needs an administrator and is a
-			// per-machine change we have no business making on somebody's
-			// laptop. Measured: the caged connector timed out dialling
-			// 127.0.0.1 while reaching example.com perfectly well.
+		if cageBlocksLoopback() && isLoopback(*host) {
+			// A Windows AppContainer cannot reach loopback. Lifting that means
+			// CheckNetIsolation LoopbackExempt, which wants an administrator
+			// and is a per-machine change nobody should make on a
+			// participant's laptop. Measured: the caged connector timed out
+			// dialling 127.0.0.1 while reaching example.com perfectly well.
 			//
-			// So a bridge on THIS machine and the cage are mutually
+			// So on Windows a bridge on THIS machine and the cage are mutually
 			// exclusive. That is the test suite and the local demo, never a
 			// participant, whose bridge is across the internet. Detected
 			// rather than configured, because a flag the harness has to
-			// remember to pass is a flag it will one day forget, and the
-			// failure would look like a broken connector.
+			// remember to pass is one it will one day forget, and the failure
+			// would look like a broken connector.
+			//
+			// Landlock has no such limit and answers false, so a Linux session
+			// stays confined even against a local bridge.
 			logf("not confining this session: the bridge is on this machine "+
-				"(%s), and a confined process cannot reach it", *host)
-		} else if code, err := enterCage(abs); err == nil {
-			os.Exit(code)
+				"(%s), and a confined process cannot reach it here", *host)
+		} else if code, done, err := applyCage(abs); err == nil {
+			// Windows relaunched into the cage and this copy is finished.
+			// Linux confined THIS process and carries on.
+			if done {
+				os.Exit(code)
+			}
 		} else {
 			logf("WARNING: this session could not be confined to %s (%v)",
 				abs, err)
-			logf("WARNING: it runs with your ordinary permissions, and is "+
+			logf("WARNING: it runs with your ordinary permissions, and is " +
 				"careful rather than prevented.")
 		}
 	}
@@ -2595,8 +2600,12 @@ func main() {
 	// quite different promises they have, so the line has to come from the
 	// thing that would enforce it.
 	if inCage() {
-		logf("Windows is holding this boundary: your other files are refused, "+
-			"not merely unasked for.")
+		// Named per platform. It said "Windows" when Windows was the only
+		// cage, and a Linux session would then have been told something
+		// plainly untrue by the one line on this page a participant is asked
+		// to look for.
+		logf("%s is holding this boundary: your other files are refused, "+
+			"not merely unasked for.", cageAuthority())
 	}
 	logf("Claude can read files here, and nowhere else. Close this window to stop.")
 

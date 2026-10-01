@@ -295,23 +295,39 @@ func grantToCage(path string, sid uintptr, rights uint32) error {
 
 // enterCage relaunches this executable inside the container and waits for it,
 // returning the child's exit code.
-func enterCage(workspace string) (int, error) {
+// cageBlocksLoopback reports whether confining this session would cut it off
+// from a bridge on this same machine.
+//
+// True. An AppContainer cannot reach loopback, and lifting that needs
+// CheckNetIsolation LoopbackExempt, which wants an administrator and is a
+// per-machine change nobody should make on a participant's laptop. Landlock
+// has no such limit, which is why the Linux answer is false.
+func cageBlocksLoopback() bool { return true }
+
+// applyCage relaunches this executable inside the container and returns the
+// child's exit code with done=true, meaning this process is finished.
+//
+// A running process cannot join an AppContainer: the identity is part of the
+// token and the token is made when the process is. Landlock, by contrast,
+// restricts the running process, which is why that platform returns
+// done=false and carries on.
+func applyCage(workspace string) (int, bool, error) {
 	cageName, err := newCageName()
 	if err != nil {
-		return 0, err
+		return 0, true, err
 	}
 	self, err := os.Executable()
 	if err != nil {
-		return 0, err
+		return 0, true, err
 	}
 	sid, err := cageSID(cageName)
 	if err != nil {
-		return 0, err
+		return 0, true, err
 	}
 
 	// The workspace, read and write. This is the whole grant.
 	if err := grantToCage(workspace, sid, genericAll); err != nil {
-		return 0, err
+		return 0, true, err
 	}
 	// Every path out from here hands it back, including the error ones.
 	// Before this, a failure in any later setup step returned with the
@@ -322,7 +338,7 @@ func enterCage(workspace string) (int, error) {
 	// Under `go run` the binary lives in %TEMP%\go-build..., which carries no
 	// container ACE at all, and that is the route the page recommends.
 	if err := grantToCage(self, sid, genericRead|genericExecute); err != nil {
-		return 0, fmt.Errorf("the container could not be given access to this "+
+		return 0, true, fmt.Errorf("the container could not be given access to this "+
 			"program, so it could never start it: %w", err)
 	}
 
@@ -334,14 +350,14 @@ func enterCage(workspace string) (int, error) {
 		uintptr(unsafe.Pointer(&attrList[0])), 1, 0,
 		uintptr(unsafe.Pointer(&attrSize)))
 	if r == 0 {
-		return 0, fmt.Errorf("could not prepare the container: %v", err)
+		return 0, true, fmt.Errorf("could not prepare the container: %v", err)
 	}
 	defer procDeleteProcThreadAttributeList.Call(
 		uintptr(unsafe.Pointer(&attrList[0])))
 
 	netSID, err := parseSID(capInternetClient)
 	if err != nil {
-		return 0, err
+		return 0, true, err
 	}
 	caps := []sidAndAttributes{{sid: netSID, attributes: seGroupEnabled}}
 	sc := securityCapabilities{
@@ -354,7 +370,7 @@ func enterCage(workspace string) (int, error) {
 		procThreadAttrSecurityCapabilities,
 		uintptr(unsafe.Pointer(&sc)), unsafe.Sizeof(sc), 0, 0)
 	if r == 0 {
-		return 0, fmt.Errorf("could not attach the container: %v", err)
+		return 0, true, fmt.Errorf("could not attach the container: %v", err)
 	}
 
 	si := startupInfoEx{}
@@ -374,11 +390,11 @@ func enterCage(workspace string) (int, error) {
 	}
 	argv, err := syscall.UTF16PtrFromString(cmdline)
 	if err != nil {
-		return 0, err
+		return 0, true, err
 	}
 	dir, err := syscall.UTF16PtrFromString(workspace)
 	if err != nil {
-		return 0, err
+		return 0, true, err
 	}
 
 	var pi syscall.ProcessInformation
@@ -386,7 +402,7 @@ func enterCage(workspace string) (int, error) {
 		extendedStartupInfoPresent|syscall.CREATE_UNICODE_ENVIRONMENT,
 		nil, dir, (*syscall.StartupInfo)(unsafe.Pointer(&si)), &pi)
 	if err != nil {
-		return 0, fmt.Errorf("could not start the confined copy: %v", err)
+		return 0, true, fmt.Errorf("could not start the confined copy: %v", err)
 	}
 	defer syscall.CloseHandle(pi.Thread)
 	defer syscall.CloseHandle(pi.Process)
@@ -395,7 +411,7 @@ func enterCage(workspace string) (int, error) {
 	var code uint32
 	syscall.GetExitCodeProcess(pi.Process, &code)
 
-	return int(code), nil
+	return int(code), true, nil
 }
 
 // releaseCage takes back what enterCage granted, and removes the profile.
@@ -502,3 +518,7 @@ func isLoopback(host string) bool {
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
 }
+
+// cageAuthority names whatever is enforcing the boundary, for the one line a
+// participant is told to look for. The appcontainer.
+func cageAuthority() string { return "Windows" }

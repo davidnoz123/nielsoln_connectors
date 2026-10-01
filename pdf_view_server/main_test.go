@@ -288,6 +288,20 @@ func TestNavFileNoticesASameLengthRewrite(t *testing.T) {
 	}
 }
 
+func TestCleanIDStripsABOM(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"Pt2-0043", "Pt2-0043"},
+		{"Pt2-0043\n", "Pt2-0043"},
+		{"\ufeffPt2-0043\r\n", "Pt2-0043"},
+		{"  \ufeff Pt2-0043  ", "Pt2-0043"},
+		{"\ufeff", ""},
+	} {
+		if got := cleanID([]byte(tc.in)); got != tc.want {
+			t.Errorf("cleanID(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestDirectoryListingIsRefused(t *testing.T) {
 	root, _ := shareAndSecret(t)
 	writeFile(t, filepath.Join(root, "sub", "a.txt"), "x")

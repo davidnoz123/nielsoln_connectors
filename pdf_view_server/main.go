@@ -71,7 +71,7 @@ const navDefault = ".nav"
 func main() {
 	root := flag.String("root", ".", "the only folder this server may read")
 	host := flag.String("host", "127.0.0.1", "address to bind")
-	port := flag.String("port", "8790", "port to bind")
+	port := flag.String("port", "8899", "port to bind; falls back to a free one")
 	token := flag.String("token", "", "required on every request; empty disables the check")
 	nav := flag.String("nav", navDefault, "file under -root that carries the current id")
 	poll := flag.Duration("poll", 100*time.Millisecond, "how often to stat the nav file")
@@ -100,12 +100,14 @@ func main() {
 	// Bind BEFORE announcing, so the address printed is one that is actually
 	// listening. A message followed by "address already in use" sends the
 	// reader looking for the wrong problem.
-	addr := net.JoinHostPort(*host, *port)
-	ln, err := net.Listen("tcp", addr)
+	ln, err := listen(*host, *port, *token)
 	if err != nil {
-		log.Fatalf("cannot listen on %s: %v", addr, err)
+		log.Fatalf("%v", err)
 	}
-	url := fmt.Sprintf("http://%s/", addr)
+	if ln == nil {
+		return // already running; listen() has said where
+	}
+	url := fmt.Sprintf("http://%s/", ln.Addr().String())
 	if *token != "" {
 		url += "?t=" + *token
 	}
@@ -117,6 +119,65 @@ func main() {
 		openBrowser(url)
 	}
 	log.Fatal(http.Serve(ln, mux))
+}
+
+// listen binds the wanted port, or explains itself.
+//
+// A BUSY PORT IS NOT A FATAL ERROR, and treating it as one is how the launcher
+// failed on 2 Oct 2026: the port was held by an unrelated tool on the same
+// machine and the reviewer got Go error text ending "Only one usage of each
+// socket address is normally permitted", which tells them nothing they can act
+// on.
+//
+// Three outcomes instead:
+//
+//   - free: bind it
+//   - held by ANOTHER COPY OF THIS SERVER: say where, and stop. Two servers
+//     over one folder is never what anybody wanted
+//   - held by something else: take any free port and carry on, saying so. The
+//     reviewer never types a port, so a different number costs them nothing
+func listen(host, port, token string) (net.Listener, error) {
+	addr := net.JoinHostPort(host, port)
+	ln, err := net.Listen("tcp", addr)
+	if err == nil {
+		return ln, nil
+	}
+	if isOurs(addr, token) {
+		log.Printf("already serving on %s -- open http://%s/?t=%s", addr, addr, token)
+		log.Printf("nothing started. Close that one first if you meant to restart.")
+		return nil, nil
+	}
+	log.Printf("port %s is in use by something else, so taking a free one instead.", port)
+	free, err2 := net.Listen("tcp", net.JoinHostPort(host, "0"))
+	if err2 != nil {
+		return nil, fmt.Errorf("cannot listen on %s (%v), nor on any free port (%v)",
+			addr, err, err2)
+	}
+	return free, nil
+}
+
+// isOurs reports whether whatever holds addr answers /state the way we do.
+func isOurs(addr, token string) bool {
+	c := http.Client{Timeout: 700 * time.Millisecond}
+	u := fmt.Sprintf("http://%s/state", addr)
+	if token != "" {
+		u += "?t=" + token
+	}
+	resp, err := c.Get(u)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var out map[string]any
+	if json.NewDecoder(resp.Body).Decode(&out) != nil {
+		return false
+	}
+	_, hasClients := out["clients"]
+	_, hasID := out["id"]
+	return hasClients && hasID
 }
 
 // -- auth -------------------------------------------------------------------
@@ -302,7 +363,7 @@ func watchNav(path string, every time.Duration, h *hub) {
 			if st.ModTime() != lastMod || st.Size() != lastSize {
 				lastMod, lastSize = st.ModTime(), st.Size()
 				if b, err := os.ReadFile(path); err == nil {
-					if id := strings.TrimSpace(string(b)); id != "" {
+					if id := cleanID(b); id != "" {
 						h.broadcast(id)
 					}
 				}
@@ -310,6 +371,22 @@ func watchNav(path string, every time.Duration, h *hub) {
 		}
 		time.Sleep(every)
 	}
+}
+
+// cleanID turns the nav file's bytes into an id.
+
+// A UTF-8 BOM IS STRIPPED, and that is not theoretical: PowerShell's
+// Set-Content -Encoding utf8 writes one, and on 2 Oct 2026 an id arrived with
+// one on the front. It matched nothing in the map and the failure was SILENT --
+// the page simply did not move, with nothing anywhere saying why.
+//
+// VBA's Print # writes no BOM, so the reviewer would not have hit it. Anything
+// else that ever writes that file might, and a mismatch nobody can see is worth
+// three lines to prevent.
+func cleanID(b []byte) string {
+	s := strings.TrimSpace(string(b))
+	s = strings.TrimPrefix(s, "\ufeff")
+	return strings.TrimSpace(s)
 }
 
 // -- files ------------------------------------------------------------------

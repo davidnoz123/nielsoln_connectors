@@ -940,8 +940,23 @@ func openOwnWindow(url string) int {
 		return 0
 	}
 	profile := filepath.Join(os.TempDir(), "pdf_view_server_profile")
+	// KEEP WORKING WHILE BEHIND THE SPREADSHEET.
+	//
+	// This window spends almost all of its life as the background window: the
+	// reviewer clicks in Excel, reads here, clicks in Excel again. Chrome's
+	// defaults are tuned for the opposite case, where a background window is a
+	// tab nobody is looking at and may be slowed down to save power.
+	//
+	// The page also asks pdf.js to render explicitly (see nudge() in the page),
+	// which is what actually fixed the stuck navigation, so these are belt and
+	// braces rather than the fix. They are worth having anyway: every one of
+	// them makes a background window behave like a foreground one, which is
+	// precisely what this window is for.
 	cmd := exec.Command(exe, "--app="+url, "--user-data-dir="+profile,
-		"--no-first-run", "--no-default-browser-check")
+		"--no-first-run", "--no-default-browser-check",
+		"--disable-renderer-backgrounding",
+		"--disable-backgrounding-occluded-windows",
+		"--disable-background-timer-throttling")
 	if err := cmd.Start(); err != nil {
 		return 0
 	}

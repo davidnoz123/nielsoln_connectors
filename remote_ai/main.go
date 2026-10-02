@@ -485,7 +485,23 @@ func firstLink(root, p string) string {
 	if err != nil || rel == "." {
 		return ""
 	}
-	if strings.HasPrefix(rel, "..") {
+	// `..` ALONE, or `..` FOLLOWED BY A SEPARATOR. Not any name that happens
+	// to begin with two dots.
+	//
+	// HasPrefix(rel, "..") was true for `..x` and `..hidden`, which are
+	// ordinary filenames INSIDE the root, so this returned early and the link
+	// check never ran on them. A link named `..x` was therefore never
+	// detected, and after 2 Oct 2026 resolve() trusts firstLink to have looked:
+	// EvalSymlinks fails on a dangling link, Lstat succeeds, and the lexical
+	// path is accepted as real. write_file opens with O_CREATE, so that would
+	// have created the target OUTSIDE the shared folder.
+	//
+	// Found by a reviewer reading a4d92ba, which is the commit the page was
+	// publishing. Neither half is dangerous alone, which is why neither had
+	// been noticed: the skip was harmless while resolve() refused anything it
+	// could not follow, and the refusal was removed on the understanding that
+	// firstLink had already looked at every component.
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "" // outside already; containment reports that more clearly
 	}
 	at := root

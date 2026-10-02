@@ -2673,7 +2673,13 @@ func main() {
 	backoff := time.Second
 	for {
 		if err := c.runOnce(); err != nil {
-			logf("not connected (%v)", err)
+			// NAMES THE DESTINATION. "not connected (502 Bad Gateway)"
+			// tells a participant nothing about where it tried to go, and
+			// the commonest cause of a failure is dialling the wrong place:
+			// a stale code, a copied command from another session, or the
+			// flags being dropped by a shell so it fell back to loopback.
+			// The address is the one fact that separates those.
+			logf("not connected to %s:%s (%v)", c.host, c.port, err)
 		} else {
 			backoff = time.Second
 			logf("the bridge closed the connection")

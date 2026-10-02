@@ -76,7 +76,9 @@ func main() {
 	nav := flag.String("nav", navDefault, "file under -root that carries the current id")
 	poll := flag.Duration("poll", 100*time.Millisecond, "how often to stat the nav file")
 	open := flag.Bool("open", false, "open a browser at the root once listening")
-	raise := flag.Bool("raise", true, "bring the browser to the front on each selection")
+	raise := flag.Bool("raise", true, "bring the viewer to the front on each selection")
+	own := flag.Bool("own-window", true,
+		"open the viewer in a dedicated Chrome window we launch and can raise")
 	flag.Parse()
 
 	abs, err := resolveRoot(*root)
@@ -132,7 +134,22 @@ func main() {
 	log.Printf("open     %s", url)
 	log.Printf("stop with Ctrl-C, or by closing this window")
 	if *open {
-		openBrowser(url)
+		if *own {
+			if pid := openOwnWindow(url); pid > 0 {
+				h.mu.Lock()
+				h.ownPID = pid
+				h.mu.Unlock()
+				log.Printf("viewer window opened as pid %d", pid)
+			} else {
+				log.Printf("no Chrome found, so using the default browser. " +
+					"The viewer may end up as a background TAB, and no browser " +
+					"can be told to switch tabs from outside -- put the two " +
+					"windows side by side instead.")
+				openBrowser(url)
+			}
+		} else {
+			openBrowser(url)
+		}
 	}
 	log.Fatal(http.Serve(ln, mux))
 }
@@ -261,6 +278,7 @@ type hub struct {
 	last     string
 	raise    bool
 	browser  string // inferred from the page's User-Agent
+	ownPID   int    // the dedicated window WE launched, if we launched one
 	lastRise time.Time
 }
 
@@ -277,9 +295,14 @@ func (h *hub) broadcast(id string) {
 	//
 	// The APPLICATION is activated, never the URL re-opened: re-opening is what
 	// produces a second tab, and avoiding that is why this server exists.
-	if h.raise && h.browser != "" && time.Since(h.lastRise) > 300*time.Millisecond {
+	if h.raise && time.Since(h.lastRise) > 300*time.Millisecond {
 		h.lastRise = time.Now()
-		go activate(h.browser)
+		// OUR OWN WINDOW BY PID where we have one. A browser the reviewer
+		// already had open may hold the viewer in a BACKGROUND TAB, and
+		// nothing outside a browser can change which tab is in front -- so
+		// raising that window shows the wrong page, which is worse than
+		// doing nothing. A window we launched ourselves has no other tabs.
+		go activate(h.ownPID, h.browser)
 	}
 	for c := range h.clients {
 		// Non-blocking. A page that has stopped reading must not wedge the
@@ -597,28 +620,85 @@ func browserFrom(ua string) string {
 //
 // One file, no build constraints: these are different ARGUMENTS to exec.Command
 // rather than different APIs.
-func activate(app string) {
+func activate(ownPID int, app string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", "-a", app)
 	case "windows":
-		exe := map[string]string{
-			"Google Chrome": "chrome", "Microsoft Edge": "msedge",
-			"Firefox": "firefox", "Opera": "opera",
-		}[app]
-		if exe == "" {
-			return
+		// By PID when it is ours. Picking "the first Chrome process with a
+		// window" raised an unrelated window on 2 Oct 2026 -- the reviewer's
+		// own browsing, not the viewer.
+		sel := "Get-Process chrome,msedge -ErrorAction SilentlyContinue|" +
+			"Where-Object {$_.MainWindowHandle -ne 0}|Select-Object -First 1"
+		if ownPID > 0 {
+			sel = fmt.Sprintf("Get-Process -Id %d -ErrorAction SilentlyContinue", ownPID)
 		}
 		cmd = exec.Command("powershell", "-NoProfile", "-WindowStyle", "Hidden",
-			"-Command",
-			"$p=Get-Process "+exe+" -ErrorAction SilentlyContinue|"+
-				"Where-Object {$_.MainWindowHandle -ne 0}|Select-Object -First 1;"+
-				"if($p){(New-Object -ComObject WScript.Shell).AppActivate($p.Id)}")
+			"-Command", "$p="+sel+";if($p){(New-Object -ComObject "+
+				"WScript.Shell).AppActivate($p.Id)}")
+	case "darwin":
+		// `open -a` is LaunchServices, so no Automation grant is needed. It
+		// activates the APPLICATION; with a dedicated --app window that is
+		// almost always the right window, but macOS offers no
+		// permission-free way to raise a SPECIFIC window, so this is the one
+		// place the behaviour is best-effort. Verify it on the real machine.
+		if app == "" {
+			app = "Google Chrome"
+		}
+		cmd = exec.Command("open", "-a", app)
 	default:
-		return // X11 and Wayland disagree about this; not worth guessing
+		return // X11 and Wayland disagree; not worth guessing
 	}
 	_ = cmd.Run()
+}
+
+// chromePaths lists where Chrome lives, most likely first.
+func chromePaths() []string {
+	switch runtime.GOOS {
+	case "windows":
+		var out []string
+		for _, base := range []string{os.Getenv("ProgramFiles"),
+			os.Getenv("ProgramFiles(x86)"), os.Getenv("LocalAppData")} {
+			if base != "" {
+				out = append(out, filepath.Join(base,
+					"Google", "Chrome", "Application", "chrome.exe"))
+			}
+		}
+		return out
+	case "darwin":
+		return []string{
+			"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+			os.Getenv("HOME") + "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+		}
+	default:
+		return []string{"/usr/bin/google-chrome", "/usr/bin/chromium"}
+	}
+}
+
+// openOwnWindow launches a dedicated viewer window and returns its pid, or 0.
+//
+// `--app=` gives a window with NO TABS and no address bar, so the viewer cannot
+// become a background tab -- which is the thing that made raising useless. Its
+// own `--user-data-dir` keeps it out of the reviewer's session entirely: no
+// extensions, nothing signed in, and closing it disturbs nothing.
+func openOwnWindow(url string) int {
+	var exe string
+	for _, p := range chromePaths() {
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			exe = p
+			break
+		}
+	}
+	if exe == "" {
+		return 0
+	}
+	profile := filepath.Join(os.TempDir(), "pdf_view_server_profile")
+	cmd := exec.Command(exe, "--app="+url, "--user-data-dir="+profile,
+		"--no-first-run", "--no-default-browser-check")
+	if err := cmd.Start(); err != nil {
+		return 0
+	}
+	go func() { _ = cmd.Wait() }() // reap, so it does not linger as a zombie
+	return cmd.Process.Pid
 }
 
 // openBrowser is the only place the operating system is named, and it needs no

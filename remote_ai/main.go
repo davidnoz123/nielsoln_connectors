@@ -367,38 +367,43 @@ func resolve(root, raw string) (string, error) {
 			filepath.Base(bad), root)
 	}
 
-	// EvalSymlinks fails on a path that does not exist yet, which write_file
-	// legitimately produces. Fall back to resolving the parent, so a symlinked
-	// directory still cannot be used to escape.
+	// EvalSymlinks canonicalises by ENUMERATING EACH PARENT, including the ones
+	// above the root. Inside the Windows cage that always fails: the
+	// AppContainer is granted the workspace and the executable and nothing else,
+	// so no parent above the share can be listed.
+	//
+	// Measured 2 Oct 2026 against the deployed page. Three different roots -- a
+	// temp folder, C:\nbsmoke\lesson, and a participant's own working copy --
+	// every one attached, and every read and every listing came back
+	// "cannot be followed". The operating system would have allowed all of them.
+	// The cage held; this function refused before ever asking the cage.
+	//
+	// Nothing caught it because every local suite dials 127.0.0.1, and loopback
+	// SKIPS the cage by design, so the caged path had never been executed.
 	real, err := filepath.EvalSymlinks(p)
 	if err != nil {
-		// The fallback below exists for a path that does not exist YET, which
-		// write_file legitimately produces. It must not be used for a path
-		// that exists and merely will not resolve: joining the parent's real
-		// path to the base name yields something that passes containment
-		// without the final component ever having been followed, and if the
-		// open then succeeds we would read whatever it points at.
+		// firstLink above has already Lstat'd every component at or below the
+		// root and refused any reparse point, and the root itself was resolved
+		// before the cage was applied. A path with no links under a real root
+		// IS its own real path, so the lexical one is correct and no parent
+		// above the root needs to be read to know it.
 		//
-		// Found in the wild, 18 Sep 2026, on a participant's own Documents
-		// folder. Windows keeps three legacy junctions there -- My Music, My
-		// Pictures, My Videos -- pointing at the sibling user folders, with
-		// access denied. Every listing shows them, EvalSymlinks fails on
-		// them, and this fallback waved them through containment. Only the
-		// subsequent Stat failing kept it honest, and it reported
-		// "There is no file called My Pictures there", which is false.
+		// That is what makes this safe where the old fallback was not. The
+		// 18 Sep case -- Windows keeps My Music, My Pictures and My Videos as
+		// junctions inside Documents, access denied, and EvalSymlinks fails on
+		// them -- is refused BY NAME by firstLink now, before this point. It is
+		// not being waved through here; it never arrives here.
 		if _, lerr := os.Lstat(p); lerr == nil {
-			return "", refuse("not_allowed",
-				"%s cannot be followed, so it cannot be shown to be inside the "+
-					"folder shared for this session, which is %s.",
-				filepath.Base(p), root)
-		}
-		parent, err2 := filepath.EvalSymlinks(filepath.Dir(p))
-		if err2 != nil {
+			real = p
+		} else if _, derr := os.Lstat(filepath.Dir(p)); derr == nil {
+			// Does not exist YET, which write_file legitimately produces, and
+			// its parent does and is link-free by the same argument.
+			real = p
+		} else {
 			return "", refuse("not_found",
 				"There is nothing at %s. The folder shared for this session is %s.",
 				raw, root)
 		}
-		real = filepath.Join(parent, filepath.Base(p))
 	}
 
 	if !contained(root, real) {

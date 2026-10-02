@@ -12,6 +12,25 @@ import (
 	"time"
 )
 
+// readData returns the next `data:` line, skipping the stream's own
+// bookkeeping. The server sends `retry:` first so a page reconnects in half
+// a second instead of three, and a test that reads line one blindly reads
+// that instead of the event.
+func readData(t *testing.T, rd *bufio.Reader) string {
+	t.Helper()
+	for i := 0; i < 20; i++ {
+		line, err := rd.ReadString('\n')
+		if err != nil {
+			t.Fatalf("reading the stream: %v", err)
+		}
+		if strings.HasPrefix(line, "data:") {
+			return strings.TrimSpace(line)
+		}
+	}
+	t.Fatal("no data line arrived")
+	return ""
+}
+
 func writeFile(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -188,12 +207,8 @@ func TestEventsSendsCurrentStateOnConnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	line, err := bufio.NewReader(resp.Body).ReadString('\n')
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(line) != "data: F-000123" {
-		t.Fatalf("got %q", line)
+	if got := readData(t, bufio.NewReader(resp.Body)); got != "data: F-000123" {
+		t.Fatalf("got %q", got)
 	}
 }
 
@@ -225,12 +240,8 @@ func TestSelectReachesAConnectedPage(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("select returned %d", w.Code)
 	}
-	line, err := rd.ReadString('\n')
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(line) != "data: F-000777" {
-		t.Fatalf("got %q", line)
+	if got := readData(t, rd); got != "data: F-000777" {
+		t.Fatalf("got %q", got)
 	}
 }
 

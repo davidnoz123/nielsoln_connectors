@@ -11,3 +11,8 @@ package main
 
 // raisePID reports that it did nothing, so `activate` falls back.
 func raiseWindow(pid int, title string) bool { return false }
+
+// windowExists cannot be answered here without AppleScript and the Automation
+// grant that comes with it, so it says no and the caller falls back to waiting
+// for an existing page to reconnect.
+func windowExists(title string) bool { return false }

@@ -79,6 +79,8 @@ func main() {
 	open := flag.Bool("open", false, "open a browser at the root once listening")
 	logPath := flag.String("log", "", "also append the log here (default <root>/review.log)")
 	raise := flag.Bool("raise", true, "bring the viewer to the front on each selection")
+	grace := flag.Duration("grace", 2*time.Second,
+		"how long to wait for an existing viewer to reconnect before opening one")
 	own := flag.Bool("own-window", true,
 		"open the viewer in a dedicated Chrome window we launch and can raise")
 	flag.Parse()
@@ -154,7 +156,43 @@ func main() {
 	log.Printf("log      %s", lp)
 	log.Printf("stop with Ctrl-C, or by closing this window")
 	if *open {
-		if *own {
+		// WAIT AND SEE BEFORE OPENING ANOTHER.
+		//
+		// Every restart used to launch another --app window, and because
+		// Chrome hands off to the instance already running on that profile,
+		// they stacked up invisibly at identical coordinates: three of them
+		// after an afternoon of restarts.
+		//
+		// A viewer that is still open RECONNECTS BY ITSELF -- EventSource
+		// retries -- so a short wait answers "is one already there?" without
+		// enumerating windows, which is the only way to ask that works on
+		// both platforms.
+		// Ask the window manager first where we can. Only if that cannot
+		// answer do we fall back to waiting for a page to reconnect.
+		known := ""
+		if b, err := os.ReadFile(filepath.Join(abs, "viewer.title")); err == nil {
+			known = strings.TrimSpace(string(b))
+		}
+		deadline := time.Now().Add(*grace)
+		if windowExists(known) {
+			deadline = time.Now()
+		}
+		for time.Now().Before(deadline) {
+			h.mu.Lock()
+			n := len(h.clients)
+			h.mu.Unlock()
+			if n > 0 {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		h.mu.Lock()
+		already := len(h.clients)
+		h.mu.Unlock()
+		if already > 0 || windowExists(known) {
+			log.Printf("a viewer window titled %q is already open, so not "+
+				"opening another", known)
+		} else if *own {
 			if pid := openOwnWindow(url); pid > 0 {
 				h.mu.Lock()
 				h.ownPID = pid
@@ -362,6 +400,17 @@ func (h *hub) events(w http.ResponseWriter, r *http.Request) {
 	// opened the page before touching the spreadsheet, which is the normal
 	// order of events.
 	w.WriteHeader(http.StatusOK)
+	// TELL THE PAGE TO COME BACK QUICKLY.
+	//
+	// EventSource's default retry is about three seconds, which is slow enough
+	// that a restarting server cannot tell "the old viewer is still open" from
+	// "there is no viewer" -- so it opened another window every time, and they
+	// stacked up invisibly at identical coordinates.
+	//
+	// Half a second also means the reviewer's page comes back on its own
+	// almost immediately after any restart, instead of sitting on
+	// "disconnected" long enough to look broken.
+	fmt.Fprint(w, "retry: 500\n\n")
 	flusher.Flush()
 
 	ch := make(chan string, 8)

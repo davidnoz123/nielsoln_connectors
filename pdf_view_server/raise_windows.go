@@ -64,6 +64,16 @@ func windowTitled(title string) uintptr {
 	return found
 }
 
+// windowExists reports whether a visible window with this exact title is up.
+//
+// Deterministic, where the grace period is a guess: an existing viewer that
+// has not yet reconnected looks identical to no viewer at all, and a
+// restarting server then opens a SECOND --app window. They stack at identical
+// coordinates and nobody notices until four of them are there.
+func windowExists(title string) bool {
+	return title != "" && windowTitled(title) != 0
+}
+
 // windowOf finds a visible top-level window belonging to pid.
 func windowOf(pid int) uintptr {
 	var found uintptr

@@ -54,6 +54,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -76,6 +77,7 @@ func main() {
 	nav := flag.String("nav", navDefault, "file under -root that carries the current id")
 	poll := flag.Duration("poll", 100*time.Millisecond, "how often to stat the nav file")
 	open := flag.Bool("open", false, "open a browser at the root once listening")
+	logPath := flag.String("log", "", "also append the log here (default <root>/review.log)")
 	raise := flag.Bool("raise", true, "bring the viewer to the front on each selection")
 	own := flag.Bool("own-window", true,
 		"open the viewer in a dedicated Chrome window we launch and can raise")
@@ -88,6 +90,23 @@ func main() {
 	if *token == "" {
 		log.Printf("WARNING: no -token, so anything on this machine that can reach " +
 			"the port can read -root. Pass one unless you mean this.")
+	}
+
+	// TEE THE LOG TO A FILE as well as the console.
+	//
+	// The console window exists, but the viewer window we open lands on top of
+	// it, so somebody looking for the log finds Chrome. A file is readable
+	// afterwards, over a phone call, and from the other end of an ssh session
+	// -- none of which a console window is.
+	lp := *logPath
+	if lp == "" {
+		lp = filepath.Join(abs, "review.log")
+	}
+	if f, err := os.OpenFile(lp, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+		log.SetOutput(io.MultiWriter(os.Stderr, f))
+		log.Printf("---- started ----")
+	} else {
+		log.Printf("could not open %s, so logging to this window only: %v", lp, err)
 	}
 
 	h := &hub{clients: map[chan string]bool{}, raise: *raise}
@@ -132,6 +151,7 @@ func main() {
 	log.Printf("serving %s", abs)
 	log.Printf("nav file %s", navPath)
 	log.Printf("open     %s", url)
+	log.Printf("log      %s", lp)
 	log.Printf("stop with Ctrl-C, or by closing this window")
 	if *open {
 		if *own {
@@ -289,6 +309,12 @@ func (h *hub) broadcast(id string) {
 		return
 	}
 	h.last = id
+	// LOG EVERY SELECTION. The startup banner is not what somebody watching
+	// the window wants to see -- they want to know whether their click arrived,
+	// and from which route. Without this the log says nothing during the only
+	// part anybody watches.
+	log.Printf("selected %s  (%d page%s listening)", id, len(h.clients),
+		map[bool]string{true: "", false: "s"}[len(h.clients) == 1])
 	// Bring the browser forward. Without this the page updates behind whatever
 	// the reviewer is working in, so a click appears to do nothing at all --
 	// which is exactly how it read on 2 Oct 2026.
@@ -624,17 +650,13 @@ func activate(ownPID int, app string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":
-		// By PID when it is ours. Picking "the first Chrome process with a
-		// window" raised an unrelated window on 2 Oct 2026 -- the reviewer's
-		// own browsing, not the viewer.
-		sel := "Get-Process chrome,msedge -ErrorAction SilentlyContinue|" +
-			"Where-Object {$_.MainWindowHandle -ne 0}|Select-Object -First 1"
+		// user32 directly, in microseconds. There is nothing to fall back to:
+		// without a pid of our own there is no window we can be sure is the
+		// viewer, and raising the wrong one is worse than raising none.
 		if ownPID > 0 {
-			sel = fmt.Sprintf("Get-Process -Id %d -ErrorAction SilentlyContinue", ownPID)
+			raisePID(ownPID)
 		}
-		cmd = exec.Command("powershell", "-NoProfile", "-WindowStyle", "Hidden",
-			"-Command", "$p="+sel+";if($p){(New-Object -ComObject "+
-				"WScript.Shell).AppActivate($p.Id)}")
+		return
 	case "darwin":
 		// `open -a` is LaunchServices, so no Automation grant is needed. It
 		// activates the APPLICATION; with a dedicated --app window that is

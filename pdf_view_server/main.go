@@ -348,11 +348,12 @@ type hub struct {
 	clients  map[chan string]bool
 	last     string
 	raise    bool
-	browser  string // inferred from the page's User-Agent
-	ownPID   int    // the dedicated window WE launched, if we launched one
-	title    string // the page's own <title>, which is the window's title too
-	root     string // so the title can be written where the spreadsheet reads it
-	ackPath  string // where the page's answer is written for the spreadsheet
+	browser  string                 // inferred from the page's User-Agent
+	ownPID   int                    // the dedicated window WE launched, if we launched one
+	title    string                 // the page's own <title>, which is the window's title too
+	root     string                 // so the title can be written where the spreadsheet reads it
+	ackPath  string                 // where the page's answer is written for the spreadsheet
+	builds   map[chan string]string // which build each connected page is from
 	lastRise time.Time
 }
 
@@ -379,6 +380,14 @@ func (h *hub) broadcast(id string) {
 	// than as "the viewer is not open".
 	if len(h.clients) == 0 {
 		h.note(id, false, "no viewer page is connected")
+	} else if h.staleOnly() {
+		// ANSWER AT ONCE, with the one instruction that fixes it.
+		//
+		// This page cannot ack, so without this the spreadsheet waits its whole
+		// timeout and reports a silence. A silence is the least useful thing it
+		// could say, and the reviewer is looking at Excel, not at this window.
+		h.note(id, false, "the viewer page is from an older build -- "+
+			"press F5 in the viewer window")
 	}
 	// Bring the browser forward. Without this the page updates behind whatever
 	// the reviewer is working in, so a click appears to do nothing at all --
@@ -449,6 +458,25 @@ func (h *hub) events(w http.ResponseWriter, r *http.Request) {
 	// The page tells us its title when it connects, because that is how the
 	// window is found. Asking the page beats guessing: it is the same string
 	// the window manager shows.
+	// WHICH BUILD THE PAGE IS FROM.
+	//
+	// A page that does not say is one that predates the question, and that is
+	// the whole point of asking: on 2 Oct 2026 a page from 17:48 reconnected to
+	// a 19:22 server, reported itself as "1 page listening", and could not ack
+	// because it had never heard of acking. Every click then timed out, and the
+	// only place that said anything was this log.
+	if h.builds == nil {
+		h.builds = map[chan string]string{}
+	}
+	h.builds[ch] = r.URL.Query().Get("build")
+	if cur := h.currentBuild(); cur != "" && h.builds[ch] != cur {
+		was := h.builds[ch]
+		if was == "" {
+			was = "one too old to say"
+		}
+		log.Printf("WARNING: the viewer page is build %s, this server is "+
+			"serving %s. PRESS F5 IN THE VIEWER WINDOW.", was, cur)
+	}
 	if t := r.URL.Query().Get("title"); t != "" {
 		h.title = t
 		// WRITE IT DOWN WHERE THE SPREADSHEET CAN READ IT.
@@ -472,6 +500,7 @@ func (h *hub) events(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		h.mu.Lock()
 		delete(h.clients, ch)
+		delete(h.builds, ch)
 		h.mu.Unlock()
 	}()
 
@@ -515,6 +544,39 @@ func (h *hub) selectHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	h.broadcast(id)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// currentBuild is what build.txt says, or "" if there is no such file.
+//
+// Read on demand rather than cached at startup, because a rebuild while this
+// server is running is the ordinary case during development and a cached value
+// would make the server the stale one.
+func (h *hub) currentBuild() string {
+	if h.root == "" {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(h.root, "build.txt"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// staleOnly reports that pages ARE connected and not one of them is current.
+//
+// Only then is the answer certain. With a mix, a current page will ack and the
+// spreadsheet will act on that, so saying "press F5" would be wrong.
+func (h *hub) staleOnly() bool {
+	cur := h.currentBuild()
+	if cur == "" || len(h.clients) == 0 {
+		return false
+	}
+	for ch := range h.clients {
+		if h.builds[ch] == cur {
+			return false
+		}
+	}
+	return true
 }
 
 // -- what the page did with it ----------------------------------------------
@@ -634,6 +696,19 @@ func fileHandler(root string) http.HandlerFunc {
 				return
 			}
 			p = idx
+		}
+		// NO CACHING OF THE THREE FILES THAT CHANGE.
+		//
+		// index.html carries the page code and the map; build.txt is what the
+		// page compares itself against. If a reload could be answered from
+		// cache, the mechanism that replaces a stale page would be able to
+		// reload it back to the same stale page. ServeFile does revalidate via
+		// Last-Modified, but a heuristic freshness lifetime applies when no
+		// Cache-Control is sent at all, and this removes the question. The PDF
+		// and the pdf.js assets are untouched: they are large and immutable.
+		switch strings.ToLower(filepath.Base(p)) {
+		case "index.html", "build.txt", "map.json":
+			w.Header().Set("Cache-Control", "no-store, must-revalidate")
 		}
 		http.ServeFile(w, r, p)
 	}

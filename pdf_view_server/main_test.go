@@ -416,3 +416,61 @@ func TestRepeatOfTheSameIDStillReachesThePage(t *testing.T) {
 		}
 	}
 }
+
+// A page that cannot ack must be ANSWERED FOR, not waited on. The spreadsheet's
+// timeout says only "no answer", and the reviewer is looking at Excel rather
+// than at the server window, so the one instruction that fixes it has to travel
+// through the ack file.
+func TestStaleOnlyPageIsAnsweredForAtOnce(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "build.txt"),
+		[]byte("cafe12345678\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := &hub{clients: map[chan string]bool{}, builds: map[chan string]string{},
+		root: dir, ackPath: filepath.Join(dir, ".ack")}
+	ch := make(chan string, 4)
+	h.clients[ch] = true // a connected client
+	h.builds[ch] = ""    // ...from a build too old to say which
+
+	h.broadcast("pow-11112222")
+	got, err := os.ReadFile(h.ackPath)
+	if err != nil {
+		t.Fatalf("no ack file: %v", err)
+	}
+	if !strings.Contains(string(got), "older build") ||
+		!strings.Contains(string(got), "F5") {
+		t.Fatalf("ack = %q, want the F5 instruction", got)
+	}
+
+	// With a CURRENT page also connected, that page will ack for itself and
+	// saying "press F5" would be wrong.
+	cur := make(chan string, 4)
+	h.clients[cur] = true
+	h.builds[cur] = "cafe12345678"
+	os.Remove(h.ackPath)
+	h.broadcast("pow-33334444")
+	if _, err := os.Stat(h.ackPath); err == nil {
+		b, _ := os.ReadFile(h.ackPath)
+		t.Fatalf("answered for a page that can answer: %q", b)
+	}
+}
+
+// With no build.txt there is nothing to compare against, so no page may be
+// called stale. A server pointed at an older bundle must not accuse every page
+// it serves.
+func TestNoBuildFileMeansNoStaleVerdict(t *testing.T) {
+	dir := t.TempDir()
+	h := &hub{clients: map[chan string]bool{}, builds: map[chan string]string{},
+		root: dir, ackPath: filepath.Join(dir, ".ack")}
+	ch := make(chan string, 4)
+	h.clients[ch] = true
+	h.builds[ch] = ""
+	if h.staleOnly() {
+		t.Fatal("called a page stale with nothing to compare against")
+	}
+	h.broadcast("pow-55556666")
+	if _, err := os.Stat(h.ackPath); err == nil {
+		t.Fatal("wrote an ack with no build.txt to justify it")
+	}
+}

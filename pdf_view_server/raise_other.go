@@ -10,4 +10,4 @@
 package main
 
 // raisePID reports that it did nothing, so `activate` falls back.
-func raisePID(pid int) bool { return false }
+func raiseWindow(pid int, title string) bool { return false }

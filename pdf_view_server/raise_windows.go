@@ -27,11 +27,42 @@ var (
 	procAttachThreadInput   = user32.NewProc("AttachThreadInput")
 	procGetForegroundWindow = user32.NewProc("GetForegroundWindow")
 	procIsIconic            = user32.NewProc("IsIconic")
+	procGetWindowTextW      = user32.NewProc("GetWindowTextW")
 	kernel32                = syscall.NewLazyDLL("kernel32.dll")
 	procGetCurrentThreadID  = kernel32.NewProc("GetCurrentThreadId")
 )
 
 const swRestore = 9
+
+// windowTitled finds a visible top-level window with exactly this title.
+//
+// BY TITLE, not by pid, and that is the whole lesson here. Launching
+// chrome.exe against an existing --user-data-dir makes the new process hand
+// off to the running instance and EXIT, so the pid we recorded was already
+// dead and raisePID found nothing. A Chrome `--app` window's title is exactly
+// the page's <title> -- no " - Google Chrome" suffix -- which makes it both
+// distinctive and stable.
+func windowTitled(title string) uintptr {
+	var found uintptr
+	buf := make([]uint16, 512)
+	cb := syscall.NewCallback(func(hwnd uintptr, _ uintptr) uintptr {
+		if vis, _, _ := procIsWindowVisible.Call(hwnd); vis == 0 {
+			return 1
+		}
+		n, _, _ := procGetWindowTextW.Call(hwnd,
+			uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+		if n == 0 {
+			return 1
+		}
+		if syscall.UTF16ToString(buf[:n]) == title {
+			found = hwnd
+			return 0
+		}
+		return 1
+	})
+	procEnumWindows.Call(cb, 0)
+	return found
+}
 
 // windowOf finds a visible top-level window belonging to pid.
 func windowOf(pid int) uintptr {
@@ -58,8 +89,14 @@ func windowOf(pid int) uintptr {
 // foreground process -- Windows protects against focus theft. Attaching to the
 // foreground thread's input queue for the duration is the documented way round
 // it, and it is detached again immediately.
-func raisePID(pid int) bool {
-	hwnd := windowOf(pid)
+func raiseWindow(pid int, title string) bool {
+	hwnd := uintptr(0)
+	if title != "" {
+		hwnd = windowTitled(title)
+	}
+	if hwnd == 0 && pid > 0 {
+		hwnd = windowOf(pid)
+	}
 	if hwnd == 0 {
 		return false
 	}

@@ -109,7 +109,7 @@ func main() {
 		log.Printf("could not open %s, so logging to this window only: %v", lp, err)
 	}
 
-	h := &hub{clients: map[chan string]bool{}, raise: *raise}
+	h := &hub{clients: map[chan string]bool{}, raise: *raise, root: abs}
 	navPath := filepath.Join(abs, filepath.Clean("/"+*nav))
 	go watchNav(navPath, *poll, h)
 
@@ -299,6 +299,8 @@ type hub struct {
 	raise    bool
 	browser  string // inferred from the page's User-Agent
 	ownPID   int    // the dedicated window WE launched, if we launched one
+	title    string // the page's own <title>, which is the window's title too
+	root     string // so the title can be written where the spreadsheet reads it
 	lastRise time.Time
 }
 
@@ -328,7 +330,7 @@ func (h *hub) broadcast(id string) {
 		// nothing outside a browser can change which tab is in front -- so
 		// raising that window shows the wrong page, which is worse than
 		// doing nothing. A window we launched ourselves has no other tabs.
-		go activate(h.ownPID, h.browser)
+		go activate(h.ownPID, h.browser, h.title)
 	}
 	for c := range h.clients {
 		// Non-blocking. A page that has stopped reading must not wedge the
@@ -369,6 +371,26 @@ func (h *hub) events(w http.ResponseWriter, r *http.Request) {
 	// viewer need not be the same.
 	if b := browserFrom(r.UserAgent()); b != "" {
 		h.browser = b
+	}
+	// The page tells us its title when it connects, because that is how the
+	// window is found. Asking the page beats guessing: it is the same string
+	// the window manager shows.
+	if t := r.URL.Query().Get("title"); t != "" {
+		h.title = t
+		// WRITE IT DOWN WHERE THE SPREADSHEET CAN READ IT.
+		//
+		// Windows will not let a BACKGROUND process take the foreground; only
+		// the process that currently holds it may give it away. The server is
+		// always the background one, so its own SetForegroundWindow is denied
+		// the instant a human has just clicked in Excel -- which is every time
+		// that matters. Excel, being the foreground process, is allowed.
+		//
+		// So the title goes in a file beside the nav file and the VBA raises
+		// the window itself with one AppActivate.
+		if h.root != "" {
+			_ = os.WriteFile(filepath.Join(h.root, "viewer.title"),
+				[]byte(t), 0o644)
+		}
 	}
 	h.clients[ch] = true
 	current := h.last
@@ -646,16 +668,14 @@ func browserFrom(ua string) string {
 //
 // One file, no build constraints: these are different ARGUMENTS to exec.Command
 // rather than different APIs.
-func activate(ownPID int, app string) {
+func activate(ownPID int, app, title string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":
 		// user32 directly, in microseconds. There is nothing to fall back to:
 		// without a pid of our own there is no window we can be sure is the
 		// viewer, and raising the wrong one is worse than raising none.
-		if ownPID > 0 {
-			raisePID(ownPID)
-		}
+		raiseWindow(ownPID, title)
 		return
 	case "darwin":
 		// `open -a` is LaunchServices, so no Automation grant is needed. It

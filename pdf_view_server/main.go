@@ -379,15 +379,15 @@ func (h *hub) broadcast(id string) {
 	// known here, and the reviewer reads a two-second pause as slowness rather
 	// than as "the viewer is not open".
 	if len(h.clients) == 0 {
-		h.note(id, false, "no viewer page is connected")
+		h.note(id, false, "server", "no viewer page is connected")
 	} else if h.staleOnly() {
 		// ANSWER AT ONCE, with the one instruction that fixes it.
 		//
 		// This page cannot ack, so without this the spreadsheet waits its whole
 		// timeout and reports a silence. A silence is the least useful thing it
 		// could say, and the reviewer is looking at Excel, not at this window.
-		h.note(id, false, "the viewer page is from an older build -- "+
-			"press F5 in the viewer window")
+		h.note(id, false, "server", "the viewer page is from an older "+
+			"build -- press F5 in the viewer window")
 	}
 	// Bring the browser forward. Without this the page updates behind whatever
 	// the reviewer is working in, so a click appears to do nothing at all --
@@ -589,12 +589,27 @@ func (h *hub) ackHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no id", http.StatusBadRequest)
 		return
 	}
-	h.note(id, q.Get("ok") == "1", strings.TrimSpace(q.Get("why")))
+	phase := strings.TrimSpace(q.Get("phase"))
+	if phase == "" {
+		phase = "unknown"
+	}
+	h.note(id, q.Get("ok") == "1", phase, strings.TrimSpace(q.Get("why")))
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // note writes the verdict where the spreadsheet can read it, as
-// "id<TAB>1|0<TAB>why".
+// "id<TAB>1|0<TAB>phase<TAB>why".
+//
+// PHASE EXISTS BECAUSE THE SPREADSHEET CANNOT WAIT FOR THE PICTURE.
+//
+// An occluded window gets no frames from Chrome, so a page behind Excel runs the
+// JavaScript but never repaints: measured 2 Oct 2026, a frozen page held
+// scrollTop at 76910 while being told to go to a position at 88424, and moved
+// the moment it was woken. The page therefore cannot finish until it is in
+// front, and it cannot be brought in front until it has answered. "accepted"
+// breaks that circle -- it means the id is known and the document is open, which
+// is every failure worth refusing the focus for -- and "displayed" follows once
+// the window is awake, for the tests that can see it.
 //
 // Tab-separated and one line, because the reader is VBA: it has no JSON parser,
 // and Split on a tab is the whole implementation. The id is included so a
@@ -604,7 +619,7 @@ func (h *hub) ackHandler(w http.ResponseWriter, r *http.Request) {
 // A write failure is logged and otherwise ignored. The spreadsheet times out
 // and says the viewer did not answer, which is true and is the right thing for
 // the reviewer to be told.
-func (h *hub) note(id string, ok bool, why string) {
+func (h *hub) note(id string, ok bool, phase, why string) {
 	if h.ackPath == "" || id == "" {
 		return
 	}
@@ -612,13 +627,13 @@ func (h *hub) note(id string, ok bool, why string) {
 	if ok {
 		state = "1"
 	}
-	line := id + "\t" + state + "\t" + why + "\n"
+	line := id + "\t" + state + "\t" + phase + "\t" + why + "\n"
 	if err := os.WriteFile(h.ackPath, []byte(line), 0o644); err != nil {
 		log.Printf("cannot write %s: %v", h.ackPath, err)
 		return
 	}
 	if !ok {
-		log.Printf("  %s did NOT display: %s", id, why)
+		log.Printf("  %s did NOT display (%s): %s", id, phase, why)
 	}
 }
 func (h *hub) stateHandler(w http.ResponseWriter, r *http.Request) {

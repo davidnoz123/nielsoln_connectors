@@ -353,25 +353,25 @@ func TestAckFileShape(t *testing.T) {
 	dir := t.TempDir()
 	h := &hub{clients: map[chan string]bool{}, ackPath: filepath.Join(dir, ".ack")}
 
-	h.note("pow-1234abcd", true, "")
+	h.note("pow-1234abcd", true, "displayed", "")
 	got, err := os.ReadFile(h.ackPath)
 	if err != nil {
 		t.Fatalf("no ack file: %v", err)
 	}
-	if string(got) != "pow-1234abcd\t1\t\n" {
+	if string(got) != "pow-1234abcd\t1\tdisplayed\t\n" {
 		t.Fatalf("ack = %q", got)
 	}
 
-	h.note("pow-1234abcd", false, "not in this build")
+	h.note("pow-1234abcd", false, "failed", "not in this build")
 	got, _ = os.ReadFile(h.ackPath)
-	if string(got) != "pow-1234abcd\t0\tnot in this build\n" {
+	if string(got) != "pow-1234abcd\t0\tfailed\tnot in this build\n" {
 		t.Fatalf("failed ack = %q", got)
 	}
 
 	// An empty id would produce a line the spreadsheet could match against
 	// nothing, so it is refused rather than written.
 	before, _ := os.ReadFile(h.ackPath)
-	h.note("", true, "")
+	h.note("", true, "displayed", "")
 	after, _ := os.ReadFile(h.ackPath)
 	if string(before) != string(after) {
 		t.Fatalf("an empty id overwrote the ack")
@@ -388,7 +388,7 @@ func TestBroadcastAnswersWhenNoPageIsConnected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("no ack file: %v", err)
 	}
-	if !strings.HasPrefix(string(got), "pow-deadbeef\t0\t") {
+	if !strings.HasPrefix(string(got), "pow-deadbeef\t0\tserver\t") {
 		t.Fatalf("ack = %q, want a failure naming the id", got)
 	}
 }

@@ -84,6 +84,41 @@ const (
 // session on an unconfined connector never sees one and never tries: a refusal
 // the model has to discover by being refused is a worse experience and a worse
 // boundary than a tool that was never offered.
+// startedAt is stamped once, at process start, so a refusal can say how long
+// the incumbent has been holding the session. Read from a variable rather than
+// asked of the OS per call: the answer must not drift between the hello and the
+// message a participant reads.
+var startedAt = time.Now().Format("2006-01-02 15:04:05")
+
+// hostName, userName and exePath each answer "" rather than failing. None of
+// them is load-bearing: they make a refusal easier to act on, and a refusal
+// that cannot be sent because the hostname lookup failed would be worse than
+// one missing a field.
+func hostName() string {
+	n, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	return n
+}
+
+func userName() string {
+	for _, k := range []string{"USERNAME", "USER", "LOGNAME"} {
+		if v := os.Getenv(k); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func exePath() string {
+	p, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return p
+}
+
 func capabilitiesNow() []string {
 	caps := []string{"utf8_text"}
 	if inCage() {
@@ -285,6 +320,22 @@ type helloArgs struct {
 	Version      string   `json:"version"`
 	Capabilities []string `json:"capabilities"`
 	ResumeOf     string   `json:"resume_of,omitempty"`
+
+	// Who this connector IS, so a second one can be refused with something a
+	// participant can act on. A session serves one connector; before this,
+	// starting a second silently displaced the first, which then went quiet
+	// with no explanation at either end.
+	//
+	// The refusal is read by a person at a terminal, usually on the same
+	// machine, so the PID is directly actionable. Host and user are there for
+	// when it is NOT the same machine: "that is not mine" is the first thing a
+	// second participant needs to know, and a bare PID would send them hunting
+	// through their own task list for a process that was never there.
+	PID     int    `json:"pid,omitempty"`
+	Started string `json:"started,omitempty"`
+	Host    string `json:"host,omitempty"`
+	User    string `json:"user,omitempty"`
+	Exe     string `json:"exe,omitempty"`
 }
 
 // refusal is an error from the closed set, carrying a message for a human.
@@ -2011,6 +2062,11 @@ func (c *connector) hello(t transport) error {
 		"id": 0, "op": "hello",
 		"args": helloArgs{
 			Token:        c.token,
+			PID:          os.Getpid(),
+			Started:      startedAt,
+			Host:         hostName(),
+			User:         userName(),
+			Exe:          exePath(),
 			Platform:     runtime.GOOS,
 			Root:         c.root,
 			Version:      version,

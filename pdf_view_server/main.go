@@ -69,6 +69,14 @@ import (
 
 const navDefault = ".nav"
 
+// ackDefault is where the page's answer goes, beside the nav file.
+//
+// The spreadsheet writes .nav and then WAITS for this before it gives the
+// viewer the focus. Raising a window that is showing the wrong place is worse
+// than raising nothing: it takes the reviewer out of the spreadsheet AND tells
+// him the click worked.
+const ackDefault = ".ack"
+
 func main() {
 	root := flag.String("root", ".", "the only folder this server may read")
 	host := flag.String("host", "127.0.0.1", "address to bind")
@@ -113,12 +121,17 @@ func main() {
 
 	h := &hub{clients: map[chan string]bool{}, raise: *raise, root: abs}
 	navPath := filepath.Join(abs, filepath.Clean("/"+*nav))
+	// Beside the nav file, not beside the root: on a sandboxed Excel for Mac
+	// the workbook's own folder is the one reliably readable, and that is where
+	// the nav file already had to live.
+	h.ackPath = filepath.Join(filepath.Dir(navPath), ackDefault)
 	go watchNav(navPath, *poll, h)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/events", guard(*token, h.events))
 	mux.HandleFunc("/select", guard(*token, h.selectHandler))
 	mux.HandleFunc("/state", guard(*token, h.stateHandler))
+	mux.HandleFunc("/ack", guard(*token, h.ackHandler))
 	mux.HandleFunc("/", guard(*token, fileHandler(abs)))
 
 	// Bind BEFORE announcing, so the address printed is one that is actually
@@ -339,15 +352,20 @@ type hub struct {
 	ownPID   int    // the dedicated window WE launched, if we launched one
 	title    string // the page's own <title>, which is the window's title too
 	root     string // so the title can be written where the spreadsheet reads it
+	ackPath  string // where the page's answer is written for the spreadsheet
 	lastRise time.Time
 }
 
 func (h *hub) broadcast(id string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if id == h.last {
-		return
-	}
+	// NO "same id, do nothing" SHORTCUT.
+	//
+	// Clicking the row you are already on is a normal thing to do -- it is how
+	// you get the viewer back after looking at something else -- and dropping
+	// it here made that gesture silently inert. watchNav already refuses to
+	// re-read a file that has not changed, so this is not the place that needs
+	// to deduplicate.
 	h.last = id
 	// LOG EVERY SELECTION. The startup banner is not what somebody watching
 	// the window wants to see -- they want to know whether their click arrived,
@@ -355,6 +373,13 @@ func (h *hub) broadcast(id string) {
 	// part anybody watches.
 	log.Printf("selected %s  (%d page%s listening)", id, len(h.clients),
 		map[bool]string{true: "", false: "s"}[len(h.clients) == 1])
+	// Nobody to ask, so answer on the page's behalf immediately. Otherwise the
+	// spreadsheet waits its full timeout to learn something that is already
+	// known here, and the reviewer reads a two-second pause as slowness rather
+	// than as "the viewer is not open".
+	if len(h.clients) == 0 {
+		h.note(id, false, "no viewer page is connected")
+	}
 	// Bring the browser forward. Without this the page updates behind whatever
 	// the reviewer is working in, so a click appears to do nothing at all --
 	// which is exactly how it read on 2 Oct 2026.
@@ -492,6 +517,48 @@ func (h *hub) selectHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// -- what the page did with it ----------------------------------------------
+
+// ackHandler records the page's verdict on an id.
+func (h *hub) ackHandler(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	id := strings.TrimSpace(q.Get("id"))
+	if id == "" {
+		http.Error(w, "no id", http.StatusBadRequest)
+		return
+	}
+	h.note(id, q.Get("ok") == "1", strings.TrimSpace(q.Get("why")))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// note writes the verdict where the spreadsheet can read it, as
+// "id<TAB>1|0<TAB>why".
+//
+// Tab-separated and one line, because the reader is VBA: it has no JSON parser,
+// and Split on a tab is the whole implementation. The id is included so a
+// waiting spreadsheet can tell this answer from the previous click's -- which
+// matters most for the case of clicking the SAME row twice.
+//
+// A write failure is logged and otherwise ignored. The spreadsheet times out
+// and says the viewer did not answer, which is true and is the right thing for
+// the reviewer to be told.
+func (h *hub) note(id string, ok bool, why string) {
+	if h.ackPath == "" || id == "" {
+		return
+	}
+	state := "0"
+	if ok {
+		state = "1"
+	}
+	line := id + "\t" + state + "\t" + why + "\n"
+	if err := os.WriteFile(h.ackPath, []byte(line), 0o644); err != nil {
+		log.Printf("cannot write %s: %v", h.ackPath, err)
+		return
+	}
+	if !ok {
+		log.Printf("  %s did NOT display: %s", id, why)
+	}
+}
 func (h *hub) stateHandler(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	out := map[string]any{"id": h.last, "clients": len(h.clients)}

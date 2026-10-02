@@ -344,3 +344,75 @@ func TestDirectoryListingIsRefused(t *testing.T) {
 		t.Fatalf("a directory without index.html returned %d, not 404", w.Code)
 	}
 }
+
+// The ack file is the only thing standing between "the window came forward
+// showing the wrong page" and "nothing moved and Excel said why", so its exact
+// on-disk shape is pinned here: VBA splits it on a tab and has no recourse if
+// the field order moves.
+func TestAckFileShape(t *testing.T) {
+	dir := t.TempDir()
+	h := &hub{clients: map[chan string]bool{}, ackPath: filepath.Join(dir, ".ack")}
+
+	h.note("pow-1234abcd", true, "")
+	got, err := os.ReadFile(h.ackPath)
+	if err != nil {
+		t.Fatalf("no ack file: %v", err)
+	}
+	if string(got) != "pow-1234abcd\t1\t\n" {
+		t.Fatalf("ack = %q", got)
+	}
+
+	h.note("pow-1234abcd", false, "not in this build")
+	got, _ = os.ReadFile(h.ackPath)
+	if string(got) != "pow-1234abcd\t0\tnot in this build\n" {
+		t.Fatalf("failed ack = %q", got)
+	}
+
+	// An empty id would produce a line the spreadsheet could match against
+	// nothing, so it is refused rather than written.
+	before, _ := os.ReadFile(h.ackPath)
+	h.note("", true, "")
+	after, _ := os.ReadFile(h.ackPath)
+	if string(before) != string(after) {
+		t.Fatalf("an empty id overwrote the ack")
+	}
+}
+
+// With nobody listening the spreadsheet must be told at once. Waiting its full
+// timeout to learn something the server already knows reads as slowness.
+func TestBroadcastAnswersWhenNoPageIsConnected(t *testing.T) {
+	dir := t.TempDir()
+	h := &hub{clients: map[chan string]bool{}, ackPath: filepath.Join(dir, ".ack")}
+	h.broadcast("pow-deadbeef")
+	got, err := os.ReadFile(h.ackPath)
+	if err != nil {
+		t.Fatalf("no ack file: %v", err)
+	}
+	if !strings.HasPrefix(string(got), "pow-deadbeef\t0\t") {
+		t.Fatalf("ack = %q, want a failure naming the id", got)
+	}
+}
+
+// Clicking the row you are already on is how a reviewer gets the viewer back.
+// An earlier version dropped a repeat of the current id, which made that
+// gesture silently inert.
+func TestRepeatOfTheSameIDStillReachesThePage(t *testing.T) {
+	h := &hub{clients: map[chan string]bool{}}
+	ch := make(chan string, 4)
+	h.mu.Lock()
+	h.clients[ch] = true
+	h.mu.Unlock()
+
+	h.broadcast("pow-aaaa1111")
+	h.broadcast("pow-aaaa1111")
+	for i := 0; i < 2; i++ {
+		select {
+		case got := <-ch:
+			if got != "pow-aaaa1111" {
+				t.Fatalf("delivery %d = %q", i+1, got)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("delivery %d never arrived", i+1)
+		}
+	}
+}

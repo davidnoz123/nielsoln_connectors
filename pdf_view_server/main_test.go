@@ -302,6 +302,28 @@ func TestCleanIDStripsABOM(t *testing.T) {
 	}
 }
 
+// Order matters here and the obvious order is wrong: Edge and Opera both put
+// "Chrome" in their User-Agent, and Chrome puts "Safari" in its. A naive
+// Contains(ua, "Chrome") chain activates the wrong application.
+func TestBrowserFromUserAgent(t *testing.T) {
+	for _, tc := range []struct{ ua, want string }{
+		{"Mozilla/5.0 (Macintosh) AppleWebKit/537.36 (KHTML, like Gecko) " +
+			"Chrome/130.0.0.0 Safari/537.36", "Google Chrome"},
+		{"Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/130.0.0.0 " +
+			"Safari/537.36 Edg/130.0.0.0", "Microsoft Edge"},
+		{"Mozilla/5.0 Chrome/130.0.0.0 Safari/537.36 OPR/115.0.0.0", "Opera"},
+		{"Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 Version/17.0 " +
+			"Safari/605.1.15", "Safari"},
+		{"Mozilla/5.0 (X11; Linux) Gecko/20100101 Firefox/131.0", "Firefox"},
+		{"curl/8.4.0", ""},
+		{"", ""},
+	} {
+		if got := browserFrom(tc.ua); got != tc.want {
+			t.Errorf("browserFrom(%.40q) = %q, want %q", tc.ua, got, tc.want)
+		}
+	}
+}
+
 func TestDirectoryListingIsRefused(t *testing.T) {
 	root, _ := shareAndSecret(t)
 	writeFile(t, filepath.Join(root, "sub", "a.txt"), "x")

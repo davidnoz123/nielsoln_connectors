@@ -76,6 +76,7 @@ func main() {
 	nav := flag.String("nav", navDefault, "file under -root that carries the current id")
 	poll := flag.Duration("poll", 100*time.Millisecond, "how often to stat the nav file")
 	open := flag.Bool("open", false, "open a browser at the root once listening")
+	raise := flag.Bool("raise", true, "bring the browser to the front on each selection")
 	flag.Parse()
 
 	abs, err := resolveRoot(*root)
@@ -87,7 +88,7 @@ func main() {
 			"the port can read -root. Pass one unless you mean this.")
 	}
 
-	h := &hub{clients: map[chan string]bool{}}
+	h := &hub{clients: map[chan string]bool{}, raise: *raise}
 	navPath := filepath.Join(abs, filepath.Clean("/"+*nav))
 	go watchNav(navPath, *poll, h)
 
@@ -255,9 +256,12 @@ func guard(token string, next http.HandlerFunc) http.HandlerFunc {
 // -- the hub ----------------------------------------------------------------
 
 type hub struct {
-	mu      sync.Mutex
-	clients map[chan string]bool
-	last    string
+	mu       sync.Mutex
+	clients  map[chan string]bool
+	last     string
+	raise    bool
+	browser  string // inferred from the page's User-Agent
+	lastRise time.Time
 }
 
 func (h *hub) broadcast(id string) {
@@ -267,6 +271,16 @@ func (h *hub) broadcast(id string) {
 		return
 	}
 	h.last = id
+	// Bring the browser forward. Without this the page updates behind whatever
+	// the reviewer is working in, so a click appears to do nothing at all --
+	// which is exactly how it read on 2 Oct 2026.
+	//
+	// The APPLICATION is activated, never the URL re-opened: re-opening is what
+	// produces a second tab, and avoiding that is why this server exists.
+	if h.raise && h.browser != "" && time.Since(h.lastRise) > 300*time.Millisecond {
+		h.lastRise = time.Now()
+		go activate(h.browser)
+	}
 	for c := range h.clients {
 		// Non-blocking. A page that has stopped reading must not wedge the
 		// watcher goroutine, and the next event carries the current state
@@ -301,6 +315,12 @@ func (h *hub) events(w http.ResponseWriter, r *http.Request) {
 
 	ch := make(chan string, 8)
 	h.mu.Lock()
+	// Which browser is actually showing the page. Asked of the connection
+	// rather than assumed, because the default browser and the one holding the
+	// viewer need not be the same.
+	if b := browserFrom(r.UserAgent()); b != "" {
+		h.browser = b
+	}
 	h.clients[ch] = true
 	current := h.last
 	h.mu.Unlock()
@@ -549,6 +569,57 @@ func flipCase(s string) string {
 }
 
 // -- convenience ------------------------------------------------------------
+
+// browserFrom names the application behind a User-Agent, or "" if it is not one
+// we know how to activate. Order matters: Edge and Opera both claim Chrome, and
+// Chrome claims Safari.
+func browserFrom(ua string) string {
+	switch {
+	case strings.Contains(ua, "Edg/"):
+		return "Microsoft Edge"
+	case strings.Contains(ua, "OPR/"):
+		return "Opera"
+	case strings.Contains(ua, "Firefox/"):
+		return "Firefox"
+	case strings.Contains(ua, "Chrome/"):
+		return "Google Chrome"
+	case strings.Contains(ua, "Safari/"):
+		return "Safari"
+	}
+	return ""
+}
+
+// activate brings an application to the front WITHOUT handing it a URL.
+//
+// `open -a Name` on macOS is LaunchServices, not AppleScript, so it needs no
+// "wants to control" Automation grant -- which is the whole reason it is
+// preferred over `osascript ... to activate`.
+//
+// One file, no build constraints: these are different ARGUMENTS to exec.Command
+// rather than different APIs.
+func activate(app string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", "-a", app)
+	case "windows":
+		exe := map[string]string{
+			"Google Chrome": "chrome", "Microsoft Edge": "msedge",
+			"Firefox": "firefox", "Opera": "opera",
+		}[app]
+		if exe == "" {
+			return
+		}
+		cmd = exec.Command("powershell", "-NoProfile", "-WindowStyle", "Hidden",
+			"-Command",
+			"$p=Get-Process "+exe+" -ErrorAction SilentlyContinue|"+
+				"Where-Object {$_.MainWindowHandle -ne 0}|Select-Object -First 1;"+
+				"if($p){(New-Object -ComObject WScript.Shell).AppActivate($p.Id)}")
+	default:
+		return // X11 and Wayland disagree about this; not worth guessing
+	}
+	_ = cmd.Run()
+}
 
 // openBrowser is the only place the operating system is named, and it needs no
 // build constraint: these are different ARGUMENTS to the same call, not

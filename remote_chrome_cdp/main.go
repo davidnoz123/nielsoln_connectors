@@ -311,23 +311,40 @@ func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
 	s.log(id, "begin")
 	clicked := "http://" + s.listen + r.URL.RequestURI()
 
-	// ⚠️ SYNCHRONOUS FOR VBA, and this is what makes focus possible.
+	// ⚠️ ONLY drive_test WAITS. Everybody else is answered first.
 	//
-	// Windows lets only the process that currently HOLDS the foreground
-	// hand it on. After a right-click that is Excel, never this server, so
-	// our own bringToFront is refused every time it matters. VBA can do it
-	// with AppActivate, but AppActivate needs the window's TITLE, and the
-	// title does not exist until the page has loaded.
+	// The VBA caller used to wait here, and that froze Excel for the whole
+	// drive: one to three seconds of a dead spreadsheet on every
+	// right-click, which is the single thing that made this feel broken.
 	//
-	// So a VBA caller waits: we drive, then answer with the title it should
-	// raise. A browser caller still gets the reply first, because there the
-	// tab IS the browser's and taking it over is the whole trick.
-	if r.Header.Get("X-Drive-Client") == "excel-vba" {
+	// It waited for a reason that stopped being true. The plan was for VBA
+	// to raise the window itself with AppActivate, which needs the page
+	// TITLE, which does not exist until the page has loaded -- so the reply
+	// carried the title and had to come last. Then focus moved in here,
+	// where the handle is already known and no title is needed, and the
+	// VBA stopped reading X-Chrome-Title. The wait outlived its purpose and
+	// nothing noticed, because a thing that is merely slow still works.
+	//
+	// drive_test keeps the synchronous path under its own name: a reply
+	// arriving IS its completion signal, and without it the test goes back
+	// to polling a record file, which was the largest cost in a run.
+	if r.Header.Get("X-Drive-Client") == "drive-test" {
 		title := s.driveSync(id, task, "", mine)
 		if title != "" {
 			w.Header().Set("X-Chrome-Title", title)
 		}
 		s.page(w, id, task, "Shown in Chrome", "")
+		return
+	}
+	if r.Header.Get("X-Drive-Client") == "excel-vba" {
+		// Answered at once, so Excel is free again before the human has
+		// let go of the mouse button. `clicked` is empty: WinHttp opened no
+		// tab, and hunting for one cost 3.2 of a 3.9 second request.
+		s.page(w, id, task, "Opening it", "")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		go s.drive(id, task, "", mine)
 		return
 	}
 
@@ -364,6 +381,38 @@ func (s *server) driveSync(id string, task Task, clicked string,
 // current reports whether this request is still the newest one.
 func (s *server) current(mine int64) bool {
 	return atomic.LoadInt64(&s.gen) == mine
+}
+
+// raiseEarly brings the tab we are about to drive to the front NOW.
+//
+// Focus used to arrive at the END of a drive, one to three seconds after
+// the click, because the window is found by page title and there is no new
+// title until the navigation has finished. But the tab we are about to
+// reuse already HAS a title, and its window is the window we want. So the
+// raise can happen before the navigation rather than after it, and the
+// human sees Chrome come forward immediately and the page fill in a moment
+// later -- which is the right way round.
+//
+// Reports whether it raised, so the caller can skip the late raise rather
+// than yanking the desktop twice.
+func (s *server) raiseEarly(sess *cdpSession, id, targetID string) bool {
+	if !s.focus || targetID == "" {
+		// No tab yet means a brand new one, whose title is "about:blank"
+		// and matches no window worth raising. Those keep the late raise.
+		return false
+	}
+	if sid, ok := sess.attachTo(targetID); ok {
+		// Inside Chrome only. Necessary and not sufficient: it selects the
+		// tab and does not raise the window.
+		sess.send(sid, "Page.bringToFront", nil)
+	}
+	title := sess.titleOf(targetID)
+	if title == "" {
+		return false
+	}
+	outcome := RaiseChromeTitled(title)
+	s.log(id, "focus at start: "+outcome)
+	return strings.HasPrefix(outcome, "raised")
 }
 
 // drive does the Chrome work after the reply has gone out.
@@ -413,6 +462,7 @@ func (s *server) drive(id string, task Task, clicked string, mine int64) string 
 		take = s.tabs[key]
 		how = "own tab"
 	}
+	early := false
 	if take == "" {
 		// RECLAIM what an earlier run left, rather than adding to it. The
 		// registry above lives in this process only, so every restart
@@ -425,11 +475,22 @@ func (s *server) drive(id string, task Task, clicked string, mine int64) string 
 		// before opening anything -- then close what it finds. Inheriting
 		// such a tab was tried first and is worse than useless: see
 		// closeTabsAt. One closed, one opened, count unchanged.
+		// Raised on the DOOMED tab, before it closes. It sits in the
+		// window we want, and once it is gone there is no title to match
+		// until the replacement page has loaded -- which is the whole
+		// three seconds this is here to remove. The first click on a page
+		// after a restart is the common case, not a rare one.
+		if tid, ok := sess.findTabAt(key); ok {
+			early = s.raiseEarly(sess, id, tid)
+		}
 		if n := sess.closeTabsAt(key); n > 0 {
 			how = fmt.Sprintf("replaced %d tab(s) left by an earlier run", n)
 		}
 	}
 
+	if !early {
+		early = s.raiseEarly(sess, id, take)
+	}
 	targetID, reused, err := sess.show(task.Page, task.Find, task.Source,
 		s.focus, take, strings.ToLower(task.Expect), s.absentBudget, task.LocatorRE)
 	if targetID != "" {
@@ -446,7 +507,9 @@ func (s *server) drive(id string, task Task, clicked string, mine int64) string 
 	// AllowSetForegroundWindow before it called. Page.bringToFront above
 	// made the tab active inside Chrome; this brings the window forward,
 	// which is a different mechanism and the one that was missing.
-	if s.focus && title != "" {
+	if s.focus && title != "" && !early {
+		// Only when the early raise could not run or was refused. Raising
+		// twice is a second yank for no gain: the window is already front.
 		s.log(id, "focus: "+RaiseChromeTitled(title))
 	}
 	if err != nil {

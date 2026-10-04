@@ -1,0 +1,571 @@
+// remote_chrome_cdp -- a document's links, driving a Chrome you can see.
+//
+//	go run github.com/davidnoz123/nielsoln_connectors/remote_chrome_cdp@<sha> \
+//	    -manifest tasks.json -listen 127.0.0.1:8790 -token K7M2XQ4P
+//
+// # WHAT IT IS FOR
+//
+// A playbook says "we are changing the logo URL in the page's code". Nothing
+// on the rendered page changes, so the sentence has to be taken on trust. A
+// link that opens the page's HTML, scrolled to that exact string and
+// highlighted, replaces trust with looking.
+//
+// # WHAT IT CAN DO, EXACTLY
+//
+// Open a tab it created, go to one of the addresses listed in the manifest,
+// highlight one string, and bring the window forward. That is all. It cannot
+// be asked to go anywhere else, it cannot run script supplied by a caller,
+// and it reads nothing back out of the page.
+//
+// # WHAT IT CANNOT DO
+//
+// It never touches a tab it did not open. It has no file access, no exec and
+// no way to be given a URL over the wire. If the manifest does not list an
+// id, the answer is no.
+//
+// # WHY THE TOKEN IS NOT THE POINT
+//
+// The token stops other pages in the same browser quietly calling this, and
+// it is worth having. But it travels in a document, so it is not a secret.
+// The thing that makes this safe to run is that the vocabulary is closed:
+// the worst a caller can achieve is a page the manifest already allowed.
+package main
+
+import (
+	"encoding/json"
+	"flag"
+	"fmt"
+	"html"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+// took renders an elapsed time the way a human reads it. Every begin has a
+// done with one of these: "it felt slow" is not something anybody can act
+// on, and without a number nobody could have told that a four second sleep
+// was the cost rather than Chrome being slow.
+func tookFrom(a, b time.Time) string {
+	d := b.Sub(a)
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	return fmt.Sprintf("%.1fs", d.Seconds())
+}
+
+func took(from time.Time) string {
+	d := time.Since(from)
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	return fmt.Sprintf("%.1fs", d.Seconds())
+}
+
+const (
+	defaultListen = "127.0.0.1:8790"
+	defaultCDP    = 9222
+)
+
+type server struct {
+	manifest      *Manifest
+	token         string
+	cdpPort       int
+	record        string
+	focus         bool
+	listen        string
+	launch        bool
+	chromeExe     string
+	chromeProfile string
+	sweepLanes    int
+	absentBudget  time.Duration
+
+	mu sync.Mutex // one Chrome conversation at a time, see drive()
+
+	// Bumped by every request. A drive() whose number is no longer the
+	// newest gives up: when somebody clicks four rows in a row they want
+	// the LAST one, and a queue hands it to them after three they have
+	// stopped caring about. Measured on 3 Oct: a navigation cost four
+	// seconds, so the fourth click landed sixteen seconds late.
+	gen int64
+	// The tab we last opened for each PAGE, so a second click re-uses it
+	// instead of adding another. Keyed by page rather than by task because
+	// several tasks examine the same page: E11 and E12 are both in the
+	// homepage's head.
+	tabs map[string]string
+}
+
+func main() {
+	listen := flag.String("listen", defaultListen,
+		"address to serve on; loopback only unless you mean otherwise")
+	manifestPath := flag.String("manifest", "tasks.json",
+		"the list of tasks this program may show")
+	token := flag.String("token", "", "required in every request as ?t=")
+	cdpPort := flag.Int("chrome-port", defaultCDP,
+		"the --remote-debugging-port of the Chrome to drive")
+	record := flag.String("record", "",
+		"append every request here as JSON lines")
+	chromeExe := flag.String("chrome-exe", "",
+		"path to chrome.exe; found automatically when empty")
+	chromeProfile := flag.String("chrome-profile", "",
+		"user-data-dir for a Chrome this program starts. REQUIRED with "+
+			"-launch: a profile it invents is signed out, and the Google "+
+			"screens then show a sign-in page instead of the setting")
+	launch := flag.Bool("launch", true,
+		"start a Chrome when none is listening, rather than refusing")
+	focus := flag.Bool("focus", true,
+		"raise the Chrome window once the page is ready; -focus=false "+
+			"leaves the desktop alone, which is what you want while working")
+	sweepLanes := flag.Int("sweep-lanes", 4,
+		"pages loaded at once during /sweep. Bounded on purpose: the far "+
+			"end is one customer site, and twenty parallel fetches of it "+
+			"is a small denial of service against the people we are "+
+			"helping")
+	absentMS := flag.Int("absent-budget-ms", 1500,
+		"how long to keep looking for an anchor the slate says is NOT "+
+			"there yet. Paid in full on every such row, so it is the "+
+			"largest single cost in a full test")
+	logPath := flag.String("log", "",
+		"also append everything printed here to this file. The console is "+
+			"the only place that says what each click did, which is no use "+
+			"to anyone reading it later or to a tool checking it")
+	flag.Parse()
+
+	// Set up BEFORE the startup banner, so the file records which Chrome,
+	// which profile and which warnings this process started with. Those
+	// lines are the ones worth having when something turns out to have been
+	// pointed at the wrong browser all along.
+	if *logPath != "" {
+		f, err := os.OpenFile(*logPath,
+			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			log.Printf("  WARNING: cannot write -log %s: %v", *logPath, err)
+		} else {
+			defer f.Close()
+			// MultiWriter, not a redirect: the console stays live. A
+			// windowless server hides exactly the output that answers
+			// "what just happened".
+			log.SetOutput(io.MultiWriter(os.Stderr, f))
+			log.Printf("  logging to %s", *logPath)
+		}
+	}
+
+	if *token == "" {
+		log.Fatal("  -token is required. Without one, any page open in the " +
+			"same browser can call this program.")
+	}
+	m, err := LoadManifest(*manifestPath)
+	if err != nil {
+		log.Fatalf("  %v", err)
+	}
+	// Said out loud at startup, because "which Chrome" is the question this
+	// program is most likely to get wrong in a way nobody notices: a second
+	// Chrome on another port looks identical and is not signed into
+	// anything.
+	if _, err := browserWS(*cdpPort); err != nil {
+		log.Printf("  WARNING: %v", err)
+		log.Printf("  Serving anyway. Requests will fail until a Chrome is " +
+			"listening, and will say so.")
+	}
+	if host, _, err := net.SplitHostPort(*listen); err == nil &&
+		host != "127.0.0.1" && host != "localhost" && host != "::1" {
+		log.Printf("  WARNING: listening on %s, which is not loopback. "+
+			"Anything that can reach this address can drive that Chrome.", host)
+	}
+
+	s := &server{manifest: m, token: *token, cdpPort: *cdpPort,
+		record: *record, focus: *focus, listen: *listen,
+		launch: *launch, chromeExe: *chromeExe,
+		chromeProfile: *chromeProfile, tabs: map[string]string{},
+		sweepLanes:   *sweepLanes,
+		absentBudget: time.Duration(*absentMS) * time.Millisecond}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/show/", s.showHandler)
+	mux.HandleFunc("/health", s.healthHandler)
+	mux.HandleFunc("/sweep", s.sweepHandler)
+
+	log.Printf("  remote_chrome_cdp on http://%s", *listen)
+	log.Printf("  %d task(s): %s", len(m.Tasks), strings.Join(m.IDs(), ", "))
+	log.Printf("  driving Chrome on 127.0.0.1:%d", *cdpPort)
+	// Said every time, because "which Chrome" decides whether a Google
+	// screen shows the setting or the sign-in page, and the two are
+	// indistinguishable from in here.
+	if *launch {
+		if *chromeProfile == "" {
+			log.Printf("  -launch is on with NO -chrome-profile: if the " +
+				"Chrome on this port goes away, nothing will be started " +
+				"and requests will say so")
+		} else {
+			log.Printf("  if it has to start one, profile: %s", *chromeProfile)
+		}
+	}
+	log.Printf("  a link looks like  http://%s/show/E11?t=%s", *listen, *token)
+
+	srv := &http.Server{
+		Addr:              *listen,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	log.Fatal(srv.ListenAndServe())
+}
+
+// guard applies the two checks that stand between this program and any web
+// page the user happens to have open.
+func (s *server) guard(w http.ResponseWriter, r *http.Request) bool {
+	// An Origin header means a web page made this request, not a link click
+	// from Excel, Word or the address bar. There is no legitimate caller of
+	// this program that sends one, so the check costs nothing and removes
+	// the whole class.
+	if r.Header.Get("Origin") != "" {
+		s.deny(w, http.StatusForbidden,
+			"This request came from a web page. This program only answers "+
+				"links clicked from a document or typed into the address bar.")
+		return false
+	}
+	if r.URL.Query().Get("t") != s.token {
+		s.deny(w, http.StatusForbidden, "Wrong or missing token.")
+		return false
+	}
+	return true
+}
+
+func (s *server) healthHandler(w http.ResponseWriter, r *http.Request) {
+	if !s.guard(w, r) {
+		return
+	}
+	_, err := browserWS(s.cdpPort)
+	out := map[string]any{
+		"tasks":  s.manifest.IDs(),
+		"chrome": err == nil,
+	}
+	if err != nil {
+		out["chrome_error"] = err.Error()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
+	if !s.guard(w, r) {
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/show/")
+	task, ok := s.manifest.Lookup(id)
+	if !ok {
+		s.deny(w, http.StatusNotFound, fmt.Sprintf(
+			"No task %q in the manifest. Known: %s",
+			id, strings.Join(s.manifest.IDs(), ", ")))
+		s.log(id, "unknown task")
+		return
+	}
+
+	// ⚠️ THE REPLY GOES FIRST, and that is the whole trick.
+	//
+	// The tab the human clicked is sitting on this very URL, in the Chrome
+	// we drive, and turning THAT tab into the page they asked for is what
+	// they expected a link to do. But it only exists once we have answered
+	// it: before that the browser is still waiting and the tab has no URL
+	// to find it by. So we answer, then go and take it over.
+	//
+	// A 302 would be simpler and cannot work here: Chrome refuses
+	// view-source: from a redirect exactly as it does from a link. CDP
+	// navigation is not subject to that, which is why this route exists at
+	// all.
+	//
+	// The reply is also the fallback. If the click landed in a different
+	// browser from the one we drive, there is no tab to take over, we open
+	// our own, and what they are left reading is a page naming the task and
+	// offering an address that opens.
+	// ⚠️ ASKED BEFORE WE ANSWER, because the answer goes out before the
+	// work is done and therefore cannot report on it. The first version
+	// replied "It is open in another Chrome tab, highlighted" and then went
+	// looking for a Chrome: when there was none, that sentence stayed on
+	// screen asserting something that had not happened and was not going
+	// to. A page that claims success it cannot know is worse than an error.
+	if _, err := browserWS(s.cdpPort); err != nil {
+		// Start one rather than refuse. A browser somebody closed is the
+		// commonest reason a link in the sheet stops working, and it
+		// recurred three times in one afternoon: nothing else recovers it.
+		if !s.launch {
+			s.noChrome(w, id, task, err)
+			s.log(id, "no chrome: "+err.Error())
+			return
+		}
+		log.Printf("  no Chrome on %d: starting one", s.cdpPort)
+		if lerr := launchChrome(s.chromeExe, s.chromeProfile, s.cdpPort,
+			25*time.Second); lerr != nil {
+			s.noChrome(w, id, task, lerr)
+			s.log(id, "could not start chrome: "+lerr.Error())
+			return
+		}
+		log.Printf("  started a Chrome on %d", s.cdpPort)
+		s.log(id, "started a Chrome")
+	}
+
+	mine := atomic.AddInt64(&s.gen, 1)
+	s.log(id, "begin")
+	clicked := "http://" + s.listen + r.URL.RequestURI()
+
+	// ⚠️ SYNCHRONOUS FOR VBA, and this is what makes focus possible.
+	//
+	// Windows lets only the process that currently HOLDS the foreground
+	// hand it on. After a right-click that is Excel, never this server, so
+	// our own bringToFront is refused every time it matters. VBA can do it
+	// with AppActivate, but AppActivate needs the window's TITLE, and the
+	// title does not exist until the page has loaded.
+	//
+	// So a VBA caller waits: we drive, then answer with the title it should
+	// raise. A browser caller still gets the reply first, because there the
+	// tab IS the browser's and taking it over is the whole trick.
+	if r.Header.Get("X-Drive-Client") == "excel-vba" {
+		title := s.driveSync(id, task, "", mine)
+		if title != "" {
+			w.Header().Set("X-Chrome-Title", title)
+		}
+		s.page(w, id, task, "Shown in Chrome", "")
+		return
+	}
+
+	// A browser asked, so it gets the reply first and the tab it opened
+	// becomes the page.
+	s.page(w, id, task, "Opening it", "")
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	go s.drive(id, task, clicked, mine)
+}
+
+// driveSync runs the work and returns the tab title to raise, or "".
+//
+// `clicked` is deliberately EMPTY from here. A VBA caller is WinHttp, not a
+// browser, so no tab was ever opened at our address and hunting for one
+// costs the full search budget before giving up. Measured 3 Oct: 3.2 of a
+// 3.9 second request was spent looking for a tab that cannot exist.
+func (s *server) driveSync(id string, task Task, clicked string,
+	mine int64) string {
+	done := make(chan string, 1)
+	go func() { done <- s.drive(id, task, clicked, mine) }()
+	select {
+	case title := <-done:
+		return title
+	case <-time.After(30 * time.Second):
+		// The caller is Excel and Excel is frozen while it waits, so there
+		// is a hard ceiling on how long it may be made to wait.
+		s.log(id, "gave up waiting to answer the VBA caller")
+		return ""
+	}
+}
+
+// current reports whether this request is still the newest one.
+func (s *server) current(mine int64) bool {
+	return atomic.LoadInt64(&s.gen) == mine
+}
+
+// drive does the Chrome work after the reply has gone out.
+func (s *server) drive(id string, task Task, clicked string, mine int64) string {
+	started := time.Now()
+	// ONE AT A TIME. Two clicks in quick succession would otherwise race to
+	// bring their own tab forward and the human would see whichever won.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Checked AFTER the wait for the lock, which is exactly where a stale
+	// request has been sitting while newer clicks arrived.
+	if !s.current(mine) {
+		s.log(id, fmt.Sprintf("superseded by a newer click after %s",
+			took(started)))
+		return ""
+	}
+
+	sess, err := dialCDP(s.cdpPort)
+	if err != nil {
+		s.log(id, "no chrome: "+err.Error())
+		return ""
+	}
+	defer sess.Close()
+
+	key := task.Page
+	if task.Source {
+		key = "view-source:" + task.Page
+	}
+
+	// Give the browser a moment to finish loading our reply, or there is no
+	// tab at that address yet to find.
+	take := ""
+	if clicked != "" {
+		// Only a browser caller can have left a tab at our address.
+		for attempt := 0; attempt < 8; attempt++ {
+			if tid, ok := sess.findTabAt(clicked); ok {
+				take = tid
+				break
+			}
+			time.Sleep(400 * time.Millisecond)
+		}
+	}
+	tFind := time.Now()
+	how := "took over the clicked tab"
+	if take == "" {
+		take = s.tabs[key]
+		how = "own tab"
+	}
+	if take == "" {
+		// RECLAIM what an earlier run left, rather than adding to it. The
+		// registry above lives in this process only, so every restart
+		// forgot every tab it had opened: the next click opened a second
+		// tab for the same page and orphaned the first. Four restarts in
+		// an evening left four copies of each page and eight of the home
+		// page, which is how the leak was noticed.
+		//
+		// Chrome is the durable record of what is already open, so ask it
+		// before opening anything -- then close what it finds. Inheriting
+		// such a tab was tried first and is worse than useless: see
+		// closeTabsAt. One closed, one opened, count unchanged.
+		if n := sess.closeTabsAt(key); n > 0 {
+			how = fmt.Sprintf("replaced %d tab(s) left by an earlier run", n)
+		}
+	}
+
+	targetID, reused, err := sess.show(task.Page, task.Find, task.Source,
+		s.focus, take, strings.ToLower(task.Expect), s.absentBudget)
+	if targetID != "" {
+		s.tabs[key] = targetID
+	} else {
+		delete(s.tabs, key)
+	}
+	if reused && how == "own tab" {
+		how = "reused our tab"
+	}
+	tShow := time.Now()
+	title := sess.titleOf(targetID)
+	// Raise it from HERE, using the right Excel granted us with
+	// AllowSetForegroundWindow before it called. Page.bringToFront above
+	// made the tab active inside Chrome; this brings the window forward,
+	// which is a different mechanism and the one that was missing.
+	if s.focus && title != "" {
+		s.log(id, "focus: "+RaiseChromeTitled(title))
+	}
+	if err != nil {
+		s.log(id, fmt.Sprintf("done in %s, %s, NO HIGHLIGHT: %s",
+			took(started), how, err.Error()))
+		// The page IS open even when the anchor was not found, so it is
+		// still worth raising: she is looking at the right page.
+		return title
+	}
+	// Phase timings, because "it feels slow" cannot be acted on and this
+	// is how the 3.2s tab hunt was found.
+	s.log(id, fmt.Sprintf("done in %s (tab %s, show %s), %s",
+		took(started), took(started)[:0]+tookFrom(started, tFind),
+		tookFrom(tFind, tShow), how))
+	// Any OTHER tab still sitting on one of our replies is tidied away. The
+	// one we took over is no longer at that address, so it is not caught.
+	if n := sess.closeOurOwnPages("http://" + s.listen + "/show/"); n > 0 {
+		log.Printf("  closed %d leftover reply tab(s)", n)
+	}
+	return title
+}
+
+// page is what the clicking browser gets. NOT 204: a blank tab reads as a
+// broken link, and the one thing the human needs is to know it worked and
+// where to look.
+func (s *server) page(w http.ResponseWriter, id string, task Task, headline, detail string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	// ⚠️ "another TAB", not "the other WINDOW". The window wording was
+	// written when this drove a second Chrome on another port. Driving the
+	// Chrome the click landed in is the better arrangement, and it made the
+	// sentence wrong: there is no other window.
+	//
+	// And the fallback is Fallback, not Page. Page is usually
+	// view-source:..., which Chrome refuses to open from a click, so
+	// printing it was handing somebody a string that cannot work at the
+	// moment they are already lost.
+	fallback := task.Fallback
+	note := "If you cannot see it, open this instead:"
+	if fallback == "" {
+		fallback = task.Page
+		note = "If you cannot see it, the address is:"
+	}
+	body := fmt.Sprintf(`<!doctype html><meta charset="utf-8">
+<title>%s</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;margin:3rem auto;max-width:42rem;color:#222}
+a{color:#0b5}.d{color:#a33}small{color:#666}</style>
+<h1>%s</h1>
+<p><strong>%s</strong> %s</p>
+<p class="d">%s</p>
+<p><strong>Working.</strong> Nothing has happened yet: this tab is the
+request, and it becomes the page you asked for when Chrome has it.</p>
+<p>%s<br><a href="%s">%s</a></p>
+<p><small>If this page is still here after a few seconds, the click landed
+in a browser that is not the one being driven, or the page had nothing
+matching on it. The console window running remote_chrome_cdp says which.
+The link above goes to the same place either way.</small></p>`,
+		html.EscapeString(id), html.EscapeString(headline),
+		html.EscapeString(id), html.EscapeString(task.What),
+		html.EscapeString(detail), html.EscapeString(note),
+		html.EscapeString(fallback), html.EscapeString(fallback))
+	fmt.Fprint(w, body)
+}
+
+// noChrome is the honest answer when there is nothing to drive.
+//
+// It says what is missing, how to fix it, and gives an address that works
+// without any of this, because somebody mid-call needs the page more than
+// they need the tooling.
+func (s *server) noChrome(w http.ResponseWriter, id string, task Task, err error) {
+	fallback := task.Fallback
+	if fallback == "" {
+		fallback = task.Page
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	fmt.Fprintf(w, `<!doctype html><meta charset="utf-8">
+<title>%s: no Chrome to drive</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;margin:3rem auto;max-width:42rem;color:#222}
+a{color:#0b5}code{background:#f4f4f4;padding:.1rem .3rem}small{color:#666}</style>
+<h1>Nothing to drive</h1>
+<p><strong>%s</strong> %s</p>
+<p>No Chrome is listening on port %d, so this could not open anything. An
+ordinary Chrome window will not do: it has to be started with the debugging
+port, which is what lets anything drive it.</p>
+<p><code>chrome.exe --remote-debugging-port=%d</code></p>
+<p>Meanwhile this goes to the same place without any tooling:<br>
+<a href="%s">%s</a></p>
+<p><small>%s</small></p>`,
+		html.EscapeString(id), html.EscapeString(id),
+		html.EscapeString(task.What), s.cdpPort, s.cdpPort,
+		html.EscapeString(fallback), html.EscapeString(fallback),
+		html.EscapeString(err.Error()))
+}
+
+func (s *server) deny(w http.ResponseWriter, code int, why string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(code)
+	fmt.Fprintf(w, `<!doctype html><meta charset="utf-8">
+<style>body{font:16px/1.5 system-ui,sans-serif;margin:3rem auto;max-width:42rem}</style>
+<h1>No</h1><p>%s</p>`, html.EscapeString(why))
+}
+
+// log appends one line per request. For a program that drives a browser over
+// somebody's live website, what was asked for and when is worth keeping
+// whether or not anybody ever reads it.
+func (s *server) log(id, outcome string) {
+	line := fmt.Sprintf("%s  %-8s %s", time.Now().Format(time.RFC3339), id, outcome)
+	log.Print("  " + line)
+	if s.record == "" {
+		return
+	}
+	f, err := os.OpenFile(s.record, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		log.Printf("  could not write the record: %v", err)
+		return
+	}
+	defer f.Close()
+	entry, _ := json.Marshal(map[string]string{
+		"at": time.Now().UTC().Format(time.RFC3339), "task": id, "outcome": outcome})
+	f.Write(append(entry, '\n'))
+}

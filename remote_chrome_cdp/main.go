@@ -431,7 +431,7 @@ func (s *server) drive(id string, task Task, clicked string, mine int64) string 
 	}
 
 	targetID, reused, err := sess.show(task.Page, task.Find, task.Source,
-		s.focus, take, strings.ToLower(task.Expect), s.absentBudget)
+		s.focus, take, strings.ToLower(task.Expect), s.absentBudget, task.LocatorRE)
 	if targetID != "" {
 		s.tabs[key] = targetID
 	} else {

@@ -445,6 +445,27 @@ const markJS = `(function (needle) {
   return {found: marked, spans: a.node === b.node ? 1 : 2};
 })(%s)`
 
+// lineJS highlights one source line of a view-source page and scrolls to it.
+//
+// Chrome renders view-source as a table with one row per source line, so a
+// line number is directly addressable and needs no parsing here. The parsing
+// already happened in Python, against the same bytes Chrome is showing.
+const lineJS = `(function (pat) {
+  var rx;
+  try { rx = new RegExp(pat, "i"); } catch (e) { return {found: false}; }
+  var rows = document.querySelectorAll('table tr');
+  for (var i = 0; i < rows.length; i++) {
+    var text = rows[i].textContent || "";
+    if (!rx.test(text)) continue;
+    var tr = rows[i];
+    tr.style.background = "#ffe14d";
+    tr.style.outline = "3px solid #d08700";
+    tr.scrollIntoView({block: "center", inline: "nearest"});
+    return {found: true, line: i + 1, text: text.trim().slice(0, 90)};
+  }
+  return {found: false, rows: rows.length};
+})(%s)`
+
 // show opens or REUSES a tab for this page, marks the string and optionally
 // raises the window. Returns the target id so the caller can offer it back.
 //
@@ -458,7 +479,8 @@ const markJS = `(function (needle) {
 // old value with a fresh highlight on it. That is the one failure here that
 // would look exactly like success.
 func (s *cdpSession) show(pageURL, find string, viewSource bool, focus bool,
-	reuse string, expect string, absent time.Duration) (string, bool, error) {
+	reuse string, expect string, absent time.Duration,
+	locatorRE string) (string, bool, error) {
 	var targetID, sessionID string
 	var err error
 	reused := false
@@ -523,6 +545,29 @@ func (s *cdpSession) show(pageURL, find string, viewSource bool, focus bool,
 			// The tab stays open on purpose. The page is still the right
 			// page, and a human can search it; closing it would leave them
 			// with an error message and nothing to look at.
+			//
+			// And before they are left looking, try the structural
+			// fallback: the exact text is gone or not written yet, but the
+			// LINE it lives on is known independently of what it says. For
+			// an anchor that has gone stale this is the difference between
+			// the right line and an unmarked page; for one the slate says
+			// is not there yet, it points at the line about to change.
+			atLine := ""
+			if locatorRE != "" {
+				var hit struct {
+					Found bool   `json:"found"`
+					Line  int    `json:"line"`
+					Text  string `json:"text"`
+				}
+				quotedRE, _ := json.Marshal(locatorRE)
+				val, lerr := s.eval(sessionID,
+					fmt.Sprintf(lineJS, string(quotedRE)))
+				if lerr == nil && val != nil &&
+					json.Unmarshal(val, &hit) == nil && hit.Found {
+					atLine = fmt.Sprintf(" Showing line %d instead: %s",
+						hit.Line, trim(hit.Text, 60))
+				}
+			}
 			if focus {
 				s.send(sessionID, "Page.bringToFront", nil)
 			}
@@ -532,12 +577,12 @@ func (s *cdpSession) show(pageURL, find string, viewSource bool, focus bool,
 				// shown before the change.
 				return targetID, reused, fmt.Errorf(
 					"not there yet, as expected: %q is what %s will "+
-						"say AFTER the change",
-					trim(find, 50), trim(target, 50))
+						"say AFTER the change.%s",
+					trim(find, 50), trim(target, 50), atLine)
 			}
 			return targetID, reused, fmt.Errorf(
-				"opened %s but could not find %q on it",
-				trim(target, 70), trim(find, 60))
+				"opened %s but could not find %q on it.%s",
+				trim(target, 70), trim(find, 60), atLine)
 		}
 	}
 	// The ONLY deliberate focus change, and only once the page is ready.

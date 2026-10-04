@@ -46,6 +46,19 @@ type Task struct {
 	// cannot work, on exactly the rows where they are most lost.
 	Fallback string `json:"fallback"`
 
+	// LocatorRE matches the source LINE holding the deepest HTML tag that
+	// encloses the change: `<title[\s>]` for a title, the og:locale meta
+	// for a locale. The FALLBACK for when the exact string is not found,
+	// because a tag is on its line whatever its content says, and the
+	// content is the part we are about to change.
+	//
+	// A pattern and not a line number. The number was tried and cannot be
+	// computed off-browser: the manifest is built from an anonymous fetch
+	// and this Chrome is signed into WordPress, so it receives a different
+	// page. Every locator came out one line short. A pattern is matched
+	// against whatever source the browser actually holds.
+	LocatorRE string `json:"locator_re"`
+
 	// When the Find string should be present: "now", "after" or "browser".
 	//
 	// "after" means the anchor describes the state we are MOVING TO, so

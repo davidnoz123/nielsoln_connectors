@@ -93,6 +93,23 @@ type server struct {
 	// stopped caring about. Measured on 3 Oct: a navigation cost four
 	// seconds, so the fourth click landed sixteen seconds late.
 	gen int64
+
+	// The tasks already on their way, so a second click on the SAME cell
+	// while the first is still opening does nothing. A DOUBLE-CLICK IS ONE
+	// INTENTION, and `gen` above cannot see that: it drops a request still
+	// QUEUED when a newer one arrives, and the first of a double-click is
+	// not queued, it is past that check and running.
+	//
+	// Measured 5 Oct: two clicks two seconds apart on tl-e10-01:edit ran
+	// both drives, 5.3s and then 10.8s, and the window came forward
+	// thirteen seconds after the first click. Both drives were correct.
+	// Neither was wanted.
+	//
+	// A set rather than one id, because a QUEUED drive is on its way too
+	// and a click on that one is the same repeat.
+	flying map[string]bool
+	flyMu  sync.Mutex
+
 	// The tab we last opened for each PAGE, so a second click re-uses it
 	// instead of adding another. Keyed by page rather than by task because
 	// several tasks examine the same page: E11 and E12 are both in the
@@ -182,6 +199,7 @@ func main() {
 		record: *record, focus: *focus, listen: *listen,
 		launch: *launch, chromeExe: *chromeExe,
 		chromeProfile: *chromeProfile, tabs: map[string]string{},
+		flying:       map[string]bool{},
 		sweepLanes:   *sweepLanes,
 		absentBudget: time.Duration(*absentMS) * time.Millisecond}
 	mux := http.NewServeMux()
@@ -307,6 +325,34 @@ func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
 		s.log(id, "started a Chrome")
 	}
 
+	// Refused BEFORE the generation is bumped and before "begin" is
+	// logged, so an ignored click neither supersedes a genuinely queued
+	// drive nor leaves a second "begin" in the log for somebody to puzzle
+	// over an hour later.
+	//
+	// ONLY THE VBA CALLER, for two reasons that happen to agree. A browser
+	// click has opened a tab at this address and drive() takes it over;
+	// ignoring it would abandon that tab on a reply page, which is the
+	// leak that took an evening to find. WinHttp opens nothing, so there
+	// is nothing to abandon. It is also the only caller a human can
+	// double-click, which is where this was measured.
+	//
+	// A deliberate second click is NOT this. The reason to click a row
+	// twice is usually to see whether a change landed, and that still
+	// drives, reloading the tab, exactly as before: the two are told apart
+	// by whether the first drive is still running, which is the difference
+	// between a double-click and a decision.
+	//
+	// Nothing is lost by doing nothing. Excel calls
+	// AllowSetForegroundWindow before it calls us, so the ignored click
+	// has already granted the right to raise the window and the drive that
+	// is running may spend it.
+	if !s.claim(id) && r.Header.Get("X-Drive-Client") == "excel-vba" {
+		s.log(id, "clicked again while it is still opening, ignored")
+		s.page(w, id, task, "Already opening it", "")
+		return
+	}
+
 	mine := atomic.AddInt64(&s.gen, 1)
 	s.log(id, "begin")
 	clicked := "http://" + s.listen + r.URL.RequestURI()
@@ -376,6 +422,36 @@ func (s *server) driveSync(id string, task Task, clicked string,
 		s.log(id, "gave up waiting to answer the VBA caller")
 		return ""
 	}
+}
+
+// claim marks a task as on its way, and reports whether it already was.
+//
+// NOT GUARDED BY s.mu, which is held for the whole of a drive: asking it
+// anything from a handler means waiting for that drive to finish, and a
+// caller that is about to be told "already opening" is precisely the one
+// that must not wait for it.
+func (s *server) claim(id string) bool {
+	s.flyMu.Lock()
+	defer s.flyMu.Unlock()
+	if s.flying[id] {
+		return false
+	}
+	s.flying[id] = true
+	return true
+}
+
+// release forgets a claim.
+//
+// Deferred by drive() rather than written at the end of it, because drive
+// gives up in several places before it reaches Chrome: no browser,
+// superseded, dial failed. A claim that outlived its drive would wedge that
+// one cell for the rest of the session, and the symptom would be a cell
+// that has simply stopped responding to clicks -- no error, nothing in the
+// log but a line saying the click was ignored.
+func (s *server) release(id string) {
+	s.flyMu.Lock()
+	defer s.flyMu.Unlock()
+	delete(s.flying, id)
 }
 
 // current reports whether this request is still the newest one.
@@ -450,6 +526,7 @@ func (s *server) raiseEarly(sess *cdpSession, id, targetID string,
 func (s *server) drive(id string, task Task, clicked string, mine int64,
 	focus bool) string {
 	started := time.Now()
+	defer s.release(id)
 	// ONE AT A TIME. Two clicks in quick succession would otherwise race to
 	// bring their own tab forward and the human would see whichever won.
 	s.mu.Lock()

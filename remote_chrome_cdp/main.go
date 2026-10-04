@@ -329,7 +329,7 @@ func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
 	// arriving IS its completion signal, and without it the test goes back
 	// to polling a record file, which was the largest cost in a run.
 	if r.Header.Get("X-Drive-Client") == "drive-test" {
-		title := s.driveSync(id, task, "", mine)
+		title := s.driveSync(id, task, "", mine, s.wantsFocus(r))
 		if title != "" {
 			w.Header().Set("X-Chrome-Title", title)
 		}
@@ -344,7 +344,7 @@ func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
-		go s.drive(id, task, "", mine)
+		go s.drive(id, task, "", mine, s.wantsFocus(r))
 		return
 	}
 
@@ -354,7 +354,7 @@ func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
-	go s.drive(id, task, clicked, mine)
+	go s.drive(id, task, clicked, mine, s.wantsFocus(r))
 }
 
 // driveSync runs the work and returns the tab title to raise, or "".
@@ -364,9 +364,9 @@ func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
 // costs the full search budget before giving up. Measured 3 Oct: 3.2 of a
 // 3.9 second request was spent looking for a tab that cannot exist.
 func (s *server) driveSync(id string, task Task, clicked string,
-	mine int64) string {
+	mine int64, focus bool) string {
 	done := make(chan string, 1)
-	go func() { done <- s.drive(id, task, clicked, mine) }()
+	go func() { done <- s.drive(id, task, clicked, mine, focus) }()
 	select {
 	case title := <-done:
 		return title
@@ -383,6 +383,36 @@ func (s *server) current(mine int64) bool {
 	return atomic.LoadInt64(&s.gen) == mine
 }
 
+// wantsFocus decides whether THIS request should raise Chrome.
+//
+// PER REQUEST, not per server, and that distinction is the whole point. A
+// server-wide -focus=false was the only way to stop a test run stealing the
+// desktop, and leaving one set is exactly what broke a human's right-click
+// for an afternoon: the drives worked, in a background tab, and the only
+// symptom was focus never arriving. There is no mode to leave set now.
+//
+// The caller states its intent and the default follows from who is asking.
+// A test should not interrupt anything; a human who just right-clicked a
+// cell is waiting to be shown something.
+//
+// Precedence, narrowest last:
+//
+//	-focus=false        the whole server stays out of the way. Still
+//	                    honoured, because "leave my desktop alone while I
+//	                    work" is a real thing to want.
+//	?focus=0 / ?focus=1 whatever the caller says, for anything that needs
+//	                    to override its own default.
+//	X-Drive-Client      drive-test does not raise. Everybody else does.
+func (s *server) wantsFocus(r *http.Request) bool {
+	if !s.focus {
+		return false
+	}
+	if v := r.URL.Query().Get("focus"); v != "" {
+		return v != "0" && !strings.EqualFold(v, "false")
+	}
+	return r.Header.Get("X-Drive-Client") != "drive-test"
+}
+
 // raiseEarly brings the tab we are about to drive to the front NOW.
 //
 // Focus used to arrive at the END of a drive, one to three seconds after
@@ -395,8 +425,9 @@ func (s *server) current(mine int64) bool {
 //
 // Reports whether it raised, so the caller can skip the late raise rather
 // than yanking the desktop twice.
-func (s *server) raiseEarly(sess *cdpSession, id, targetID string) bool {
-	if !s.focus || targetID == "" {
+func (s *server) raiseEarly(sess *cdpSession, id, targetID string,
+	focus bool) bool {
+	if !focus || targetID == "" {
 		// No tab yet means a brand new one, whose title is "about:blank"
 		// and matches no window worth raising. Those keep the late raise.
 		return false
@@ -416,7 +447,8 @@ func (s *server) raiseEarly(sess *cdpSession, id, targetID string) bool {
 }
 
 // drive does the Chrome work after the reply has gone out.
-func (s *server) drive(id string, task Task, clicked string, mine int64) string {
+func (s *server) drive(id string, task Task, clicked string, mine int64,
+	focus bool) string {
 	started := time.Now()
 	// ONE AT A TIME. Two clicks in quick succession would otherwise race to
 	// bring their own tab forward and the human would see whichever won.
@@ -481,7 +513,7 @@ func (s *server) drive(id string, task Task, clicked string, mine int64) string 
 		// three seconds this is here to remove. The first click on a page
 		// after a restart is the common case, not a rare one.
 		if tid, ok := sess.findTabAt(key); ok {
-			early = s.raiseEarly(sess, id, tid)
+			early = s.raiseEarly(sess, id, tid, focus)
 		}
 		if n := sess.closeTabsAt(key); n > 0 {
 			how = fmt.Sprintf("replaced %d tab(s) left by an earlier run", n)
@@ -489,10 +521,11 @@ func (s *server) drive(id string, task Task, clicked string, mine int64) string 
 	}
 
 	if !early {
-		early = s.raiseEarly(sess, id, take)
+		early = s.raiseEarly(sess, id, take, focus)
 	}
 	targetID, reused, err := sess.show(task.Page, task.Find, task.Source,
-		s.focus, take, strings.ToLower(task.Expect), s.absentBudget, task.LocatorRE)
+		focus, take, strings.ToLower(task.Expect), s.absentBudget,
+		task.LocatorRE)
 	if targetID != "" {
 		s.tabs[key] = targetID
 	} else {
@@ -507,7 +540,7 @@ func (s *server) drive(id string, task Task, clicked string, mine int64) string 
 	// AllowSetForegroundWindow before it called. Page.bringToFront above
 	// made the tab active inside Chrome; this brings the window forward,
 	// which is a different mechanism and the one that was missing.
-	if s.focus && title != "" && !early {
+	if focus && title != "" && !early {
 		// Only when the early raise could not run or was refused. Raising
 		// twice is a second yank for no gain: the window is already front.
 		s.log(id, "focus: "+RaiseChromeTitled(title))

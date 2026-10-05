@@ -588,7 +588,7 @@ const markJS = `(function (needle) {
 // Frames included, because an editor usually keeps the page in one: the
 // mark is in the preview frame and the panel that opens is in the top
 // document.
-const clickJS = `(function () {
+const clickJS = `(function (needle) {
   var docs = [document];
   for (var pass = 0; pass < docs.length && docs.length < 12; pass++) {
     var frames = docs[pass].querySelectorAll
@@ -613,13 +613,34 @@ const clickJS = `(function () {
     if (!target) target = m.parentElement;
     if (!target) continue;
     target.click();
+    // THE FIELD THE CLICK OPENED, outlined so the end of the drive is
+    // visible. An editor's panel takes a moment to build after the click,
+    // so this is tried a few times rather than once; it is the last thing
+    // the drive does and nothing waits on it.
+    var tries = 0;
+    var findField = function () {
+      tries++;
+      var boxes = document.querySelectorAll(
+        "textarea,input[type=text],[contenteditable=true]");
+      for (var b = 0; b < boxes.length; b++) {
+        var val = boxes[b].value || boxes[b].innerText || "";
+        if (val.indexOf(needle) < 0) continue;
+        boxes[b].style.outline = "3px solid #d08700";
+        boxes[b].style.outlineOffset = "2px";
+        boxes[b].scrollIntoView({block: "center"});
+        return true;
+      }
+      if (tries < 12) { setTimeout(findField, 400); }
+      return false;
+    };
+    findField();
     return {clicked: true,
             what: (target.tagName || "").toLowerCase(),
             via: target === m.parentElement ? "the mark's parent"
                                             : "the widget around it"};
   }
   return {clicked: false};
-})()`
+})(%s)`
 
 // lineJS highlights one source line of a view-source page and scrolls to it.
 //
@@ -855,7 +876,10 @@ func (s *cdpSession) show(pageURL, find string, viewSource bool, focus bool,
 	// guessing at the page. A row that asked for a click and did not get a
 	// match therefore gets neither, which is the right way round.
 	if click && find != "" {
-		s.eval(sessionID, clickJS)
+		quotedClick, qerr := json.Marshal(find)
+		if qerr == nil {
+			s.eval(sessionID, fmt.Sprintf(clickJS, string(quotedClick)))
+		}
 	}
 
 	// NO bringToFront HERE ANY MORE. It was "the ONLY deliberate focus

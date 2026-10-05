@@ -433,7 +433,7 @@ func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
-		go s.drive(id, task, "", mine, wantFocus)
+		go s.drive(id, task, "", mine, wantFocus, true)
 		return
 	}
 
@@ -443,7 +443,7 @@ func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
-	go s.drive(id, task, clicked, mine, wantFocus)
+	go s.drive(id, task, clicked, mine, wantFocus, true)
 }
 
 // driveSync runs the work and returns the tab title to raise, or "".
@@ -455,7 +455,8 @@ func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
 func (s *server) driveSync(id string, task Task, clicked string,
 	mine int64, focus bool) string {
 	done := make(chan string, 1)
-	go func() { done <- s.drive(id, task, clicked, mine, focus) }()
+	// A test is never superseded: see drive().
+	go func() { done <- s.drive(id, task, clicked, mine, focus, false) }()
 	select {
 	case title := <-done:
 		return title
@@ -653,7 +654,7 @@ func (s *server) raiseEarly(sess *cdpSession, id, targetID string,
 
 // drive does the Chrome work after the reply has gone out.
 func (s *server) drive(id string, task Task, clicked string, mine int64,
-	focus bool) string {
+	focus bool, supersedable bool) string {
 	started := time.Now()
 	defer s.release(id)
 	// ONE AT A TIME. Two clicks in quick succession would otherwise race to
@@ -663,7 +664,15 @@ func (s *server) drive(id string, task Task, clicked string, mine int64,
 
 	// Checked AFTER the wait for the lock, which is exactly where a stale
 	// request has been sitting while newer clicks arrived.
-	if !s.current(mine) {
+	//
+	// NOT FOR A TEST. "They want the LAST one" is true of a human clicking
+	// four rows and false of a suite enumerating every link in the sheet: a
+	// test asks for all of them deliberately and a dropped one is a link
+	// left unproved. drive_test runs concurrently, so a queued request
+	// routinely had its generation overtaken, and the suite then waited out
+	// its full 30 second timeout looking for a tab no drive had opened.
+	// tl-e3-01:edit failed exactly that way and the message blamed the tab.
+	if supersedable && !s.current(mine) {
 		s.log(id, fmt.Sprintf("superseded by a newer click after %s",
 			took(started)))
 		return ""

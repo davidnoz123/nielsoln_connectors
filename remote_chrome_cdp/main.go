@@ -172,6 +172,11 @@ func main() {
 			"oldest. A full test run touches 21 pages and left 41 tabs, "+
 			"95 Chrome processes and 8GB of working set. Tabs the human "+
 			"opened are never counted and never closed; 0 disables the cap")
+	windowCache := flag.String("window-cache", "",
+		"a file to remember the Chrome window handle in, so the first "+
+			"right-click after a restart raises the window as fast as the "+
+			"rest. A stale handle is checked and discarded, so the worst "+
+			"case is the behaviour without it")
 	logPath := flag.String("log", "",
 		"also append everything printed here to this file. The console is "+
 			"the only place that says what each click did, which is no use "+
@@ -228,6 +233,10 @@ func main() {
 		sweepLanes:   *sweepLanes,
 		maxTabs:      *maxTabs,
 		absentBudget: time.Duration(*absentMS) * time.Millisecond}
+	// Before the first request, so the log says whether the window is
+	// already known or has to be learned.
+	log.Printf("  focus: %s", LoadWindowHandle(*windowCache))
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/show/", s.showHandler)
 	mux.HandleFunc("/health", s.healthHandler)
@@ -308,6 +317,52 @@ func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// WHO ASKED, computed once. It used to be three separate wantsFocus
+	// calls and nothing wrote the answer down, so the log could say a drive
+	// began and not whether it was about to take the desktop. Answering
+	// "what raised my window at 13:14" then meant reading process
+	// command lines an hour later instead of grepping one file.
+	client := r.Header.Get("X-Drive-Client")
+	if client == "" {
+		// NOT "browser". A missing header is a browser or a script that
+		// forgot, and the log must not guess which.
+		client = "unnamed"
+	}
+	wantFocus := s.wantsFocus(r)
+	raising := "no focus"
+	if wantFocus {
+		raising = "will raise"
+	}
+
+	// ⚠️ THE WINDOW COMES UP BEFORE ANYTHING ELSE HAPPENS.
+	//
+	// This is the first work the process does for a request, ahead of the
+	// Chrome health check, the reply, the lock and CDP. It has to be,
+	// because the thing that makes raising possible at all is a grant Excel
+	// hands over at the instant of the right-click, and a grant is spent
+	// best while it is fresh.
+	//
+	// Before this, the only way to find the window was to match a tab
+	// TITLE, which does not exist until the page has loaded, so focus
+	// queued behind a navigation it has nothing to do with. On a drive that
+	// opened its own tab that was seconds, and Windows refused the raise
+	// about as often as it allowed it. The complaint was exactly this:
+	// focus should be the first thing, not the last.
+	//
+	// A handle is what makes it possible, so the first raise of a session
+	// still goes the slow way and teaches us the number. Everything after
+	// is a validity check and a SetForegroundWindow.
+	//
+	// ONLY when this request wanted focus, which by the allow-list means a
+	// human right-clicked a cell. A test raises nothing.
+	raisedEarly := false
+	if wantFocus {
+		if out := RaiseRemembered(); out != "" {
+			raisedEarly = strings.HasPrefix(out, "raised")
+			s.log(id, "focus on arrival: "+out)
+		}
+	}
+
 	// ⚠️ THE REPLY GOES FIRST, and that is the whole trick.
 	//
 	// The tab the human clicked is sitting on this very URL, in the Chrome
@@ -349,23 +404,6 @@ func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("  started a Chrome on %d", s.cdpPort)
 		s.log(id, "started a Chrome")
-	}
-
-	// WHO ASKED, computed once. It used to be three separate wantsFocus
-	// calls and nothing wrote the answer down, so the log could say a drive
-	// began and not whether it was about to take the desktop. Answering
-	// "what raised my window at 13:14" then meant reading process
-	// command lines an hour later instead of grepping one file.
-	client := r.Header.Get("X-Drive-Client")
-	if client == "" {
-		// NOT "browser". A missing header is a browser or a script that
-		// forgot, and the log must not guess which.
-		client = "unnamed"
-	}
-	wantFocus := s.wantsFocus(r)
-	raising := "no focus"
-	if wantFocus {
-		raising = "will raise"
 	}
 
 	// Refused BEFORE the generation is bumped and before "begin" is
@@ -418,7 +456,7 @@ func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
 	// arriving IS its completion signal, and without it the test goes back
 	// to polling a record file, which was the largest cost in a run.
 	if client == "drive-test" {
-		title := s.driveSync(id, task, "", mine, wantFocus)
+		title := s.driveSync(id, task, "", mine, wantFocus, raisedEarly)
 		if title != "" {
 			w.Header().Set("X-Chrome-Title", title)
 		}
@@ -433,7 +471,7 @@ func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
-		go s.drive(id, task, "", mine, wantFocus, true)
+		go s.drive(id, task, "", mine, wantFocus, true, raisedEarly)
 		return
 	}
 
@@ -443,7 +481,7 @@ func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
-	go s.drive(id, task, clicked, mine, wantFocus, true)
+	go s.drive(id, task, clicked, mine, wantFocus, true, raisedEarly)
 }
 
 // driveSync runs the work and returns the tab title to raise, or "".
@@ -453,10 +491,10 @@ func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
 // costs the full search budget before giving up. Measured 3 Oct: 3.2 of a
 // 3.9 second request was spent looking for a tab that cannot exist.
 func (s *server) driveSync(id string, task Task, clicked string,
-	mine int64, focus bool) string {
+	mine int64, focus bool, raised bool) string {
 	done := make(chan string, 1)
 	// A test is never superseded: see drive().
-	go func() { done <- s.drive(id, task, clicked, mine, focus, false) }()
+	go func() { done <- s.drive(id, task, clicked, mine, focus, false, raised) }()
 	select {
 	case title := <-done:
 		return title
@@ -654,7 +692,7 @@ func (s *server) raiseEarly(sess *cdpSession, id, targetID string,
 
 // drive does the Chrome work after the reply has gone out.
 func (s *server) drive(id string, task Task, clicked string, mine int64,
-	focus bool, supersedable bool) string {
+	focus bool, supersedable bool, raisedEarly bool) string {
 	started := time.Now()
 	defer s.release(id)
 	// ONE AT A TIME. Two clicks in quick succession would otherwise race to
@@ -709,7 +747,9 @@ func (s *server) drive(id string, task Task, clicked string, mine int64,
 		take = s.tabs[key]
 		how = "own tab"
 	}
-	early := false
+	// Already up, raised on arrival before this goroutine existed, so
+	// neither the early nor the late raise below has anything to do.
+	early := raisedEarly
 	if take == "" {
 		// RECLAIM what an earlier run left, rather than adding to it. The
 		// registry above lives in this process only, so every restart
@@ -727,7 +767,12 @@ func (s *server) drive(id string, task Task, clicked string, mine int64,
 		// until the replacement page has loaded -- which is the whole
 		// three seconds this is here to remove. The first click on a page
 		// after a restart is the common case, not a rare one.
-		if tid, ok := sess.findTabAt(key); ok {
+		// NOT reassigned when `early` is already true. The window went up on
+		// arrival, and this would overwrite that with whatever a second,
+		// later raise returned, which on a doomed tab is often a refusal:
+		// asking twice and then believing the worse answer would report
+		// "refused" about a window already in front of the human.
+		if tid, ok := sess.findTabAt(key); ok && !early {
 			early = s.raiseEarly(sess, id, tid, focus)
 		}
 		if n := sess.closeTabsAt(key); n > 0 {

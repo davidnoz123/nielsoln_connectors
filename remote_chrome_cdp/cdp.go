@@ -392,57 +392,38 @@ func (s *cdpSession) eval(sessionID, expr string) (json.RawMessage, error) {
 // holding a match is one minified line that can be a hundred thousand
 // characters wide, so scrolling to the element puts the match off-screen.
 const markJS = `(function (needle) {
-  var w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-  var nodes = [], text = "", n;
-  while ((n = w.nextNode())) {
-    if (!n.nodeValue) continue;
-    nodes.push({node: n, at: text.length, len: n.nodeValue.length});
-    text += n.nodeValue;
-  }
-  var i = text.indexOf(needle), len = needle.length;
-  if (i < 0) {
-    // A SECOND LOOK, WITH WHITESPACE TREATED AS WHITESPACE.
-    //
-    // The text above is raw nodeValues concatenated, and nothing collapses
-    // the gaps. Google Analytics renders a dropdown's value as a number in
-    // one element and its unit in another, so the retention control reads
-    //
-    //     17 spaces, then "2", then a newline, 22 spaces and "months"
-    //
-    // where innerText says "2 months". indexOf could never match that, and
-    // the drive reported the anchor missing on a screen that was showing it
-    // in 32px type. Any anchor whose words cross an element boundary was in
-    // the same position: unmatchable, and indistinguishable from wrong.
-    //
-    // So each run of whitespace in the needle matches any run in the page.
-    // Searched against the RAW text rather than a normalised copy, because
-    // the match index has to stay valid for locate() below, and remapping
-    // offsets through a collapse is the kind of arithmetic that is wrong
-    // once and then wrong for ever.
-    var rx;
-    try {
-      rx = new RegExp(needle.trim().split(/\s+/).map(function (w) {
-        return w.replace(/[-.*+?^${}()|[\]\\]/g, "\\$&");
-      }).join("\\s+"));
-    } catch (e) { return {found: false}; }
-    var m = rx.exec(text);
-    if (!m) return {found: false};
-    i = m.index;
-    len = m[0].length;
-  }
-  // THE CONTROL, NOT THE WORD. An anchor that lands inside a dropdown should
-  // outline the dropdown: "2 months" is the value of a thing she has to
-  // click, and highlighting four characters of it while leaving the box
-  // around them plain is an answer to a question nobody asked.
+  // THE TOP DOCUMENT, THEN ANY SAME-ORIGIN FRAME INSIDE IT.
   //
-  // BOUNDED rather than closest(), so a page that wraps everything in one
-  // button cannot claim the whole screen is the control. Seven, because it
-  // was measured: on the Analytics retention screen the mat-select sits
-  // five elements above the mark, through two spans and two divs, and a
-  // bound of five reported no control on a page that has two. The next
-  // ancestor up is a mat-form-field at eight, which is the label and the
-  // box together and is not what she clicks, so seven both reaches the
-  // control and stops below the wrong one.
+  // Elementor renders the page being edited in an iframe and keeps only its
+  // own panel in the top document, so "Affordable family entertainment" was
+  // not findable on the screen that edits it: the anchor search walked one
+  // document and the words were in another. Same for the block editor, which
+  // moved post content into a frame.
+  //
+  // Searched one document at a time, top first, rather than by concatenating
+  // them. That keeps every offset inside the document it came from, so the
+  // range arithmetic below is unchanged and a match in the top document
+  // behaves exactly as it did before this existed.
+  //
+  // Same-origin only, and not by choice: reading contentDocument across
+  // origins throws, and a cross-origin frame is one we are not allowed to
+  // look into. Wrapped in try so a Google font frame or an ad cannot stop
+  // the search.
+  function documents() {
+    var out = [document];
+    for (var pass = 0; pass < out.length && out.length < 12; pass++) {
+      var frames = out[pass].querySelectorAll
+        ? out[pass].querySelectorAll("iframe,frame") : [];
+      for (var k = 0; k < frames.length; k++) {
+        try {
+          var d = frames[k].contentDocument;
+          if (d && d.body && out.indexOf(d) < 0) out.push(d);
+        } catch (e) { /* cross-origin: not ours to read */ }
+      }
+    }
+    return out;
+  }
+
   function controlAround(el) {
     var sel = "select,[role=combobox],[role=listbox],input,textarea," +
               "button,mat-select";
@@ -453,6 +434,7 @@ const markJS = `(function (needle) {
     }
     return null;
   }
+
   function reveal(el) {
     var ctl = controlAround(el);
     if (ctl) {
@@ -462,49 +444,130 @@ const markJS = `(function (needle) {
     (ctl || el).scrollIntoView({block: "center", inline: "center"});
     return ctl ? ctl.tagName.toLowerCase() : "";
   }
-  function locate(offset) {
-    for (var k = 0; k < nodes.length; k++) {
-      if (offset < nodes[k].at + nodes[k].len) {
-        return {node: nodes[k].node, off: offset - nodes[k].at};
-      }
+
+  // markIn is the whole of what this function used to be, scoped to one
+  // document so it can be tried against several.
+  function markIn(doc, which) {
+    var w = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+    var nodes = [], text = "", n;
+    while ((n = w.nextNode())) {
+      if (!n.nodeValue) continue;
+      nodes.push({node: n, at: text.length, len: n.nodeValue.length});
+      text += n.nodeValue;
     }
-    var last = nodes[nodes.length - 1];
-    return {node: last.node, off: last.len};
-  }
-  var a = locate(i), b = locate(i + len - 1);
-  var rg = document.createRange();
-  rg.setStart(a.node, a.off);
-  rg.setEnd(b.node, b.off + 1);
-  var marked = false, control = "";
-  try {
-    var mark = document.createElement("mark");
-    mark.style.background = "#ffe14d";
-    mark.style.outline = "3px solid #d08700";
-    rg.surroundContents(mark);
-    control = reveal(mark);
-    marked = true;
-  } catch (e) {
-    // surroundContents refuses a range that crosses element boundaries,
-    // which is exactly the attribute case. So EVERY node the match covers
-    // is highlighted, not just the first: styling only the start node marks
-    // the word "property" and leaves the value it is pointing at unmarked,
-    // which reads as the tool finding the wrong thing.
-    var from = i, to = i + len;
-    for (var k = 0; k < nodes.length; k++) {
-      var s0 = nodes[k].at, s1 = s0 + nodes[k].len;
-      if (s1 <= from || s0 >= to) continue;
-      var host = nodes[k].node.parentElement;
-      if (!host) continue;
-      host.style.background = "#ffe14d";
-      host.style.outline = "2px solid #d08700";
-      if (!marked) {
-        control = reveal(host);
+    // A MATCH NOBODY CAN SEE IS WORSE THAN NO MATCH. markJS walks every
+    // text node, displayed or not, so a string sitting in a hidden template
+    // counts: Elementor keeps a copy of the page's words in its own panel
+    // markup, and the first occurrence of the homepage headline was one of
+    // those. It marked something invisible, scrolled nowhere, and reported
+    // success.
+    //
+    // So occurrences are tried in order and the first VISIBLE one wins.
+    // Checked per occurrence rather than per node on purpose: a view-source
+    // page has thousands of text nodes and measuring every one of them to
+    // find one string would cost more than the search.
+    function visibleAt(offset) {
+      var hit = locate(offset);
+      var el = hit.node.parentElement;
+      if (!el) return false;
+      if (el.getClientRects && el.getClientRects().length === 0) return false;
+      var box = el.getBoundingClientRect();
+      return box.width > 0 && box.height > 0;
+    }
+
+    var i = -1, len = needle.length;
+    for (var at = text.indexOf(needle); at >= 0;
+         at = text.indexOf(needle, at + 1)) {
+      if (visibleAt(at)) { i = at; break; }
+      if (i < 0) { i = -2; }          // seen, but not on screen
+    }
+    if (i === -2) {
+      // Every occurrence was hidden. Say so rather than marking one: the
+      // caller's "could not find it" is then true of the screen, which is
+      // what the human is looking at.
+      return null;
+    }
+    if (i < 0) {
+      // A SECOND LOOK, WITH WHITESPACE TREATED AS WHITESPACE.
+      //
+      // The text above is raw nodeValues concatenated and nothing collapses
+      // the gaps. Google Analytics renders a dropdown's value as a number in
+      // one element and its unit in another, so the retention control reads
+      // as 17 spaces, "2", a newline, 22 spaces and "months" where innerText
+      // says "2 months". indexOf could never match that, and the drive
+      // reported the anchor missing on a screen showing it in large type.
+      // Any anchor whose words cross an element boundary was in the same
+      // position: unmatchable, and indistinguishable from wrong.
+      //
+      // Searched against the RAW text rather than a normalised copy, because
+      // the match index has to stay valid for locate() below, and remapping
+      // offsets through a collapse is the kind of arithmetic that is wrong
+      // once and then wrong for ever.
+      var rx;
+      try {
+        rx = new RegExp(needle.trim().split(/\s+/).map(function (x) {
+          return x.replace(/[-.*+?^${}()|[\]\\]/g, "\\$&");
+        }).join("\\s+"));
+      } catch (e) { return null; }
+      var m = rx.exec(text);
+      if (!m) return null;
+      i = m.index;
+      len = m[0].length;
+    }
+
+    function locate(offset) {
+      for (var k = 0; k < nodes.length; k++) {
+        if (offset < nodes[k].at + nodes[k].len) {
+          return {node: nodes[k].node, off: offset - nodes[k].at};
+        }
       }
+      var last = nodes[nodes.length - 1];
+      return {node: last.node, off: last.len};
+    }
+
+    var a = locate(i), b = locate(i + len - 1);
+    var rg = doc.createRange();
+    rg.setStart(a.node, a.off);
+    rg.setEnd(b.node, b.off + 1);
+    var marked = false, control = "";
+    try {
+      var mark = doc.createElement("mark");
+      mark.style.background = "#ffe14d";
+      mark.style.outline = "3px solid #d08700";
+      rg.surroundContents(mark);
+      control = reveal(mark);
       marked = true;
+    } catch (e) {
+      // surroundContents refuses a range that crosses element boundaries,
+      // which is exactly the attribute case. So EVERY node the match covers
+      // is highlighted, not just the first: styling only the start node
+      // marks the word "property" and leaves the value it is pointing at
+      // unmarked, which reads as the tool finding the wrong thing.
+      var from = i, to = i + len;
+      for (var k2 = 0; k2 < nodes.length; k2++) {
+        var s0 = nodes[k2].at, s1 = s0 + nodes[k2].len;
+        if (s1 <= from || s0 >= to) continue;
+        var host = nodes[k2].node.parentElement;
+        if (!host) continue;
+        host.style.background = "#ffe14d";
+        host.style.outline = "2px solid #d08700";
+        if (!marked) { control = reveal(host); }
+        marked = true;
+      }
     }
+    if (!marked) return null;
+    return {found: true, spans: a.node === b.node ? 1 : 2,
+            control: control, where: which};
   }
-  return {found: marked, spans: a.node === b.node ? 1 : 2,
-          control: control};
+
+  var docs = documents();
+  for (var d = 0; d < docs.length; d++) {
+    try {
+      var got = markIn(docs[d], d === 0 ? "page" : "frame " + d);
+      if (got) return got;
+    } catch (e) { /* a frame that went away mid-search */ }
+  }
+  return {found: false, documents: docs.length};
 })(%s)`
 
 // lineJS highlights one source line of a view-source page and scrolls to it.
@@ -657,7 +720,21 @@ func (s *cdpSession) show(pageURL, find string, viewSource bool, focus bool,
 		// A short look when the slate says it should not be there yet.
 		// Long enough to catch the change having already been made, short
 		// enough that confirming the expected costs nothing.
-		budget := 8 * time.Second
+		//
+		// 25s, AND THAT IS A MEASUREMENT. It was 8s, and all four Elementor
+		// edit drives failed with "tab is open but X is NOT highlighted" on
+		// anchors a manual search found instantly, which looked like the
+		// anchors being wrong. Timed on 5 Oct: the homepage headline appears
+		// in Elementor's panel markup at 1.8s, HIDDEN, and in the visible
+		// preview frame at 16.8 seconds. Elementor loads the editor shell,
+		// then the page, then paints it, and only the last of those puts the
+		// words where somebody can see them.
+		//
+		// Paying for it only costs a genuine failure, because the loop
+		// breaks the moment the anchor is found. The absent case has its own
+		// budget below and is untouched, which is what keeps a full run from
+		// getting slower.
+		budget := 25 * time.Second
 		if expect == "after" {
 			// An anchor the slate says is not there yet can only be
 			// confirmed by a budget expiring, so this is paid in full on

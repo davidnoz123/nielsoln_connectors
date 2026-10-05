@@ -785,7 +785,7 @@ func (s *server) drive(id string, task Task, clicked string, mine int64,
 	}
 	targetID, reused, err := sess.show(task.Page, task.Find, task.Source,
 		focus, take, strings.ToLower(task.Expect), s.absentBudget,
-		task.LocatorRE)
+		task.LocatorRE, task.Click)
 	// STAMPED HERE, BEFORE THE HOUSEKEEPING. This used to be taken after
 	// the registry work below, so closing tabs was billed to `show` and the
 	// log read "show 3.7s" for a drive that had spent part of that on

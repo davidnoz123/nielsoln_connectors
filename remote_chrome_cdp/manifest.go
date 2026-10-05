@@ -39,6 +39,27 @@ type Task struct {
 	// of what this program exists to show.
 	Source bool `json:"source"`
 
+	// Click asks for one click on the element the highlight landed in, and
+	// it is the only thing in this program that changes a page rather than
+	// looking at one.
+	//
+	// WHY IT EXISTS. An Elementor edit drive opened the right screen and
+	// highlighted the right words, and the panel on the left still read
+	// "Elements": the text was visible and not editable, because Elementor
+	// opens a widget's settings only when the widget is clicked. The drive
+	// was arriving one click short of the thing it existed for.
+	//
+	// WHY IT IS OPT-IN. A click can DO something. On a settings screen it
+	// might toggle a control and on a list it might follow a link, so a tool
+	// that clicked whatever it found would eventually press something nobody
+	// asked it to. Declared per task, in the repo that knows what the screen
+	// is, and absent everywhere it has not been thought about.
+	//
+	// WHAT IT MAY CLICK. The element the mark sits in, or the nearest
+	// ancestor an editor would recognise as a widget. Never a selector off
+	// the wire, never a coordinate, and never more than once.
+	Click bool `json:"click"`
+
 	// An address the human can OPEN if the driven Chrome is not where they
 	// expected. Needed because `page` is often view-source:..., and Chrome
 	// refuses view-source: opened from a click or a paste from another

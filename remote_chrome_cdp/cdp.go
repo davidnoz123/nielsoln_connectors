@@ -570,6 +570,57 @@ const markJS = `(function (needle) {
   return {found: false, documents: docs.length};
 })(%s)`
 
+// clickJS clicks the element the highlight landed in, and nothing else.
+//
+// ONE CLICK, ON WHAT WE ALREADY FOUND. The mark is where the anchor matched,
+// so the element that owns it is the element the task is about. Nothing here
+// takes a selector or a coordinate from outside: the only way to steer this
+// is to change which string the manifest asks for, which is the same
+// vocabulary the rest of the program is limited to.
+//
+// THE WIDGET, NOT THE WORD. An editor listens for a click on its own widget
+// wrapper rather than on the text inside it, so this climbs to the nearest
+// ancestor an editor would recognise and clicks that, falling back to the
+// mark's own parent. Bounded to six levels for the same reason
+// controlAround is: an unbounded climb ends at <body>, and clicking <body>
+// is both useless and the kind of thing that would one day be harmful.
+//
+// Frames included, because an editor usually keeps the page in one: the
+// mark is in the preview frame and the panel that opens is in the top
+// document.
+const clickJS = `(function () {
+  var docs = [document];
+  for (var pass = 0; pass < docs.length && docs.length < 12; pass++) {
+    var frames = docs[pass].querySelectorAll
+      ? docs[pass].querySelectorAll("iframe,frame") : [];
+    for (var k = 0; k < frames.length; k++) {
+      try {
+        var d = frames[k].contentDocument;
+        if (d && d.body && docs.indexOf(d) < 0) docs.push(d);
+      } catch (e) { /* cross-origin: not ours to touch */ }
+    }
+  }
+  var editable = ".elementor-element,.elementor-widget,[data-widget_type]," +
+                 "[data-id],.wp-block,[contenteditable]";
+  for (var i = 0; i < docs.length; i++) {
+    var m = docs[i].querySelector("mark");
+    if (!m) continue;
+    var target = null, p = m;
+    for (var lvl = 0; lvl < 6 && p; lvl++) {
+      if (p.matches && p.matches(editable)) { target = p; break; }
+      p = p.parentElement;
+    }
+    if (!target) target = m.parentElement;
+    if (!target) continue;
+    target.click();
+    return {clicked: true,
+            what: (target.tagName || "").toLowerCase(),
+            via: target === m.parentElement ? "the mark's parent"
+                                            : "the widget around it"};
+  }
+  return {clicked: false};
+})()`
+
 // lineJS highlights one source line of a view-source page and scrolls to it.
 //
 // Chrome renders view-source as a table with one row per source line, so a
@@ -605,7 +656,7 @@ const lineJS = `(function (pat) {
 // would look exactly like success.
 func (s *cdpSession) show(pageURL, find string, viewSource bool, focus bool,
 	reuse string, expect string, absent time.Duration,
-	locatorRE string) (string, bool, error) {
+	locatorRE string, click bool) (string, bool, error) {
 	var targetID, sessionID string
 	var err error
 	reused := false
@@ -797,6 +848,16 @@ func (s *cdpSession) show(pageURL, find string, viewSource bool, focus bool,
 				trim(target, 70), trim(find, 60), atLine)
 		}
 	}
+	// ONE CLICK, ONLY IF THE TASK ASKED AND ONLY IF SOMETHING WAS FOUND.
+	//
+	// After the highlight, never instead of it: the mark is what tells this
+	// which element to click, and a click without a confirmed match would be
+	// guessing at the page. A row that asked for a click and did not get a
+	// match therefore gets neither, which is the right way round.
+	if click && find != "" {
+		s.eval(sessionID, clickJS)
+	}
+
 	// NO bringToFront HERE ANY MORE. It was "the ONLY deliberate focus
 	// change, and only once the page is ready", and being last was the
 	// fault: the window arrived showing the previous tab and switched

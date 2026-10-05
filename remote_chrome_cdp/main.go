@@ -732,6 +732,28 @@ func (s *server) drive(id string, task Task, clicked string, mine int64,
 	targetID, reused, err := sess.show(task.Page, task.Find, task.Source,
 		focus, take, strings.ToLower(task.Expect), s.absentBudget,
 		task.LocatorRE)
+	// STAMPED HERE, BEFORE THE HOUSEKEEPING. This used to be taken after
+	// the registry work below, so closing tabs was billed to `show` and the
+	// log read "show 3.7s" for a drive that had spent part of that on
+	// tidying. The one question somebody asked of this line was whether the
+	// delay was the tab cap, and the line had been built so that it could
+	// not answer.
+	tShow := time.Now()
+	title := sess.titleOf(targetID)
+
+	// THE WINDOW BEFORE THE TIDYING. Raising it used to come after the cap
+	// closed tabs, so housekeeping sat between the human and the thing they
+	// had asked to look at. It only cost a fraction of a second, which is
+	// not the point: nothing whose purpose is to save memory later belongs
+	// in front of the one action somebody is waiting on.
+	//
+	// Still only when the early raise could not run or was refused. Raising
+	// twice is a second yank for no gain.
+	if focus && title != "" && !early {
+		s.log(id, "focus: "+RaiseChromeTitled(title))
+	}
+	tFocus := time.Now()
+
 	if targetID != "" {
 		s.remember(key, targetID)
 		// LRU, AND THE REASON IT BECAME NECESSARY TODAY.
@@ -760,17 +782,6 @@ func (s *server) drive(id string, task Task, clicked string, mine int64,
 	if reused && how == "own tab" {
 		how = "reused our tab"
 	}
-	tShow := time.Now()
-	title := sess.titleOf(targetID)
-	// Raise it from HERE, using the right Excel granted us with
-	// AllowSetForegroundWindow before it called. Page.bringToFront above
-	// made the tab active inside Chrome; this brings the window forward,
-	// which is a different mechanism and the one that was missing.
-	if focus && title != "" && !early {
-		// Only when the early raise could not run or was refused. Raising
-		// twice is a second yank for no gain: the window is already front.
-		s.log(id, "focus: "+RaiseChromeTitled(title))
-	}
 	if err != nil {
 		s.log(id, fmt.Sprintf("done in %s, %s, NO HIGHLIGHT: %s",
 			took(started), how, err.Error()))
@@ -780,9 +791,16 @@ func (s *server) drive(id string, task Task, clicked string, mine int64,
 	}
 	// Phase timings, because "it feels slow" cannot be acted on and this
 	// is how the 3.2s tab hunt was found.
-	s.log(id, fmt.Sprintf("done in %s (tab %s, show %s), %s",
-		took(started), took(started)[:0]+tookFrom(started, tFind),
-		tookFrom(tFind, tShow), how))
+	//
+	// FOUR PHASES NOW, NOT TWO. "show 3.7s" was asked to account for a
+	// three second delay and could not, because it was the only phase wide
+	// enough to hide anything: raising the window and closing tabs over the
+	// cap were both inside it. A reader could not tell a slow page from
+	// slow housekeeping, and reasonably guessed the housekeeping.
+	s.log(id, fmt.Sprintf("done in %s (tab %s, show %s, focus %s, tidy %s), %s",
+		took(started), tookFrom(started, tFind),
+		tookFrom(tFind, tShow), tookFrom(tShow, tFocus),
+		tookFrom(tFocus, time.Now()), how))
 	// Any OTHER tab still sitting on one of our replies is tidied away. The
 	// one we took over is no longer at that address, so it is not caught.
 	if n := sess.closeOurOwnPages("http://" + s.listen + "/show/"); n > 0 {

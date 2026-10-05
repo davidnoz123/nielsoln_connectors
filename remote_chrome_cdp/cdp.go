@@ -585,6 +585,30 @@ func (s *cdpSession) show(pageURL, find string, viewSource bool, focus bool,
 	// suite that reports on the desktop as much as on the site.
 	s.send(sessionID, "Page.setWebLifecycleState",
 		map[string]any{"state": "active"})
+
+	// THE TAB COMES TO FRONT NOW, WHILE IT LOADS, not once it has finished.
+	//
+	// Two different things were both called focus and both left until last.
+	// Raising the WINDOW is an OS call and now happens the moment a request
+	// arrives. Activating the TAB is a Chrome call and was still at the end
+	// of this function, behind the navigation and the anchor search, so the
+	// window came forward showing whichever tab had been active before and
+	// sat there for seconds before switching. That reads exactly like a
+	// tool struggling to find the right tab, and the tab was never the
+	// problem: the log says finding it costs between 1 and 27 milliseconds.
+	//
+	// Nothing is protected by waiting. A tab brought forward before it
+	// loads shows the page being built, which is what a browser does every
+	// time anybody clicks a link, and Chrome holds the previous paint until
+	// the new document commits rather than flashing white. Being shown the
+	// work is better than being shown the wrong tab.
+	//
+	// Gated on `focus` like the raise it belongs with: a quiet drive moves
+	// nothing, which is what -focus=false and a test both rely on.
+	if focus {
+		s.send(sessionID, "Page.bringToFront", nil)
+	}
+
 	navRes, err := s.send(sessionID, "Page.navigate",
 		map[string]any{"url": target})
 	if err != nil {
@@ -676,9 +700,12 @@ func (s *cdpSession) show(pageURL, find string, viewSource bool, focus bool,
 						hit.Line, trim(hit.Text, 60))
 				}
 			}
-			if focus {
-				s.send(sessionID, "Page.bringToFront", nil)
-			}
+			// The tab was brought to front before the navigation, so there
+			// is nothing to do here. Kept as a comment rather than deleted
+			// because this branch is the one where a reader will wonder:
+			// the anchor was not found, and it is reasonable to ask whether
+			// the human was shown the page at all. They were, from the
+			// moment it started loading.
 			if expect == "after" {
 				// NOT an error in the sense that matters. The page is open
 				// and the absence is the point: this is what she is being
@@ -693,15 +720,15 @@ func (s *cdpSession) show(pageURL, find string, viewSource bool, focus bool,
 				trim(target, 70), trim(find, 60), atLine)
 		}
 	}
-	// The ONLY deliberate focus change, and only once the page is ready.
-	// -focus=false is for driving this while working on something else.
+	// NO bringToFront HERE ANY MORE. It was "the ONLY deliberate focus
+	// change, and only once the page is ready", and being last was the
+	// fault: the window arrived showing the previous tab and switched
+	// seconds later. It is done before the navigation now, so by this point
+	// the human has been watching the page load.
 	//
-	// This is now purely about what the human looks at. Making the page
-	// RENDER is done above, unconditionally, because the two were one call
-	// and a quiet drive silently got neither.
-	if focus {
-		s.send(sessionID, "Page.bringToFront", nil)
-	}
+	// Three calls where one will do, if this were left in: the early one,
+	// this, and the not-found branch above. Each is a round trip, and two
+	// of them are asking for something already true.
 	return targetID, reused, nil
 }
 

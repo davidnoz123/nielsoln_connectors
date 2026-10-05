@@ -399,8 +399,69 @@ const markJS = `(function (needle) {
     nodes.push({node: n, at: text.length, len: n.nodeValue.length});
     text += n.nodeValue;
   }
-  var i = text.indexOf(needle);
-  if (i < 0) return {found: false};
+  var i = text.indexOf(needle), len = needle.length;
+  if (i < 0) {
+    // A SECOND LOOK, WITH WHITESPACE TREATED AS WHITESPACE.
+    //
+    // The text above is raw nodeValues concatenated, and nothing collapses
+    // the gaps. Google Analytics renders a dropdown's value as a number in
+    // one element and its unit in another, so the retention control reads
+    //
+    //     17 spaces, then "2", then a newline, 22 spaces and "months"
+    //
+    // where innerText says "2 months". indexOf could never match that, and
+    // the drive reported the anchor missing on a screen that was showing it
+    // in 32px type. Any anchor whose words cross an element boundary was in
+    // the same position: unmatchable, and indistinguishable from wrong.
+    //
+    // So each run of whitespace in the needle matches any run in the page.
+    // Searched against the RAW text rather than a normalised copy, because
+    // the match index has to stay valid for locate() below, and remapping
+    // offsets through a collapse is the kind of arithmetic that is wrong
+    // once and then wrong for ever.
+    var rx;
+    try {
+      rx = new RegExp(needle.trim().split(/\s+/).map(function (w) {
+        return w.replace(/[-.*+?^${}()|[\]\\]/g, "\\$&");
+      }).join("\\s+"));
+    } catch (e) { return {found: false}; }
+    var m = rx.exec(text);
+    if (!m) return {found: false};
+    i = m.index;
+    len = m[0].length;
+  }
+  // THE CONTROL, NOT THE WORD. An anchor that lands inside a dropdown should
+  // outline the dropdown: "2 months" is the value of a thing she has to
+  // click, and highlighting four characters of it while leaving the box
+  // around them plain is an answer to a question nobody asked.
+  //
+  // BOUNDED rather than closest(), so a page that wraps everything in one
+  // button cannot claim the whole screen is the control. Seven, because it
+  // was measured: on the Analytics retention screen the mat-select sits
+  // five elements above the mark, through two spans and two divs, and a
+  // bound of five reported no control on a page that has two. The next
+  // ancestor up is a mat-form-field at eight, which is the label and the
+  // box together and is not what she clicks, so seven both reaches the
+  // control and stops below the wrong one.
+  function controlAround(el) {
+    var sel = "select,[role=combobox],[role=listbox],input,textarea," +
+              "button,mat-select";
+    var p = el;
+    for (var k = 0; k < 7 && p; k++) {
+      if (p.matches && p.matches(sel)) return p;
+      p = p.parentElement;
+    }
+    return null;
+  }
+  function reveal(el) {
+    var ctl = controlAround(el);
+    if (ctl) {
+      ctl.style.outline = "3px solid #d08700";
+      ctl.style.outlineOffset = "2px";
+    }
+    (ctl || el).scrollIntoView({block: "center", inline: "center"});
+    return ctl ? ctl.tagName.toLowerCase() : "";
+  }
   function locate(offset) {
     for (var k = 0; k < nodes.length; k++) {
       if (offset < nodes[k].at + nodes[k].len) {
@@ -410,17 +471,17 @@ const markJS = `(function (needle) {
     var last = nodes[nodes.length - 1];
     return {node: last.node, off: last.len};
   }
-  var a = locate(i), b = locate(i + needle.length - 1);
+  var a = locate(i), b = locate(i + len - 1);
   var rg = document.createRange();
   rg.setStart(a.node, a.off);
   rg.setEnd(b.node, b.off + 1);
-  var marked = false;
+  var marked = false, control = "";
   try {
     var mark = document.createElement("mark");
     mark.style.background = "#ffe14d";
     mark.style.outline = "3px solid #d08700";
     rg.surroundContents(mark);
-    mark.scrollIntoView({block: "center", inline: "center"});
+    control = reveal(mark);
     marked = true;
   } catch (e) {
     // surroundContents refuses a range that crosses element boundaries,
@@ -428,7 +489,7 @@ const markJS = `(function (needle) {
     // is highlighted, not just the first: styling only the start node marks
     // the word "property" and leaves the value it is pointing at unmarked,
     // which reads as the tool finding the wrong thing.
-    var from = i, to = i + needle.length;
+    var from = i, to = i + len;
     for (var k = 0; k < nodes.length; k++) {
       var s0 = nodes[k].at, s1 = s0 + nodes[k].len;
       if (s1 <= from || s0 >= to) continue;
@@ -437,12 +498,13 @@ const markJS = `(function (needle) {
       host.style.background = "#ffe14d";
       host.style.outline = "2px solid #d08700";
       if (!marked) {
-        host.scrollIntoView({block: "center", inline: "center"});
+        control = reveal(host);
       }
       marked = true;
     }
   }
-  return {found: marked, spans: a.node === b.node ? 1 : 2};
+  return {found: marked, spans: a.node === b.node ? 1 : 2,
+          control: control};
 })(%s)`
 
 // lineJS highlights one source line of a view-source page and scrolls to it.

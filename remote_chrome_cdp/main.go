@@ -325,6 +325,23 @@ func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
 		s.log(id, "started a Chrome")
 	}
 
+	// WHO ASKED, computed once. It used to be three separate wantsFocus
+	// calls and nothing wrote the answer down, so the log could say a drive
+	// began and not whether it was about to take the desktop. Answering
+	// "what raised my window at 13:14" then meant reading process
+	// command lines an hour later instead of grepping one file.
+	client := r.Header.Get("X-Drive-Client")
+	if client == "" {
+		// NOT "browser". A missing header is a browser or a script that
+		// forgot, and the log must not guess which.
+		client = "unnamed"
+	}
+	wantFocus := s.wantsFocus(r)
+	raising := "no focus"
+	if wantFocus {
+		raising = "will raise"
+	}
+
 	// Refused BEFORE the generation is bumped and before "begin" is
 	// logged, so an ignored click neither supersedes a genuinely queued
 	// drive nor leaves a second "begin" in the log for somebody to puzzle
@@ -347,14 +364,14 @@ func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
 	// AllowSetForegroundWindow before it calls us, so the ignored click
 	// has already granted the right to raise the window and the drive that
 	// is running may spend it.
-	if !s.claim(id) && r.Header.Get("X-Drive-Client") == "excel-vba" {
+	if !s.claim(id) && client == "excel-vba" {
 		s.log(id, "clicked again while it is still opening, ignored")
 		s.page(w, id, task, "Already opening it", "")
 		return
 	}
 
 	mine := atomic.AddInt64(&s.gen, 1)
-	s.log(id, "begin")
+	s.log(id, fmt.Sprintf("begin (%s, %s)", client, raising))
 	clicked := "http://" + s.listen + r.URL.RequestURI()
 
 	// ⚠️ ONLY drive_test WAITS. Everybody else is answered first.
@@ -374,15 +391,15 @@ func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
 	// drive_test keeps the synchronous path under its own name: a reply
 	// arriving IS its completion signal, and without it the test goes back
 	// to polling a record file, which was the largest cost in a run.
-	if r.Header.Get("X-Drive-Client") == "drive-test" {
-		title := s.driveSync(id, task, "", mine, s.wantsFocus(r))
+	if client == "drive-test" {
+		title := s.driveSync(id, task, "", mine, wantFocus)
 		if title != "" {
 			w.Header().Set("X-Chrome-Title", title)
 		}
 		s.page(w, id, task, "Shown in Chrome", "")
 		return
 	}
-	if r.Header.Get("X-Drive-Client") == "excel-vba" {
+	if client == "excel-vba" {
 		// Answered at once, so Excel is free again before the human has
 		// let go of the mouse button. `clicked` is empty: WinHttp opened no
 		// tab, and hunting for one cost 3.2 of a 3.9 second request.
@@ -390,7 +407,7 @@ func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
-		go s.drive(id, task, "", mine, s.wantsFocus(r))
+		go s.drive(id, task, "", mine, wantFocus)
 		return
 	}
 
@@ -400,7 +417,7 @@ func (s *server) showHandler(w http.ResponseWriter, r *http.Request) {
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
-	go s.drive(id, task, clicked, mine, s.wantsFocus(r))
+	go s.drive(id, task, clicked, mine, wantFocus)
 }
 
 // driveSync runs the work and returns the tab title to raise, or "".
@@ -471,6 +488,27 @@ func (s *server) current(mine int64) bool {
 // A test should not interrupt anything; a human who just right-clicked a
 // cell is waiting to be shown something.
 //
+// AN ALLOW-LIST, NOT A DENY-LIST, and the deny-list was the fault. The rule
+// read `!= "drive-test"`, which is a deny-list with exactly one entry: any
+// caller that did not send that precise string was treated as a human and
+// raised the window. It did not protect the desktop, it protected it from
+// the one tool that remembered to say its name, and every other tool in the
+// repo that fires a drive had to remember too or be loud by accident.
+//
+// So the raise is EARNED by saying who you are. A caller that forgets to
+// identify itself is quiet rather than loud, which is the right way round:
+// a missed raise is a window you have to click on, while an unwanted one
+// takes the desktop away from whatever you were typing into.
+//
+// THE PRICE, stated because it is a real loss. A plain browser click no
+// longer raises Chrome, and focus_test asserted that it should until this
+// changed it. It is not recoverable by being cleverer, either: a browser
+// sends no X-Drive-Client and neither does a script that forgot, so the two
+// are indistinguishable at the only point where the decision is made.
+// Anybody who wants it back for one request can say &focus=1. It is
+// tolerable because a browser that has just opened a tab is usually in
+// front already.
+//
 // Precedence, narrowest last:
 //
 //	-focus=false        the whole server stays out of the way. Still
@@ -478,7 +516,7 @@ func (s *server) current(mine int64) bool {
 //	                    work" is a real thing to want.
 //	?focus=0 / ?focus=1 whatever the caller says, for anything that needs
 //	                    to override its own default.
-//	X-Drive-Client      drive-test does not raise. Everybody else does.
+//	X-Drive-Client      on the allow-list below, or no raise.
 func (s *server) wantsFocus(r *http.Request) bool {
 	if !s.focus {
 		return false
@@ -486,7 +524,14 @@ func (s *server) wantsFocus(r *http.Request) bool {
 	if v := r.URL.Query().Get("focus"); v != "" {
 		return v != "0" && !strings.EqualFold(v, "false")
 	}
-	return r.Header.Get("X-Drive-Client") != "drive-test"
+	return raisesByDefault[r.Header.Get("X-Drive-Client")]
+}
+
+// raisesByDefault names every caller whose drives raise the window without
+// being asked. ONE ENTRY, and adding a second should take an argument: the
+// only thing that belongs here is a caller a human is waiting on.
+var raisesByDefault = map[string]bool{
+	"excel-vba": true, // a human just right-clicked a cell
 }
 
 // raiseEarly brings the tab we are about to drive to the front NOW.

@@ -502,6 +502,27 @@ func (s *cdpSession) show(pageURL, find string, viewSource bool, focus bool,
 	// Page.enable BEFORE navigating, or the load event for this navigation
 	// is never delivered.
 	s.send(sessionID, "Page.enable", nil)
+
+	// A BACKGROUND TAB DOES NOT ALWAYS PAINT, and a heavy single-page app
+	// is the case that bites. Chrome throttles and freezes pages it thinks
+	// nobody is looking at, so the Analytics admin screen loads its shell,
+	// never renders the panel, and the anchor search times out on a tab
+	// that is open and on exactly the right address.
+	//
+	// Page.bringToFront cures it, which is why this only ever failed with
+	// focus off, but bringToFront is the wrong tool for the cure: it
+	// changes which tab the human is looking at, and that is the one thing
+	// a quiet drive must not do. setWebLifecycleState tells the RENDERER
+	// the page is active without touching tab order or window order, which
+	// is precisely the half that was needed. Unconditional, because
+	// telling an already-active page it is active costs nothing.
+	//
+	// Measured 5 Oct: tl-e1-01:after failed after 31s with no focus and
+	// passed in 12.4s with it. It had been passing for days on nothing
+	// better than that Chrome window happening to be visible, which is a
+	// suite that reports on the desktop as much as on the site.
+	s.send(sessionID, "Page.setWebLifecycleState",
+		map[string]any{"state": "active"})
 	if _, err := s.send(sessionID, "Page.navigate", map[string]any{"url": target}); err != nil {
 		if !reused {
 			s.closeTab(targetID)
@@ -587,6 +608,10 @@ func (s *cdpSession) show(pageURL, find string, viewSource bool, focus bool,
 	}
 	// The ONLY deliberate focus change, and only once the page is ready.
 	// -focus=false is for driving this while working on something else.
+	//
+	// This is now purely about what the human looks at. Making the page
+	// RENDER is done above, unconditionally, because the two were one call
+	// and a quiet drive silently got neither.
 	if focus {
 		s.send(sessionID, "Page.bringToFront", nil)
 	}

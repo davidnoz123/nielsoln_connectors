@@ -25,8 +25,20 @@ func TestWantsFocus(t *testing.T) {
 		want   bool
 	}{
 		{"a human right-clicking is shown the page", true, "excel-vba", "", true},
-		{"a browser click is shown the page", true, "", "", true},
 		{"a test run leaves the desktop alone", true, "drive-test", "", false},
+
+		// THE RULE INVERTED on 5 Oct, and these three are the reason.
+		// It used to be `!= "drive-test"`, a deny-list with one entry, so
+		// every caller that had not been taught to say that string raised
+		// the window. A batch of 25 drives arrived from one that had not.
+		//
+		// The first case ASSERTED THE OPPOSITE until that day: a browser
+		// click was shown the page. It is a real loss and it is kept
+		// visible here rather than deleted, because a browser and a script
+		// that forgot send exactly the same thing, which is nothing.
+		{"a browser click no longer raises", true, "", "", false},
+		{"a tool that forgot its name is quiet", true, "sweeper", "", false},
+		{"and a typo in the name is quiet, not loud", true, "excel_vba", "", false},
 
 		// The global switch still wins over everything: "leave my desktop
 		// alone while I work" has to be absolute or it is not a switch.
@@ -37,6 +49,10 @@ func TestWantsFocus(t *testing.T) {
 		// so anything can override what it would otherwise get.
 		{"a test may ask for focus", true, "drive-test", "focus=1", true},
 		{"a human may decline it", true, "excel-vba", "focus=0", false},
+		// The way back for anything the allow-list leaves out, including a
+		// browser: one request, said out loud, rather than a default.
+		{"a browser may ask for it", true, "", "focus=1", true},
+		{"so may an unnamed tool", true, "sweeper", "focus=1", true},
 		{"false is spelled as well as numbered", true, "excel-vba", "focus=false", false},
 		{"and case does not matter", true, "excel-vba", "focus=FALSE", false},
 	}

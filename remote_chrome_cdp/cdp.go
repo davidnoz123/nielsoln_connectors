@@ -585,13 +585,38 @@ func (s *cdpSession) show(pageURL, find string, viewSource bool, focus bool,
 	// suite that reports on the desktop as much as on the site.
 	s.send(sessionID, "Page.setWebLifecycleState",
 		map[string]any{"state": "active"})
-	if _, err := s.send(sessionID, "Page.navigate", map[string]any{"url": target}); err != nil {
+	navRes, err := s.send(sessionID, "Page.navigate",
+		map[string]any{"url": target})
+	if err != nil {
 		if !reused {
 			s.closeTab(targetID)
 		}
 		return "", reused, err
 	}
-	s.waitEvent("Page.loadEventFired", 12*time.Second)
+	// WAIT ONLY FOR A LOAD EVENT THAT CAN ARRIVE.
+	//
+	// Navigating a tab to the URL it is already on, when that URL is a
+	// hash route, is a SAME-DOCUMENT navigation: Chrome changes nothing,
+	// fires no load event, and this waited the full twelve seconds every
+	// time. It is why reusing a tab was SLOWER than opening one, which is
+	// backwards and was the clue: tl-e1-01 cost 7.3s on a fresh tab and
+	// 12.2s on a reused one, and 12.2 is this timeout plus the search.
+	//
+	// Page.navigate answers with a loaderId for a real navigation and
+	// omits it for a same-document one, so the reply says which kind
+	// happened. Measured against the live Analytics screen: loaderId came
+	// back empty and no load event arrived in thirteen seconds.
+	//
+	// Nothing is lost by skipping the wait. A same-document navigation
+	// means the DOM is already there, which is exactly when the anchor
+	// search can start immediately.
+	var nav struct {
+		LoaderID string `json:"loaderId"`
+	}
+	sameDoc := json.Unmarshal(navRes, &nav) != nil || nav.LoaderID == ""
+	if !sameDoc {
+		s.waitEvent("Page.loadEventFired", 12*time.Second)
+	}
 
 	if find != "" {
 		quoted, err := json.Marshal(find)

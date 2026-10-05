@@ -107,7 +107,15 @@ type server struct {
 	//
 	// A set rather than one id, because a QUEUED drive is on its way too
 	// and a click on that one is the same repeat.
-	flying map[string]bool
+	//
+	// THE TIME MATTERS, not just the fact. This was a bare set and the
+	// window was therefore "however long the drive takes", which on a slow
+	// row was twelve seconds: a human who saw nothing happen, clicked
+	// again after eleven, and had it silently swallowed as a double-click.
+	// A click two seconds in is one intention expressed twice; a click
+	// eleven seconds in is somebody who thinks it is broken, and the two
+	// must not be treated alike.
+	flying map[string]time.Time
 	flyMu  sync.Mutex
 
 	// The tab we last opened for each PAGE, so a second click re-uses it
@@ -115,7 +123,19 @@ type server struct {
 	// several tasks examine the same page: E11 and E12 are both in the
 	// homepage's head.
 	tabs map[string]string
+	// Those same keys, oldest first, so the cap closes the tab nobody has
+	// looked at for longest rather than an arbitrary one. A slice because
+	// the cap is single digits and finding a key in eight strings is not
+	// worth a second map.
+	tabAge  []string
+	maxTabs int
 }
+
+// coalesceWindow is how long after a click a second click on the same cell
+// is treated as the same click. A double-click is two events a quarter of a
+// second apart; three seconds is generous for that and far short of the
+// patience of somebody waiting for a window to appear.
+const coalesceWindow = 3 * time.Second
 
 func main() {
 	listen := flag.String("listen", defaultListen,
@@ -147,6 +167,11 @@ func main() {
 		"how long to keep looking for an anchor the slate says is NOT "+
 			"there yet. Paid in full on every such row, so it is the "+
 			"largest single cost in a full test")
+	maxTabs := flag.Int("max-tabs", 8,
+		"how many tabs this process keeps open before closing its own "+
+			"oldest. A full test run touches 21 pages and left 41 tabs, "+
+			"95 Chrome processes and 8GB of working set. Tabs the human "+
+			"opened are never counted and never closed; 0 disables the cap")
 	logPath := flag.String("log", "",
 		"also append everything printed here to this file. The console is "+
 			"the only place that says what each click did, which is no use "+
@@ -199,8 +224,9 @@ func main() {
 		record: *record, focus: *focus, listen: *listen,
 		launch: *launch, chromeExe: *chromeExe,
 		chromeProfile: *chromeProfile, tabs: map[string]string{},
-		flying:       map[string]bool{},
+		flying:       map[string]time.Time{},
 		sweepLanes:   *sweepLanes,
+		maxTabs:      *maxTabs,
 		absentBudget: time.Duration(*absentMS) * time.Millisecond}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/show/", s.showHandler)
@@ -447,13 +473,18 @@ func (s *server) driveSync(id string, task Task, clicked string,
 // anything from a handler means waiting for that drive to finish, and a
 // caller that is about to be told "already opening" is precisely the one
 // that must not wait for it.
+// WITHIN coalesceWindow ONLY. The first version refused for as long as the
+// drive ran, which made the window as long as the slowest page: a human
+// clicked tl-e1-01, saw nothing for eleven seconds, clicked again and had it
+// swallowed. Past the window the newer click is allowed through, because at
+// that point it is not a repeat of the first, it is a verdict on it.
 func (s *server) claim(id string) bool {
 	s.flyMu.Lock()
 	defer s.flyMu.Unlock()
-	if s.flying[id] {
+	if at, ok := s.flying[id]; ok && time.Since(at) < coalesceWindow {
 		return false
 	}
-	s.flying[id] = true
+	s.flying[id] = time.Now()
 	return true
 }
 
@@ -469,6 +500,59 @@ func (s *server) release(id string) {
 	s.flyMu.Lock()
 	defer s.flyMu.Unlock()
 	delete(s.flying, id)
+}
+
+// remember records the tab we are using for a page and marks it newest.
+//
+// Called under s.mu, like every other registry touch, so the slice and the
+// map cannot disagree about which keys exist.
+func (s *server) remember(key, targetID string) {
+	s.tabs[key] = targetID
+	for i, k := range s.tabAge {
+		if k == key {
+			s.tabAge = append(s.tabAge[:i], s.tabAge[i+1:]...)
+			break
+		}
+	}
+	s.tabAge = append(s.tabAge, key)
+}
+
+func (s *server) forget(key string) {
+	delete(s.tabs, key)
+	for i, k := range s.tabAge {
+		if k == key {
+			s.tabAge = append(s.tabAge[:i], s.tabAge[i+1:]...)
+			return
+		}
+	}
+}
+
+// trimTabs closes our oldest tabs until the registry is back under the cap.
+//
+// OURS ONLY. The registry holds tabs this process opened, so a tab the human
+// opened is not a candidate however old it is, and that is the whole safety
+// argument: the alternative, closing by age across the browser, would one day
+// close the thing somebody was reading.
+//
+// The tab just used is the newest and therefore always the last to go.
+func (s *server) trimTabs(sess *cdpSession, id string) int {
+	if s.maxTabs <= 0 {
+		return 0
+	}
+	closed := 0
+	for len(s.tabAge) > s.maxTabs {
+		key := s.tabAge[0]
+		if tid := s.tabs[key]; tid != "" {
+			sess.closeTab(tid)
+			closed++
+		}
+		s.forget(key)
+	}
+	if closed > 0 {
+		s.log(id, fmt.Sprintf("closed %d tab(s) over the cap of %d",
+			closed, s.maxTabs))
+	}
+	return closed
 }
 
 // current reports whether this request is still the newest one.
@@ -649,9 +733,29 @@ func (s *server) drive(id string, task Task, clicked string, mine int64,
 		focus, take, strings.ToLower(task.Expect), s.absentBudget,
 		task.LocatorRE)
 	if targetID != "" {
-		s.tabs[key] = targetID
+		s.remember(key, targetID)
+		// LRU, AND THE REASON IT BECAME NECESSARY TODAY.
+		//
+		// Driving 21 rows with four drives each leaves a tab per page and
+		// nothing ever closed one: 41 page tabs, 95 Chrome processes and
+		// 8GB of working set, reported as "sluggish" before anybody
+		// counted it. Reclaiming on restart bounded the leak ACROSS runs
+		// and never within one.
+		//
+		// It got worse this afternoon by my own hand.
+		// Page.setWebLifecycleState active now goes out before every
+		// navigation, so every tab we drive is told it is being looked at
+		// and keeps running. The freezing that made a pile of background
+		// tabs cheap is precisely what that defeats, so the throttling fix
+		// and this cap are two halves of one decision.
+		//
+		// Only tabs in OUR registry are closed, so a tab the human opened
+		// is never a candidate however old it is.
+		if closed := s.trimTabs(sess, id); closed > 0 {
+			how += fmt.Sprintf(", closed %d old tab(s)", closed)
+		}
 	} else {
-		delete(s.tabs, key)
+		s.forget(key)
 	}
 	if reused && how == "own tab" {
 		how = "reused our tab"

@@ -3,7 +3,40 @@ package main
 import (
 	"sync"
 	"testing"
+	"time"
 )
+
+// TestClaimWindow pins the bound on how long a repeat stays a repeat.
+//
+// The first version refused a second click for as long as the drive ran,
+// which made the window as long as the slowest page. tl-e1-01 took twelve
+// seconds, the human saw nothing happen, clicked again after eleven, and the
+// log said "clicked again while it is still opening, ignored". That is the
+// right answer to a double-click and the wrong answer to somebody deciding
+// the thing is broken.
+func TestClaimWindow(t *testing.T) {
+	s := &server{flying: map[string]time.Time{}}
+	const id = "tl-e1-01"
+
+	if !s.claim(id) {
+		t.Fatal("the first click must drive")
+	}
+	if s.claim(id) {
+		t.Fatal("a click inside the window is the same click")
+	}
+	// Eleven seconds later, with the drive still running and the claim never
+	// released. A second drive is the correct outcome: the human has told us
+	// the first one did not land.
+	s.flying[id] = time.Now().Add(-11 * time.Second)
+	if !s.claim(id) {
+		t.Fatal("a click long after the window must drive, not be swallowed")
+	}
+	// And claiming it again restamps the clock, so the new drive gets its own
+	// full window rather than inheriting the exhausted one.
+	if s.claim(id) {
+		t.Fatal("the restamped claim must refuse its own double-click")
+	}
+}
 
 // TestClaim pins what a double-click costs, which was thirteen seconds.
 //
@@ -14,7 +47,7 @@ import (
 // the focus and done lines of both interleaved, which is what prompted the
 // question "what happened here".
 func TestClaim(t *testing.T) {
-	s := &server{flying: map[string]bool{}}
+	s := &server{flying: map[string]time.Time{}}
 	const id = "tl-e10-01:edit"
 
 	if !s.claim(id) {
@@ -57,7 +90,7 @@ func TestClaim(t *testing.T) {
 // goroutine per request, and a map written from two of them at once is a
 // crash rather than a wrong answer. Run with -race to mean it.
 func TestClaimUnderRace(t *testing.T) {
-	s := &server{flying: map[string]bool{}}
+	s := &server{flying: map[string]time.Time{}}
 	var wg sync.WaitGroup
 	won := make(chan bool, 64)
 	for i := 0; i < 64; i++ {

@@ -425,6 +425,51 @@ And `transcripts/` is gitignored, because the first capture was 33MB raw. So
 this is a THIS-MACHINE fallback and not a portable one: a clone elsewhere will
 not have it.
 
+#### How to read the transcript
+
+⚠️ **zlib, not gzip**, and the reason is recorded in slatex: gzip's header
+carries an mtime, so identical bytes would compress to different files.
+
+```python
+import json, zlib
+from pathlib import Path
+
+raw = zlib.decompress(Path("transcripts/000001.jsonl.z").read_bytes())
+lines = raw.decode("utf-8", "replace").splitlines()      # 14,264 of them
+for line in lines:
+    rec = json.loads(line)                               # one Claude Code event
+```
+
+34.5MB decompressed, and **64 lines of the 14,264 mention shimp at all**, which
+is the measured reason a hand-cut copy was not made: almost all of it is
+something else.
+
+The `transcript` table also records `session`, which names the LIVE session
+file in Claude Code's own projects directory, plus `first_uuid` and `last_uuid`
+bounding this chunk. The live file is larger and still growing, so it holds
+everything including what happened after the capture. Both are on one machine.
+
+#### ⚠️ AND RE-AUDIT THE ROWS AGAINST THE CHATGPT SOURCE
+
+Do not assume this slate captured everything. It did not, the first time: an
+audit on 7 Oct found that **ten of the eighteen decisions the source
+conversation froze were in no row**, which is how s19 and s20 came to exist.
+The core protocol had been left in the chat log.
+
+The method, and it is worth repeating rather than trusting:
+
+```python
+import sqlite3
+rows = sqlite3.connect("file:db/slate.db?mode=ro", uri=True)
+blob = " ".join(r[0] or "" for r in rows.execute(
+    "SELECT value FROM cell WHERE col IN ('design','note','item')")).lower()
+# then, for each decision in the source conversation, check it appears
+```
+
+One caution learned doing it: the probe searched for the WORDING of the old
+prose rather than the decision, and reported a rule missing that was present
+under different words. Check a miss by eye before believing it.
+
 ### s19. The URI grammar, and what identity IS
 
 Frozen in the source conversation (s18) and not re-decided here. Recorded

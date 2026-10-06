@@ -1,3 +1,17 @@
 dist/
 *.exe
 locals.txt
+
+# Slate state. The DATABASE IS DERIVED and rebuildable from the patch chain,
+# so it is not committed; `patches/` is the tracked record and must be.
+db/
+*.xlsx
+*.xlsession
+
+# One Claude Code session chunk per turn. Kept on disk and out of the repo:
+# the database keeps the metadata, so a rebuild can still say which chunk it
+# should have and when one is missing.
+transcripts/
+
+# Agent local overrides (machine-specific, must not be committed)
+AGENTS.local.md

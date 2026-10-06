@@ -1,0 +1,5 @@
+# Machine-specific paths. Copy to locals.txt and fill in. Never committed.
+#
+# Where nielsoln_agent_standards is cloned, so update_agents.py can find the
+# generator. Relative paths resolve against this repo's root.
+AGENT_STANDARDS_DIR = ..\nielsoln_agent_standards

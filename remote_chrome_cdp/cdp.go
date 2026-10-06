@@ -864,6 +864,29 @@ func (s *cdpSession) show(pageURL, find string, viewSource bool, focus bool,
 						"say AFTER the change.%s",
 					trim(find, 50), trim(target, 50), atLine)
 			}
+			// WHERE DID WE ACTUALLY LAND? An anchor that is missing because
+			// the page bounced to a login screen is not a missing anchor,
+			// and saying so cost three separate investigations: the message
+			// read "could not find Opening Hours", the tab was sitting on
+			// wp-login.php, and the honest answer was that the WordPress
+			// session had expired mid-run. The logins slate still said DONE,
+			// so even the check that exists for this could not help.
+			//
+			// Asked of the page rather than inferred from the URL we
+			// requested, because the bounce is a redirect and only the page
+			// knows where it ended up.
+			if landed, lerr := s.eval(sessionID,
+				"JSON.stringify(location.href)"); lerr == nil && landed != nil {
+				var href string
+				if json.Unmarshal(landed, &href) == nil &&
+					strings.Contains(href, "wp-login.php") {
+					return targetID, reused, fmt.Errorf(
+						"SIGNED OUT: %s bounced to the WordPress login, so "+
+							"%q could not be looked for. Sign in again in "+
+							"the driven Chrome and re-run",
+						trim(target, 50), trim(find, 40))
+				}
+			}
 			return targetID, reused, fmt.Errorf(
 				"opened %s but could not find %q on it.%s",
 				trim(target, 70), trim(find, 60), atLine)

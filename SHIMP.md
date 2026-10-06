@@ -8,18 +8,26 @@
 | s6 | The cold fallback, which SHIMP/1 does not specify | **DECIDED**, and it is a contribution back to the design | nothing |
 | s7 | install places a permanent binary, never registers `go run` | **DECIDED** 7 Oct 2026 | nothing |
 | s8 | The Office trusted-protocol key, per scheme | **DECIDED** | nothing |
-| s9 | Is the audit two lines or three? | **OPEN**, and it is the only thing blocking a first descriptor | a decision |
-| s10 | Where a long action reports | **OPEN** | a decision |
-| s11 | shimp as a library, not only a URI | **OPEN** | a decision |
+| s9 | The audit is three lines, not two | **DECIDED** 7 Oct 2026, three lines | nothing, and the first descriptor is no longer blocked on this |
+| s10 | A long action reports to a visible console, and the click never waits | **DECIDED** 7 Oct 2026 | nothing |
+| s11 | Two clicks, not a library, because s15's refusal carries the safety | **DECIDED** 7 Oct 2026, and the library is deferred rather than rejected | nothing |
 | s12 | chrome_sessions: liveness built, authority open | PART BUILT | the CDP extraction, s13 |
 | s13 | Extract the CDP client, do not copy it | RAISED | a decision on where a shared package lives |
 | s14 | patchbucket: transport and ordering, never merging | SPECIFIED | nothing, and it is unblocked |
 | s15 | chatgpt_capture needs a SIGNED-IN Chrome, and must refuse without one | SPECIFIED | s12's authority probe |
-| s16 | Excel is a session-protocol problem, not a prohibition | **OPEN** | a decision on whether the Go side speaks the session protocol |
+| s16 | Excel is a session-protocol problem, not a prohibition | PARKED 7 Oct 2026 | a reason to drive Excel through a `shimp://` link |
 | s17 | What is NOT in scope for SHIMP/1 | **DECIDED** | nothing |
 | s18 | Where this design came from | **REFERENCE** | nothing |
-| s19 | The URI grammar, and what identity IS | **DECIDED** in the source (s18), NOT implemented | nothing. These are the spec to build against. |
+| s19 | The URI grammar, and what identity IS | **DECIDED** in the source (s18), NOT implemented | nothing, except that s21 must close before the first descriptor is written |
 | s20 | The keeper, the IPC, and the lifecycle | **DECIDED** in the source (s18), NOT implemented | nothing. These are the spec to build against. |
+| s21 | Two more descriptor fields the source froze, and s19's list is short | **OPEN**, and it blocks the first descriptor exactly as s3 does | a decision on whether `policy` is inside the hashed bytes |
+| s22 | Windows first, and the spec must not learn the word "pipe" | **DECIDED** in the source (s18), NOT implemented | nothing. It is the build order. |
+| s23 | Two audit questions, and only one of them is answerable today | **DECIDED** in the source (s18), NOT implemented | nothing |
+| s24 | Four verdicts, because UNVERIFIED is the one that earns the set | **DECIDED** in the source (s18), NOT implemented | nothing |
+| s25 | The command surface: nobody hand-builds a capability id | **DECIDED** in the source (s18), NOT implemented | nothing |
+| s26 | What a target must carry before it can be a capability | **DECIDED** in the source (s18), NOT implemented, and it has a wrinkle here | nothing |
+| s27 | SHIMP is Shim Protocol, and the name collision is known | **DECIDED** in the source (s18) | nothing |
+| s28 | Adopting a descriptor: hash the bytes, never trust the id | RAISED, with one rule already clear | a decision on WHEN a descriptor is adopted, and by what |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -170,35 +178,111 @@ Reported rather than promised: a second dialog comes from HLINK.dll and this
 key does not suppress it, by Microsoft's own account, so `verify` says the key
 is present and not that clicks are silent.
 
-### s9. Is the audit two lines or three?
+### s9. The audit is three lines, not two
 
-Two choices were made that cannot both hold.
+Settled 7 Oct 2026, from a re-read of all 33 messages of the source rather than the seven s18 names.
+What gets pasted is the handler install command, the canonical descriptor and the URI.
 
-* the URI is `shimp://<capability-id>/<action>`, keeping startup details out of
-the clickable link
-* the audit payload is two lines, the install command and the URI, because a
-reader "can derive the exact target and action from the `shimp:` URI"
+```
+go run github.com/davidnoz123/shimp@<handler-sha> install
+{"version":1,"runner":"go","target":"github.com/davidnoz123/tool@<full-sha>","argv":["-root","."],"base":"capdir","cwd":"workspace"}
+shimp://<capability-id>/<action>
+```
 
-⚠️ **A local sha256 of a local descriptor cannot be resolved by a stranger.**
-Not by a colleague, not by a chat window. So either the URI carries the target
-SHA and is self-describing, or the paste is three lines.
+#### The source left three doors and this row named two
 
-Three looks right: it keeps links short, keeps the descriptor as the
-authoritative object, and stops the audit resting on something only one machine
-can resolve. But it is a change to the headline claim, so it is a decision
-rather than a detail.
+[29] stated the requirement the two-line form fails: "the capability referenced by the URI must itself be independently resolvable and immutable.
+If `8b724...` only means 'look in some mutable local database', ChatGPT cannot audit it from the pasted text alone."
+It then offered two repairs, and this row considered only the first.
 
-### s10. Where a long action reports
+* **put the target in the URI.** Refused.
+s17 already records that `HYPERLINK()` caps `link_location` at 255 characters, and Excel is the first surface this exists for.
+A module path and a 40-hex SHA and an argv and a cwd overrun that between them, and [11] refused the form on quoting grounds as well.
+* **publish descriptors at a deterministic public location.** This is the only thing that would make two lines honestly true, and it is out for SHIMP/1.
+It costs a hosting story, a fetch at audit time against something that is not GitHub-at-a-SHA, and it turns creating a capability into a publishing act.
+Recorded here because it is what would retire the third line later, and nobody should have to re-derive it.
+* **three lines.** The remaining door.
 
-The action model is request/response, which fits a navigation at half a second
-and is wrong for a job that takes minutes.
+#### The reason is stronger than "the third line supplies what is missing"
 
-A click either blocks invisibly or returns having said nothing. Today the
-console shows `[full_update] step 1/3 ...`; a hyperlink has no console.
+⚠️ **The third line makes the second falsifiable.**
+A reader with no access to this machine can recompute `sha256(canonical descriptor)` and check it equals the capability id in the URI.
+Under two lines that id is an assertion nobody can test.
+Under three the payload contains no token only one machine can resolve, which is the property that actually mattered.
+Two against three was never the axis.
 
-Candidates: a `status` action to poll, a log path returned on start, or a
-completion notification. `pdf_view_server/raise_windows.go` already has the
-window-raising primitive for the last.
+#### Why the install line cannot be folded in
+
+⚠️ **The same `shimp://` URI means different things depending on which program currently owns the `shimp:` scheme.**
+That is [9]'s point and the load-bearing reason line 1 exists: it is the interpreter's identity, not provenance decoration.
+
+The source also dropped `handler=` from the descriptor between [11] and [23], deliberately.
+Folding it in would change every capability id whenever the handler was upgraded, which is s3's failure mode at a larger scale.
+So three lines is the design's own shape, the three layers [27] names: interpreter, capability, action.
+
+#### What it costs, stated rather than glossed
+
+[29] proposed a design test: "if those two lines are not sufficient for an independent safety audit, the protocol is carrying too much hidden state."
+Honestly read, SHIMP fails it, because a local content-addressed store is hidden state as far as a stranger is concerned.
+Three lines is the smallest repair that keeps everything else intact, and the headline claim restates to something true and stronger: **an audit needs no access to the clicking machine.**
+
+#### Two riders
+
+* **nobody assembles canonical descriptor bytes by hand**, so `shimp audit-text <uri>` emits the three lines ready to paste.
+[27] gives the reason: it stops a user omitting the handler SHA, which is the one omission that voids an audit without looking like it has. See s25.
+* ⚠️ **an absolute `cwd` would publish this machine's filesystem layout into a chat window** on every paste.
+[25]'s symbolic base is what keeps line 2 safe to paste, so it is not only a portability field. See s21.
+
+#### What three lines does not fix
+
+The target's `go.mod` and `go.sum` still need the auditor to fetch the target repo at that SHA.
+That is acceptable, it is public GitHub, and it is s26 rather than an assumption.
+
+#### What the webpage changes, 7 Oct 2026
+
+Asked on the sheet: the two lines were for a page offered to customers, who install shimp from line 1 and then click line 2 to have something useful happen.
+That is the use case the two-line form was designed for, and it is the strongest argument for three lines on the slate, for a reason that has nothing to do with auditing.
+
+⚠️ **A FRESH MACHINE'S CAPABILITY STORE IS EMPTY.**
+[15] puts descriptors in a local content-addressed store, so `shimp://<capability-id>/<action>` is resolved by looking the id up locally.
+A customer who has just run line 1 holds no descriptor for that id.
+The click finds nothing.
+So on a webpage the two-line form does not merely under-audit the capability, **it cannot run it**.
+
+Which re-casts what line 2 is for.
+It is not a concession to auditors, it is **the distribution unit**: the page carries the descriptor, the machine adopts it, and only then does line 3 resolve to anything.
+The audit property comes along free.
+
+And the cost argument inverts on this surface.
+The 255-character ceiling that ruled out a self-describing URI is `HYPERLINK()`'s, which is Excel's, and a webpage has no equivalent.
+So the one place length was decisive is not the place this is for.
+
+Two consequences, both recorded rather than assumed:
+
+* **s28** is the question this raises: adopting a descriptor must hash the bytes and refuse on mismatch, never trust the id the page supplies.
+* ⚠️ **a browser raises its own "Open shimp?" dialog**, which s8's Office key does nothing about, because that key is Office's.
+Reported rather than promised, exactly as s8 reports HLINK.dll: a customer clicking from a page sees one prompt, and SHIMP cannot suppress it.
+
+### s10. A long action reports to a visible console, and the click never waits
+
+The action model is request/response, which fits a navigation at half a second and is wrong for a job that takes minutes.
+A click either blocks invisibly or returns having said nothing.
+Today the console shows `[full_update] step 1/3 ...`; a hyperlink has no console.
+
+#### Decided 7 Oct 2026: a visible console, and acceptance rather than completion
+
+Asked on the sheet, and the answer is yes on three independent grounds.
+
+* **the house rule already requires it.** `AGENTS.md` forbids hidden windows, for the measured reason that a hidden modal dialog blocks a process with no way for anybody to diagnose the hang.
+s8 is that failure in the wild: an Excel instance held a workbook for two and a half hours behind one modal, and the only symptom was a read-only refusal naming no pid.
+A console is the honest channel, not a debugging aid.
+* **s6 needs it anyway.** When the singleton cannot be reached the clicking process does the work itself, and that process is precisely the one with something to print and nowhere to print it.
+* ⚠️ **the hanging has a mechanism, and this is the half that matters.**
+A click must never be the thing that waits.
+s20 keeps actions request/response so that "delivered" is distinguishable from "started but failed", and the reply returns on **acceptance**, carrying where the work reports, never on completion.
+A minutes-long job whose reply arrives at the end is a hyperlink that hangs, which is the irritation this row exists to remove.
+
+So the three candidates collapse into one answer rather than competing: the console is where it reports, the reply is the log or console handle, and `pdf_view_server/raise_windows.go` is how the finished console gets the user's attention without stealing it mid-job.
 
 ### s11. shimp as a library, not only a URI
 
@@ -209,6 +293,29 @@ the right order, which is fragile.
 So the same logic needs a Go API and not only a scheme registration. Small, and
 it changes what the package exports, so it is worth settling before the
 handler is written.
+
+#### And a consequence of keeper-owned IPC, from the source
+
+[25] chose keeper-owned IPC over target-owned, and recorded a consequence that bears directly on this row: with the keeper owning the endpoint, **a target does not necessarily need a SHIMP library at all**, because the keeper can translate `{"action":"/thread/92817"}` into whatever mechanism is agreed for that one target.
+That opens adapters for programs never written for SHIMP.
+
+So this row is not only "does shimp export a Go API".
+It is two separable questions: whether chatgpt_capture calls shimp's logic directly in-process, and whether a target receives actions through a shimp package or through an adapter the keeper holds.
+Found by the s18 re-audit on 7 Oct, which found [25]'s consequence in no row.
+
+#### Decided 7 Oct 2026: two clicks
+
+Answered on the sheet: the human does two clicks, and the CDP instance click is idempotent.
+That is right, and it dissolves the fragility this row claimed.
+
+⚠️ **Idempotence makes the ORDER safe to get wrong, which is not the same as making OMISSION safe.**
+Clicking the Chrome capability twice, or clicking it again after a sweep, costs nothing and changes nothing.
+Skipping it is the dangerous case, and s15 already has that failure looking exactly like success: no token yields an empty catalog, which reads as "nothing to capture".
+
+So the safety lives where s15 already put it, in a loud refusal when `/api/auth/session` yields no token, rather than in sequencing the clicks.
+Two clicks plus that refusal is as safe as a library and smaller, so **no Go API for now**.
+
+The library is deferred rather than rejected: the moment one capability must ensure another without a human in the loop, the API is back, and s28's adoption rule is the other thing that would want it.
 
 ### s12. chrome_sessions: liveness built, authority open
 
@@ -334,6 +441,12 @@ the Go side read and write the SAME session handle and honour the same rule.
 If the second, the house rule names the way to stop two implementations
 drifting: **one contract suite, two drivers**, the same assertions run against
 the Python implementation and the Go one.
+
+#### Parked, 7 Oct 2026
+
+Parked on the sheet until there is tooling that actually wants to reach Excel through a `shimp://` link.
+Nothing is withdrawn: the constraint above is a property of COM apartments rather than a position anybody took, and s22's Windows-first build order means no capability needs it yet.
+What parking costs is nothing, and what it buys is not porting 20,728 lines on speculation.
 
 ### s17. What is NOT in scope for SHIMP/1
 
@@ -483,11 +596,16 @@ shimp://<capability-id>/<action...>
 #### Identity
 
     identity = sha256(canonical descriptor)
-    descriptor = { version, runner, target, argv, cwd }
+    descriptor = { version, runner, target, argv, base, cwd }
 
 ⚠️ **The action is NOT part of identity.** Two links with different actions
 address the SAME running instance, which is the whole point of separating
 "ensure this is running" from "tell it to do something".
+
+⚠️ **AND THIS FIELD LIST WAS SHORT.**
+`base` is restored above because [25] froze it and a re-audit on 7 Oct found it in no row.
+Whether `policy` joins it is the open part of s21, and that question has to close before the first descriptor is written, for s3's reason.
+
 
 #### The rules that go with it
 
@@ -565,3 +683,173 @@ s6's cold fallback makes the readiness race survivable: if the singleton is not
 there yet, the clicking process does the work itself. So a slow `READY` costs
 latency rather than correctness, which is a weaker requirement than the source
 design assumed.
+
+### s21. Two more descriptor fields the source froze, and s19's list is short
+
+s19 freezes `descriptor = { version, runner, target, argv, cwd }`.
+The source froze two more fields, and the re-audit of 7 Oct found neither in any row.
+
+#### `base`, the symbolic working-directory base
+
+[25] chose it as the first choice over absolute paths: `base=capdir` with `cwd=workspace/project-a`, so one logical capability survives moving between a Windows user directory and a macOS one instead of hashing differently on every machine.
+
+⚠️ **s19 kept the consequence and dropped the field that carries it.**
+It says relative paths resolve against a declared capability base, which is right and has nowhere to declare the base.
+
+s9 then gives `base` a second and independent reason: the descriptor is now pasted into a chat window, so an absolute `cwd` publishes this machine's filesystem layout on every audit.
+
+#### `policy`, which is the genuinely open part
+
+[23] lists the capability contents as `version`, `target`, `argv`, `cwd` and **optional metadata/policy**.
+s17 records what a policy field MEANS, declarative only and never enforced, and never records that it is a field of the descriptor at all.
+
+So the question is narrow.
+Inside the hashed bytes, and two capabilities differing only in a claim about themselves are different capabilities, with different ids and separate singletons.
+Beside them, and the claim is not covered by the id a link carries, so an audit cannot check the claim against the thing that was clicked.
+
+#### Why this is urgent rather than tidy
+
+⚠️ s3's argument applies unchanged and with more weight, because this is two fields rather than one.
+Adding either later changes every descriptor's canonical bytes, which changes every capability hash, which changes every capability id, **which breaks every link ever written.**
+s3 got a whole row for `runner`. These got none, which is how a re-audit came to find them.
+
+### s22. Windows first, and the spec must not learn the word "pipe"
+
+[21] lists platform scope among the ten decisions that had to be frozen before the design could be called ready, [23] froze it, and the re-audit of 7 Oct found it in no row.
+
+**Windows gets the first complete implementation**, with the protocol defined cross-platform from the start.
+[25]'s reason is that URI registration, singleton lifetime, keeper behaviour, process launching, the startup handshake, IPC and crash cleanup are already enough difficult semantics.
+Adding Launch Services and Unix sockets at the same time makes it hard to tell whether a problem is in the protocol or in one platform's implementation of it.
+
+⚠️ **And the rule that makes Windows-first safe rather than a trap: do not let Windows leak into the spec.**
+The spec says *local IPC endpoint*.
+The Windows implementation happens to use a named pipe.
+s20's IPC table names both transports, which is right for an implementation note and wrong in a protocol sentence.
+
+This repo already has the shape for it, and `AGENTS.project.md` makes the catch-all file non-optional: `owner_windows.go` against `owner_other.go` defining the same symbols, where the non-Windows file says what it cannot do rather than returning a value that reads as an answer.
+The second choice recorded in [25] was Windows and macOS together, which pressure-tests the abstraction earlier and is only worth it if cross-platform deployment is immediately needed.
+
+### s23. Two audit questions, and only one of them is answerable today
+
+[27] froze two distinct audit modes, and the re-audit of 7 Oct found the second in no row.
+
+| question | the evidence it needs |
+|---|---|
+| can I safely install this and click this link | the install command's SHA, which is s9's line 1 |
+| is what is already installed on this machine the thing I think it is | the installed binary's own account of itself |
+
+The second needs a command, and [27] specified it:
+
+```
+shimp version --audit
+    SHIMP/1
+    repo=github.com/davidnoz123/shimp
+    commit=<full sha>
+    binary_sha256=<hash of the running binary>
+```
+
+⚠️ **Which means install has to record its own provenance while it still knows it.**
+s7 has the binary copied from `os.Executable()`, which under `go run` is the toolchain's temporary build output.
+The SHA that produced it is known to the installing process and to nothing afterwards unless that process writes it down.
+A handler that cannot say which commit built it turns the first question's answer into a claim about a machine that nobody can check, which is s9's defect one level down.
+
+`verify` is the natural home for the report, since s8 already gives it the job of saying what is true rather than what was intended.
+
+### s24. Four verdicts, because UNVERIFIED is the one that earns the set
+
+[27] froze the vocabulary an audit answers in, and the re-audit of 7 Oct found it in no row.
+
+| verdict | means |
+|---|---|
+| SAFE | no material capability beyond the declared contract was found |
+| CONDITIONAL | safe only under stated assumptions or permissions |
+| UNSAFE | a concrete dangerous capability or violation was found |
+| UNVERIFIED | important source, dependency, binary or runtime behaviour could not be established |
+
+⚠️ **UNVERIFIED is what makes the other three honest.**
+Three verdicts force a reader who could not fetch the target, or could not resolve a dependency, to choose between a reassurance and an accusation.
+That is the failure this repo names everywhere else.
+`AGENTS.project.md` puts it as "say what a tool cannot tell you", and s12 is the worked example: liveness was reported, authority was not, and the dangerous version would have been a single word covering both.
+
+[27] also specified what the report lists beneath the verdict: what exact code will execute, what resources it can reach, what persists afterwards, what network access exists and any unverified assumptions.
+
+### s25. The command surface: nobody hand-builds a capability id
+
+[15] added three scope items it called easy to miss, and the re-audit of 7 Oct found two of them in no row.
+
+* **`shimp cap create ...`** produces the canonical descriptor and its hash.
+⚠️ A human assembling canonical bytes by hand gets a different hash for the same capability, and the symptom is a link that resolves to nothing rather than an error naming the cause.
+s5 already assumes this command exists: the full-SHA pedantry "appears once, when a capability is created", and that moment is this command.
+* **`shimp inspect <id>`** prints the exact target, SHA, argv, cwd and current running state.
+This is what makes a local content-addressed store auditable by its owner, and s9 leaves it load-bearing: what a stranger cannot resolve, the machine's owner must be able to.
+* **`shimp audit-text <uri>`** emits s9's three lines ready to paste.
+[27]'s reason is that it stops a user omitting the handler SHA, which is the one omission that voids an audit without looking like it has.
+
+With s8's `verify` and s23's `version --audit`, that is the whole surface besides `install`, `uninstall` and the handler's own URI dispatch.
+
+### s26. What a target must carry before it can be a capability
+
+[15] froze a requirement on any target: a full SHA **plus committed `go.mod` and `go.sum`**, with the Go toolchain version pinned for high assurance, and an optional later `deps-digest` field hashing the resolved module graph.
+s2 records `go.sum` as a property the Go runner gives us.
+The re-audit of 7 Oct found nothing recording it as something a target must satisfy, which is the different and checkable claim.
+
+⚠️ **And here it has a wrinkle worth stating rather than discovering.**
+`AGENTS.project.md` makes zero third-party dependencies a property of every connector in this repo, so a connector's `go.sum` is empty or absent.
+A check written as "the target has a committed `go.sum`" therefore fails every target this repo will ever offer, for the best possible reason.
+So the check is on the pair: a `go.mod` with an empty `require` block and no `go.sum` is **stronger** evidence than a `go.sum` full of hashes, and an audit that cannot tell those two apart is reporting the wrong thing.
+
+#### `deps-digest` cannot be added later, so it is never a field
+
+⚠️ By s3 and s21's argument there are only two honest positions for a descriptor field: it is in the FIRST descriptor, or it is never in a descriptor at all.
+"Optional, added later" is not available, because adding it changes every capability id.
+[15] put `deps-digest` out of v1, so the second position follows: dependency provenance belongs in s24's audit report rather than in the hashed bytes.
+
+### s27. SHIMP is Shim Protocol, and the name collision is known
+
+[19] settled the name, and the re-audit of 7 Oct found it in no row, which left the expansion and the terminology as folklore.
+
+**SHIMP = Shim Protocol.**
+A shim is a small interposition layer between two systems, and this is one: between an OS URI scheme and a content-pinned process invocation.
+The expansion describes the abstraction rather than the Go implementation, so it survives s2 relaxing.
+
+The terminology that comes with it, worth using consistently:
+
+| term | means |
+|---|---|
+| shimp handler | the OS URI shim, and the trust root |
+| shimp capability | an immutable process definition |
+| shimp action | a message delivered to that process |
+| SHIMP/1 | the protocol version |
+
+#### The collision was searched for, not assumed away
+
+⚠️ **SHIMP is an established term in vestibular medicine**, the Suppression Head Impulse Paradigm, in use since about 2016.
+So searching "shimp protocol" today returns the medical meaning, and that ambiguity is a known cost rather than a surprise waiting inside a README.
+The domains are far enough apart that [19] recommended keeping the name, and ranked `Latch` as the alternative if the name ever has to carry its meaning to strangers.
+
+### s28. Adopting a descriptor: hash the bytes, never trust the id
+
+Raised 7 Oct 2026, out of s9.
+Once a webpage is the way a capability reaches a customer, something on that machine has to take the descriptor from the page and put it in the local store, and nothing in the source conversation covers that step.
+
+#### The rule that is already clear
+
+⚠️ **Adopt by hashing, never by being told the hash.**
+The id a page prints beside a descriptor is the page's claim.
+The store's key must be `sha256(canonical descriptor)` computed locally from the bytes, and a mismatch against the id in the URI is a refusal rather than a warning.
+Otherwise a page can map an id a reader audited onto bytes that reader never saw, which breaks the single property this design has.
+
+#### The open part
+
+**When does adoption happen, and does it need consent?**
+
+Silent adoption is defensible, and the reason is worth stating because it looks alarming: a descriptor in the store is inert.
+It names a process; it does not run one.
+Nothing executes until a link is clicked, and the clicked link is the consent.
+s20 refuses to replace the HANDLER silently because the handler is the trust root; a capability is not, as long as its id is verified against its bytes.
+
+Against that, an explicit step gives the customer something to read before anything is written, and the three-action flow is not obviously worse than two.
+The decision needs one of: install takes descriptors as arguments, a `shimp cap add` the page links to, or the handler adopting on first click of an unknown id with the descriptor alongside.
+The third is the smallest and is the one that needs the hash rule hardest.
+
+Related: s25's `cap create` is the author's side of the same object, and this is the consumer's.

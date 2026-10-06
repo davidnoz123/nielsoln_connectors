@@ -18,6 +18,8 @@
 | s16 | Excel is a session-protocol problem, not a prohibition | **OPEN** | a decision on whether the Go side speaks the session protocol |
 | s17 | What is NOT in scope for SHIMP/1 | **DECIDED** | nothing |
 | s18 | Where this design came from | **REFERENCE** | nothing |
+| s19 | The URI grammar, and what identity IS | **DECIDED** in the source (s18), NOT implemented | nothing. These are the spec to build against. |
+| s20 | The keeper, the IPC, and the lifecycle | **DECIDED** in the source (s18), NOT implemented | nothing. These are the spec to build against. |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -401,3 +403,120 @@ that became moot.
 The reasoning in this slate is the record. There is no second document, and
 `SHIMP.md` is a render of these rows rather than a source. A decision changed
 in the file is lost at the next turn.
+
+#### The transcript, which already exists
+
+The session that produced all of this was captured automatically at the first
+turn boundary:
+
+    transcripts/000001.jsonl.z    9,267,237 bytes, 14,264 lines, turn 1
+
+with `first_uuid`, `last_uuid`, the line count and the capture time in the
+`transcript` table. So there is no need for a hand-cut copy, and one was
+deliberately not made.
+
+⚠️ **Read it as history, never as the current position.** It contains two
+arguments of mine that were later withdrawn, in their original confident form:
+an attach-only Excel reader, corrected in s16, and a security objection to
+co-locating shimp with its targets, corrected in s1. Flat text marks neither as
+superseded. The rows do, which is why the rows are the record.
+
+And `transcripts/` is gitignored, because the first capture was 33MB raw. So
+this is a THIS-MACHINE fallback and not a portable one: a clone elsewhere will
+not have it.
+
+### s19. The URI grammar, and what identity IS
+
+Frozen in the source conversation (s18) and not re-decided here. Recorded
+because an audit found it in no row, which meant the core protocol lived only
+in a 61,518 character chat log.
+
+```
+shimp://<capability-id>/<action...>
+```
+
+#### Identity
+
+    identity = sha256(canonical descriptor)
+    descriptor = { version, runner, target, argv, cwd }
+
+⚠️ **The action is NOT part of identity.** Two links with different actions
+address the SAME running instance, which is the whole point of separating
+"ensure this is running" from "tell it to do something".
+
+#### The rules that go with it
+
+* **the descriptor is the authoritative object**, and the URI is the
+convenient clickable representation of it. Descriptors are stored
+content-addressed locally, and the hash of the canonical bytes is the id.
+* **canonical JSON**, with `version` inside it, and an unknown version
+**fails closed** rather than being interpreted hopefully.
+* **a full immutable commit SHA, never a branch or a tag.** A branch makes the
+same link mean different code on different days, which destroys the only
+property this design has. Abbreviations are accepted on input and expanded
+before storage, which is s5.
+* ⚠️ **`cwd` must resolve deterministically BEFORE the descriptor is hashed.**
+A caller-dependent `.` would make two identical-looking links mean different
+things depending on which application was clicked in. Relative paths resolve
+against a declared capability base, never against the browser's or Excel's
+current directory.
+* ⚠️ **NEVER ENCODE A SHELL COMMAND, and never invoke one.** argv is
+constructed directly and passed as separate arguments. A URI that becomes
+`sh -c` or `cmd /c` is an arbitrary code transport with a scheme in front of
+it, and the quoting problems alone would be reason enough without the security
+ones.
+
+### s20. The keeper, the IPC, and the lifecycle
+
+Frozen in the source conversation (s18), recorded here because an audit found
+none of it in a row.
+
+#### One keeper per capability identity
+
+The keeper owns the instance lock, starts the target, exposes the IPC
+endpoint, waits for the target, and exits. So the lock's lifetime IS the
+instance's lifetime, which avoids the pid-reuse problem rather than papering
+over it: a short-lived launcher cannot hold a lock for a process that outlives
+it.
+
+#### IPC
+
+| | |
+|---|---|
+| transport | named pipe on Windows, Unix domain socket elsewhere |
+| framing | length-prefixed UTF-8 JSON |
+| request | `{"v":1,"action":"/thread/92817"}` |
+| reply | `{"ok":true}` or `{"ok":false,"error":"..."}` |
+
+Deliberately boring: no RPC framework, no reflection. Local only, so no port
+to manage, which is also why s4's declared-ports rule is about the TARGET's
+ports rather than shimp's own.
+
+#### Lifecycle
+
+* **the handshake.** The keeper creates the endpoint first, launches the target
+with the endpoint in its environment, and waits for a `READY` message before
+forwarding any action. A fixed startup timeout, with a clear failure when
+readiness never arrives, rather than waiting for ever.
+* **actions are request/response**, even where the caller ignores the reply,
+because that is what distinguishes "started, but the action failed" from
+"delivered".
+* ⚠️ **concurrent clicks serialise around the identity, and re-check after
+taking the lock.** Without the second check two simultaneous clicks both
+observe "not running" and start two copies, which is the one thing a singleton
+exists to prevent.
+* **stale state is disposable and self-healing.** A stale pipe, socket or lock
+is detected and recreated rather than requiring a human to clean up after a
+crash.
+* **the handler is never silently replaced.** Installing a different shimp SHA
+refuses unless asked explicitly, because the handler is the trust root.
+* **uninstall removes only what shimp installed**: its registration, its
+binary, its runtime state. It does not kill unrelated target processes unless
+told to.
+
+#### And one of ours that changes the handshake's weight
+
+s6's cold fallback makes the readiness race survivable: if the singleton is not
+there yet, the clicking process does the work itself. So a slow `READY` costs
+latency rather than correctness, which is a weaker requirement than the source
+design assumed.

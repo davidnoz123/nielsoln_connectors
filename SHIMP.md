@@ -17,6 +17,7 @@
 | s15 | chatgpt_capture needs a SIGNED-IN Chrome, and must refuse without one | SPECIFIED | s12's authority probe |
 | s16 | Excel is a session-protocol problem, not a prohibition | **OPEN** | a decision on whether the Go side speaks the session protocol |
 | s17 | What is NOT in scope for SHIMP/1 | **DECIDED** | nothing |
+| s18 | Where this design came from | **REFERENCE** | nothing |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -349,3 +350,54 @@ which is a much larger project.
 Also noted rather than scoped: `HYPERLINK()` caps `link_location` at 255
 characters while the Hyperlink object does not, which is an argument for the
 capability-id form over inlining target and args.
+
+### s18. Where this design came from
+
+⚠️ **The whole of SHIMP was designed in a ChatGPT session, and nothing in this
+repo recorded which one** until this row. That is the provenance problem the
+other slates exist to prevent, repeated here on day one.
+
+#### The source
+
+| | |
+|---|---|
+| title | Custom URL Scheme |
+| id | `6ac4ee15-845c-83ec-8352-47f52b596f32` |
+| when | 7 Oct 2026, 33 messages, 61,518 characters |
+| model | gpt-5-6-thinking |
+| where | `chatgpt_tools/chatgpt_1davidnoz_at_googlemail_dot_com.db` |
+
+Read it whole, which is the only way worth reading it:
+
+```python
+import sqlite3
+c = sqlite3.connect("file:<db>?mode=ro", uri=True)
+rows = c.execute("SELECT role, content FROM messages "
+                 "WHERE conversation_id=? ORDER BY turn_index, id",
+                 ("6ac4ee15-845c-83ec-8352-47f52b596f32",))
+```
+
+The messages worth going back to: [5] the launcher model and why the URI must
+not encode a shell command, [11] the capability descriptor, [13] its own
+assessment of scope at "75% architectural, 45 to 50% protocol", [15] ideas for
+each open point, [23] the decisions-to-freeze table, [25] where it leans on the
+four real choices, and [32] the precedents search, which found close analogues
+for every individual piece and none for the combination.
+
+#### The accidental first implementation
+
+`slate_tools/slate_open.py`, built 5 Oct before this idea had a name, is a
+single-purpose SHIMP: scheme registration, a singleton keyed by identity, a
+nonce-authenticated local socket, the URI remainder as an action, and
+request/response replies. Worth reading before writing the handler, because
+every measurement in s6 and s7 came out of it and so did five defects.
+
+The rows that retired it: slate_tools `r178` records the supersession and what
+is carried over, `r147` the daemon itself, and `r148` the cross-platform work
+that became moot.
+
+#### What is NOT written down anywhere else
+
+The reasoning in this slate is the record. There is no second document, and
+`SHIMP.md` is a render of these rows rather than a source. A decision changed
+in the file is lost at the next turn.

@@ -173,3 +173,68 @@ as everywhere else.
 absorbed into the next `begin_turn`'s snapshot, reads as standing still, and is
 reverted by the sheet. Measured in slate_tools on 5 Oct: six cells lost,
 including a 2,584 character design append.
+
+### How to open it
+
+`slatex` is not installed; it is imported from the sibling checkout. Derive
+both paths from this file rather than writing either down, per the rule against
+absolute paths.
+
+```python
+import sys
+from pathlib import Path
+
+here = Path(__file__).resolve().parent          # this repo
+sys.path.insert(0, str(here.parent / "slate_tools"))
+from slatex import Slatex
+
+with Slatex(root=here) as s:
+    turn = s.begin_turn("shimp", prompt="(what this turn is for)")
+    s.set_cell("s9", "state", "**DECIDED** ...", who="claude")
+    s.publish("shimp")                          # BEFORE the boundary
+    s.end_turn(turn, note="what changed and why")
+```
+
+The order matters and is not a style preference: **write, publish, verify, then
+close.** The publish is what makes a write survive the boundary.
+
+### How to READ it without touching Excel
+
+Most questions are reads, and a read through `Slatex` opens the workbook and
+starts an Excel. The database answers directly, read-only, and cannot disturb
+anything:
+
+```python
+import sqlite3
+c = sqlite3.connect("file:db/slate.db?mode=ro", uri=True)
+c.row_factory = sqlite3.Row
+for r in c.execute("SELECT item_id, value FROM cell WHERE col='state'"):
+    print(r["item_id"], r["value"])
+```
+
+`SHIMP.md` is a render of the same rows, so reading that file is the cheapest
+route of all when the question is "what was decided".
+
+⚠️ **Never hand-edit `SHIMP.md`.** It is regenerated from the slate by
+`apply_policy`, and an edit to it is lost at the next turn without a word.
+
+---
+
+## Check what this repo owes, at the start of every session
+
+Other repos ask things of this one through `inter_repo_minutes`, and an
+obligation nobody reads is an obligation nobody meets.
+
+```powershell
+$irm = "..\inter_repo_minutes\inter_repo_minutes.py"
+& "<venv>\Scripts\python.exe" $irm --pending --oneline
+& "<venv>\Scripts\python.exe" $irm --thread <message-id>
+```
+
+⚠️ **`--thread` truncates at 120 characters**, measured 6 Oct 2026 across three
+messages of 3,860, 2,482 and 2,259 characters. The record itself is intact, so
+the full text is in `inter_repo_minutes/db/irm.db`, table `message`, column
+`text`. That is a defect in their tool and not a reason to skip the check.
+
+Discharging an obligation is `--mark <id> actioned`, and only the recipient may
+set it. A reply does not discharge anything.

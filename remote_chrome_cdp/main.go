@@ -129,6 +129,22 @@ type server struct {
 	// worth a second map.
 	tabAge  []string
 	maxTabs int
+	// Where the two above are kept between runs. Empty disables it, and the
+	// behaviour is then exactly what it was: a registry that starts empty.
+	tabCache string
+}
+
+// rememberedTab is one row of the tab cache.
+//
+// CHROME'S OWN targetId IS THE KEY, and it is the resilient id this needed.
+// Verified 7 Oct across a server restart: 90E7DA04FE838C2ED65453B17A600750
+// before and after, because the id belongs to Chrome rather than to us. It
+// does not survive a CHROME restart, which is why reconcile drops anything
+// Chrome no longer lists rather than trusting the file.
+type rememberedTab struct {
+	TargetID string `json:"target_id"`
+	PageKey  string `json:"page_key"`
+	LastUsed string `json:"last_used"`
 }
 
 // coalesceWindow is how long after a click a second click on the same cell
@@ -172,6 +188,12 @@ func main() {
 			"oldest. A full test run touches 21 pages and left 41 tabs, "+
 			"95 Chrome processes and 8GB of working set. Tabs the human "+
 			"opened are never counted and never closed; 0 disables the cap")
+	tabCache := flag.String("tab-cache", "",
+		"a file to remember which tabs this process opened, so the cap can "+
+			"close them after a restart. Without it every restart abandons "+
+			"up to -max-tabs tabs that nothing will ever evict: 30 were "+
+			"open against a cap of 8 before this existed. Only tabs named "+
+			"in the file are ever closed")
 	windowCache := flag.String("window-cache", "",
 		"a file to remember the Chrome window handle in, so the first "+
 			"right-click after a restart raises the window as fast as the "+
@@ -232,10 +254,12 @@ func main() {
 		flying:       map[string]time.Time{},
 		sweepLanes:   *sweepLanes,
 		maxTabs:      *maxTabs,
+		tabCache:     *tabCache,
 		absentBudget: time.Duration(*absentMS) * time.Millisecond}
 	// Before the first request, so the log says whether the window is
 	// already known or has to be learned.
 	log.Printf("  focus: %s", LoadWindowHandle(*windowCache))
+	log.Printf("  tabs:  %s", s.loadTabs())
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/show/", s.showHandler)
@@ -541,6 +565,107 @@ func (s *server) release(id string) {
 	delete(s.flying, id)
 }
 
+// liveTargets asks Chrome which page targets exist, over plain HTTP.
+//
+// /json/list rather than Target.getTargets, because this runs at startup
+// before any drive and a websocket is not worth opening to answer one
+// question. The empty set means "could not ask", and the caller then keeps
+// the file as it stands rather than deleting a registry because Chrome was
+// slow to start.
+func liveTargets(port int) map[string]bool {
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/json/list", port))
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+	var list []struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(body, &list) != nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, t := range list {
+		if t.Type == "page" {
+			out[t.ID] = true
+		}
+	}
+	return out
+}
+
+// loadTabs restores the registry, keeping only tabs Chrome still has.
+//
+// ADOPTS NOTHING IT DID NOT OPEN. A tab Chrome lists that this file does not
+// mention stays untouched for ever: the whole safety argument for closing
+// tabs at all is that we only close our own, and an adopt-everything
+// reconcile would eventually close the thing somebody was reading.
+func (s *server) loadTabs() string {
+	if s.tabCache == "" {
+		return "not remembered between runs"
+	}
+	raw, err := os.ReadFile(s.tabCache)
+	if err != nil {
+		return "no tabs remembered yet"
+	}
+	var rows []rememberedTab
+	if json.Unmarshal(raw, &rows) != nil {
+		return "the remembered tabs are unreadable"
+	}
+	live := liveTargets(s.cdpPort)
+	kept, gone := 0, 0
+	for _, r := range rows {
+		if live != nil && !live[r.TargetID] {
+			gone++
+			continue
+		}
+		s.tabs[r.PageKey] = r.TargetID
+		s.tabAge = append(s.tabAge, r.PageKey)
+		kept++
+	}
+	if live == nil {
+		return fmt.Sprintf("%d tab(s) remembered, Chrome not answering so "+
+			"none verified", kept)
+	}
+	return fmt.Sprintf("%d tab(s) remembered, %d had been closed", kept, gone)
+}
+
+// saveTabs writes the registry. Called under s.mu, like every other touch.
+//
+// Temp-and-rename, because a half-written file is worse than no file: it
+// would be unreadable on the next start and the whole registry would be
+// dropped, which is the fault this exists to prevent.
+func (s *server) saveTabs() {
+	if s.tabCache == "" {
+		return
+	}
+	rows := make([]rememberedTab, 0, len(s.tabAge))
+	now := time.Now().Format(time.RFC3339)
+	for _, key := range s.tabAge {
+		if tid := s.tabs[key]; tid != "" {
+			rows = append(rows, rememberedTab{TargetID: tid, PageKey: key,
+				LastUsed: now})
+		}
+	}
+	// Oldest first, which is tabAge's own order and what the LRU reads back.
+	blob, err := json.MarshalIndent(rows, "", "  ")
+	if err != nil {
+		return
+	}
+	tmp := s.tabCache + ".tmp"
+	if err := os.WriteFile(tmp, blob, 0o644); err != nil {
+		log.Printf("  could not write the tab cache: %v", err)
+		return
+	}
+	if err := os.Rename(tmp, s.tabCache); err != nil {
+		log.Printf("  could not replace the tab cache: %v", err)
+	}
+}
+
 // remember records the tab we are using for a page and marks it newest.
 //
 // Called under s.mu, like every other registry touch, so the slice and the
@@ -554,6 +679,7 @@ func (s *server) remember(key, targetID string) {
 		}
 	}
 	s.tabAge = append(s.tabAge, key)
+	s.saveTabs()
 }
 
 func (s *server) forget(key string) {
@@ -561,9 +687,10 @@ func (s *server) forget(key string) {
 	for i, k := range s.tabAge {
 		if k == key {
 			s.tabAge = append(s.tabAge[:i], s.tabAge[i+1:]...)
-			return
+			break
 		}
 	}
+	s.saveTabs()
 }
 
 // trimTabs closes our oldest tabs until the registry is back under the cap.

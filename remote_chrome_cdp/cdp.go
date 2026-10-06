@@ -605,12 +605,33 @@ const clickJS = `(function (needle) {
   for (var i = 0; i < docs.length; i++) {
     var m = docs[i].querySelector("mark");
     if (!m) continue;
+    // A REAL CONTROL FIRST, then an editor's widget wrapper.
+    //
+    // ⚠️ THE FALLBACK WAS CLICKING A DIV. The list above is Elementor's and
+    // WordPress's, and on any other site nothing in it matches, so this fell
+    // through to the mark's own parentElement. On a Google Business Profile
+    // panel that is a <div> inside the Edit profile <button>, and clicking
+    // it opened a FEEDBACK dialog on a live business listing rather than the
+    // editor. The right target was one level further up and had been sitting
+    // there all along.
+    //
+    // Clicking the mark's parent is never what anybody means. A button, a
+    // link or anything carrying role=button is what a human would have
+    // pressed, so that is looked for first and the widget wrappers are the
+    // second answer rather than the only one.
+    var clickable = "button,a[href],[role=button],summary,label";
     var target = null, p = m;
     for (var lvl = 0; lvl < 6 && p; lvl++) {
-      if (p.matches && p.matches(editable)) { target = p; break; }
+      if (p.matches && p.matches(clickable)) { target = p; break; }
       p = p.parentElement;
     }
-    if (!target) target = m.parentElement;
+    if (!target) {
+      p = m;
+      for (var lv2 = 0; lv2 < 6 && p; lv2++) {
+        if (p.matches && p.matches(editable)) { target = p; break; }
+        p = p.parentElement;
+      }
+    }
     if (!target) continue;
     target.click();
     // THE FIELD THE CLICK OPENED, outlined so the end of the drive is

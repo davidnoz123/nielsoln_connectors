@@ -88,16 +88,47 @@ it is an argument for the capability-id form over inlining target and args.
 
 ## Open, and these block code
 
-**Can a capability target a pinned Python?**
-This is the central question and the others are consequences of it.
-Two of the three connectors wanted are Python today and large: the slate Excel
-daemon, which holds a COM apartment through pywin32, and `chatgpt_session.py`,
-which is 8,200 lines.
-If SHIMP runs only `go run <module>@<sha>` then most existing tooling cannot be
-a target and every connector is a rewrite.
-If a capability can pin a Python tree by git SHA, fetch it to a
-content-addressed cache and run it with a declared interpreter, the direction
-works immediately and the audit chain still holds.
+**DECIDED 7 Oct 2026: Go only, and not for a month or more.**
+Go does not use Python.
+Python uses Go, which is the direction `chrome_sessions` already serves with
+its `-json` output.
+Stated as likely to relax eventually and definitely not within a month, so it
+is a constraint to design around rather than a position to argue with.
+
+What it buys: the audit story becomes achievable.
+`go run module@sha` pins the resolved module graph through `go.sum` and the
+checksum database, where a Python tree at a SHA pins the source and nothing
+else, not the interpreter, not pywin32, not one package.
+
+⚠️ **AND THE DESCRIPTOR MUST CARRY `runner` FROM THE FIRST ONE WRITTEN.**
+The temptation is to leave "Go module" implicit while Go is the only option.
+Adding the field later changes every descriptor's canonical bytes, which
+changes every capability hash, which changes every capability id, **which
+breaks every link ever written**.
+So: `"runner": "go"`, one legal value today, unknown values fail closed, which
+is the rule already chosen for `version`.
+One line now against a flag day in a month.
+
+What it costs, and there is no clean middle: **a COM reference cannot cross a
+process boundary**, so whichever process owns the apartment does ALL the Excel
+work.
+Either Excel moves to Go wholesale, which is publish, pull, formats, character
+runs and the session silos across `slatex` at 15,541 lines and `excel_tools`
+at 5,187, or the Excel daemon is not a capability.
+
+The attach-only reader is the third way, and it is deliberately NOT being
+built yet.
+A Go client that activates a sheet and selects a cell, and REFUSES rather than
+opening when the workbook is not already up, cannot create the rival-instance
+condition that gave this workspace a read-only workbook twice in one evening:
+that condition is created by OPENING, and this would never open.
+Roughly 200 lines of IDispatch rather than a port of two large modules.
+
+Not built yet because `slate_open.py` works today and is in use, and if the
+rule relaxes in a month the right answer becomes a Python capability and those
+200 lines are thrown away.
+So the month goes on work that cannot become throwaway: the CDP extraction,
+the authority probe, and patchbucket.
 
 **Is the audit two lines or three?**
 The chat chose `shimp://<capability-id>/<action>`, keeping startup details out

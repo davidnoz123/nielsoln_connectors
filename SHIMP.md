@@ -33,6 +33,7 @@
 | s31 | Two link forms, one identity: the short id and the self-describing link | RAISED 7 Oct 2026, and it would dissolve most of s28 | a decision on whether a second link form is legal |
 | s32 | A link carries a SHORT capability id, because s5's threat model does not transfer | RAISED 7 Oct 2026, and it looks decidable immediately | a decision on how many hex characters |
 | s33 | The launch rule: what `runner: "go"` actually constructs | **DECIDED** in the source (s18), NOT implemented, and it was in no row | nothing |
+| s34 | The descriptor is BYTES, not an object, so nothing is ever canonicalised | RAISED 7 Oct 2026, and it is the strongest recommendation on this slate | a decision, and it changes what s3 and s19 mean |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -92,6 +93,15 @@ closed, which is the rule already chosen for `version`.
 
 This is the cheapest decision on the list and the most expensive to defer,
 because s2 is stated as likely to relax.
+
+#### ⚠️ The mechanism above is contingent, and s34 is why
+
+Added 7 Oct 2026.
+"Breaks every link ever written" holds where ids are RE-DERIVED from a parsed object and a schema.
+Under s34's proposal, where the descriptor's identity is the sha256 of its bytes as written, an old descriptor's bytes do not change when a later version gains a field, so its id does not change and its links keep working.
+
+The conclusion here is unaffected: put `runner` in the first descriptor, because an explicit field beats an implied one and it costs one line.
+But the reason is then tidiness rather than a flag day, and what actually protects an old descriptor is `version` being inside it, which is what `version` is for.
 
 ### s4. Declared ports, never allocated
 
@@ -677,6 +687,7 @@ convenient clickable representation of it. Descriptors are stored
 content-addressed locally, and the hash of the canonical bytes is the id.
 * **canonical JSON**, with `version` inside it, and an unknown version
 **fails closed** rather than being interpreted hopefully.
+⚠️ **And "canonical" is not specified anywhere, which s34 argues is unfixable cheaply and unnecessary**: hash the descriptor's bytes as written and never re-serialise them, so there is no canonical form to agree on.
 * **a full immutable commit SHA, never a branch or a tag.** A branch makes the
 same link mean different code on different days, which destroys the only
 property this design has. Abbreviations are accepted on input and expanded
@@ -1328,3 +1339,61 @@ s7 is the same fact biting the installer, where the binary is copied from `os.Ex
 * no `go get`, no `go install`, no building into a cache the descriptor does not name
 * no argv the descriptor did not contain, except that the environment carries the endpoint
 * an unknown `runner` value **fails closed**, exactly as an unknown `version` does, which is s3's reason for the field existing at all
+
+### s34. The descriptor is BYTES, not an object, so nothing is ever canonicalised
+
+Raised 7 Oct 2026, from the question of whether the JSON with `runner: "go"` needs reconsidering.
+It does, in two ways, and the second is larger than the first.
+
+#### ⚠️ "Canonical JSON" is an unimplemented decision hiding a hard problem
+
+s19 says canonical JSON and [25] chose JSON over line-based text for good reasons: arrays, escaping and Unicode are already solved in it.
+Neither says what canonical MEANS, and it is not one thing:
+
+| the choice | the trap |
+|---|---|
+| key order | lexicographic by what? RFC 8785 says by UTF-16 code unit, which differs from code-point order above the BMP |
+| numbers | `"version": 1` against `1.0` against `1e0`. Same value, different bytes |
+| string escaping | `/` against `\/`, `A` against `A`, which control characters are escaped how |
+| Unicode | NFC against NFD in a path or an argument. Visually identical, different bytes |
+| duplicate keys | permitted by the grammar, meaningless here, and a silent source of disagreement |
+
+There is a standard, RFC 8785, the JSON Canonicalization Scheme.
+⚠️ **Go has no JCS in its standard library, and this repo forbids third-party dependencies**, so adopting it means implementing it, including ES6's shortest-round-trip number formatting, which is the fiddly part.
+Get any of it subtly wrong and the same capability hashes to two ids, which is the failure a singleton exists to prevent, arriving through the one door nobody is watching.
+
+#### The fix is to delete the problem rather than solve it
+
+**The descriptor is a byte string. Its id is `sha256` of those bytes, verbatim.**
+
+* `cap create` EMITS the bytes, once, in one fixed form
+* the bytes are stored and transmitted exactly as emitted, never re-serialised
+* it happens to be valid JSON, so a human and a chat window can read it, which is the whole of [25]'s argument and it is kept
+* parsing is for READING. Hashing is over the bytes as received
+* verification needs no parser at all: hash what you were given, compare to the id
+
+⚠️ **A tool that round-trips a descriptor through parse-and-reserialise has changed the capability**, and that must be forbidden in as many words, because it is the one mistake this design invites and it looks like a no-op.
+
+It also lands well for s31: the bearer link carries the hashed bytes themselves, so there is no canonical form to agree on there either.
+
+The cost, stated: two authors writing the same capability with different whitespace get two ids and two singletons.
+In practice `cap create` is the only producer and emits one form, so they collapse anyway.
+And arguably it is correct rather than a cost: different bytes were asked for.
+
+#### ⚠️ And this changes what s3 is protecting against
+
+s3 says adding a field later "changes every descriptor's canonical bytes, which changes every capability hash, which changes every capability id, **which breaks every link ever written**".
+
+That is true under canonicalise-from-structure, where ids are RE-DERIVED from a parsed object and a schema.
+It is **false** under bytes-as-identity: an existing descriptor's bytes do not change when a later version gains a field, so its id does not change and its links keep working for ever.
+
+So s3's conclusion survives and its mechanism does not.
+What actually protects an old descriptor is `version` inside it, which is precisely what `version` is for: a v1 descriptor is read under v1 rules, where `runner` is implicitly `go`.
+s3 remains worth doing, because an explicit field beats an implied one and the cost is one line, but it is a tidiness argument rather than the flag-day emergency it claims, and the slate should not keep a scary reason that is contingent on a choice this row may reverse.
+
+#### And `runner: "go"` specifically
+
+Two things, now that the shape is cheap to change rather than frozen by fear:
+
+* **it pins the module graph and not the toolchain.** `go run module@sha` pins what s2 says it pins, through `go.sum` and the checksum database, and says nothing about which Go built it. So "this exact software" is slightly overclaimed, and the honest home for that gap is s24's UNVERIFIED rather than a promise.
+* **string or object.** `"runner":"go"` against `"runner":{"kind":"go","toolchain":"1.27"}`. Under bytes-as-identity this is a free choice later, because a v2 descriptor may carry a different shape without disturbing a single v1 id. s26 put toolchain pinning out of SHIMP/1 and that stands, and this row is what makes deferring it genuinely cheap rather than apparently cheap.

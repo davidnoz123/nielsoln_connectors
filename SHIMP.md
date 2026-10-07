@@ -791,6 +791,40 @@ There is no command to hash at any point in the design.
 `base` is frozen. [25] chose it over absolute paths and nothing since has argued with that.
 The open decision is `policy` alone, which is what this row's `waiting on` cell has said from the start while the body above read as though both were undecided.
 
+#### "Assuming `shimp://<path>/<params>`, do we need cwd in the path part?"
+
+Asked on the sheet, 7 Oct 2026.
+The question splits in two and the answers go opposite ways.
+
+**In identity: yes.**
+[5] defined identity as runner, module, commit, args and working directory, and [23] froze it.
+The reason is not tidiness.
+A tool told `-root .` has its cwd as the ONLY thing distinguishing one job from another, so leaving cwd out of the hash collapses two links on two different folders into one capability id.
+⚠️ **The second click is then answered by an instance pointed at the wrong data, and nothing reports it.**
+It is the same property s4 is pleased about from the other side: put the profile and the port in a capability's argv and the capability hash IS that browser's identity, so no second registry is needed.
+Where argv already names the data, cwd is redundant rather than wrong, and a design cannot depend on every tool being written that way.
+
+**In the URI text: no, never.**
+The first segment is the hash of the descriptor, and the descriptor holds cwd.
+So cwd is in the "path" part completely by reference and not at all literally, which is the entire point of addressing a capability by content.
+It is also what buys the headroom s17 records: `HYPERLINK()` caps `link_location` at 255 characters, and a form carrying module, SHA, argv and a directory overruns that.
+If cwd appeared in both the URI and the descriptor there would be two copies of one fact, and two copies can disagree.
+
+⚠️ **And the trap the proposed shape invites: NOTHING after the first slash may affect identity.**
+If `<params>` could set cwd, then one capability id would launch different processes depending on what was appended, and the singleton would be meaningless.
+s19 freezes the action as outside identity precisely so that two links with different actions reach the same instance.
+Params are a message to a running process, never configuration for starting one.
+
+If `<path>` was meant as a module path, as in `shimp://github.com/me/tool@abc123/open/xyz`, that was the early form in [5] and [7] and [15] and [23] replaced it with the capability id.
+The reason is this question: once startup needs a cwd, an argv and a base, the readable form stops being readable and starts being quoted.
+
+**One consequence for s9's webpage, and it is a third independent reason for `base`.**
+One folder is one capability, one id and one singleton, which is correct and means the folder has to be decided when the descriptor is authored.
+⚠️ You cannot know a customer's folder when you write the page.
+An absolute path is unknowable at authoring time, and a caller-relative path is non-deterministic by the table above.
+So a capability that can be distributed on a page is only writable as `base=capdir` plus a relative tail.
+The webpage case does not merely prefer `base`; it is impossible without it.
+
 ### s22. Windows first, and the spec must not learn the word "pipe"
 
 [21] lists platform scope among the ten decisions that had to be frozen before the design could be called ready, [23] froze it, and the re-audit of 7 Oct found it in no row.

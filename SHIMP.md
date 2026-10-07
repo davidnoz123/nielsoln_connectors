@@ -29,7 +29,7 @@
 | s27 | SHIMP is Shim Protocol, and the name collision is known | **DECIDED** in the source (s18) | nothing |
 | s28 | Adopting a descriptor: hash the bytes, never trust the id | RAISED, with one rule already clear | a decision on WHEN a descriptor is adopted, and by what |
 | s29 | cwd derived from identity rather than declared in it | RAISED 7 Oct 2026, and it would close most of s21 | a decision, and s21 waits on this one |
-| s30 | Local or Global: the singleton's scope, and the two halves disagree | RAISED 7 Oct 2026, and it is a defect in the frozen design | a decision, though only one answer looks defensible |
+| s30 | A singleton per session, and an immutable store per user | **DECIDED** 7 Oct 2026 | nothing |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -467,6 +467,11 @@ which is a much larger project.
 Also noted rather than scoped: `HYPERLINK()` caps `link_location` at 255
 characters while the Hyperlink object does not, which is an argument for the
 capability-id form over inlining target and args.
+
+#### One precision added 7 Oct 2026
+
+The guarantee above says "at most one managed live instance".
+s30 pins the scope that sentence left out: **per interactive session**, not per machine, because the source's `Global\` mutex contradicted its own per-user descriptor store, and s10's visible console makes the session the right boundary rather than merely the safe one.
 
 ### s18. Where this design came from
 
@@ -1044,3 +1049,40 @@ The case for `Global\` is a shared service two users should not duplicate, and S
 Where a target genuinely must be machine-wide, that is the target's problem and it can say so, rather than every capability inheriting the hazard above by default.
 
 Worth stating plainly: this is a documentation-stage find, not a bug report. Nothing is built, so the cost of fixing it is one word.
+
+#### Decided 7 Oct 2026, and the intent was never in doubt
+
+To be clear about whose decision this was: **`Global\` came from [5] in the source conversation**, not from anybody here.
+Asked, the intent was per-user and had been all along, which is what makes this a contradiction inside the frozen design rather than a disagreement about what was wanted.
+
+So the lock is NOT machine-wide. But per-user is not quite the answer either.
+
+#### Per-session, and s10 is why
+
+⚠️ **`Local\` on Windows is scoped to the SESSION, not to the user.**
+The same person logged in twice, over RDP and at the console, or across fast user switching, gets two `Local\` namespaces and therefore two singletons, while sharing one `~/.shimp`.
+
+That looked like a mismatch to accept until s10 was decided, and now it is the better answer rather than the tolerable one.
+s10 puts a long action's output in a **visible console**.
+A console belongs to one session's desktop and cannot be shown on another, so an instance running in session 1 physically cannot report to a user sitting in session 2.
+A per-user singleton would hand session 2's click to a process whose output session 2 can never see, which is s10's irritation restored by a different door.
+
+So: **one live instance per interactive session.**
+
+#### The split that falls out, and it is a clean one
+
+| state | scope | why |
+|---|---|---|
+| descriptors, the content-addressed store | per user | immutable, content-addressed, and nothing is gained by duplicating them per session |
+| the instance lock, the IPC endpoint, the per-capability working directory | per session | they name a LIVE thing, and liveness is what a session bounds |
+
+Immutable state per user, live state per session.
+s17's guarantee has to be read with that in it: at most one managed live instance **per session**, not per machine.
+
+#### ⚠️ And one asymmetry to report rather than hide
+
+Windows gives per-session scoping for free in its object namespace.
+The Unix equivalent, `$XDG_RUNTIME_DIR`, is per-user and typically shared across that user's sessions, so it is COARSER.
+The protocol says the live-state scope is the user's interactive session and each platform implements the closest thing it has.
+Where a platform cannot be that precise, it says so, per the house rule about saying what a tool cannot tell you.
+s22 keeps the spec from naming either mechanism.

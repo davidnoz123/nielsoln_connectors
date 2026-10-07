@@ -32,6 +32,7 @@
 | s30 | A singleton per session, and an immutable store per user | **DECIDED** 7 Oct 2026 | nothing |
 | s31 | Two link forms, one identity: the short id and the self-describing link | RAISED 7 Oct 2026, and it would dissolve most of s28 | a decision on whether a second link form is legal |
 | s32 | A link carries a SHORT capability id, because s5's threat model does not transfer | RAISED 7 Oct 2026, and it looks decidable immediately | a decision on how many hex characters |
+| s33 | The launch rule: what `runner: "go"` actually constructs | **DECIDED** in the source (s18), NOT implemented, and it was in no row | nothing |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -690,6 +691,7 @@ constructed directly and passed as separate arguments. A URI that becomes
 `sh -c` or `cmd /c` is an arbitrary code transport with a scheme in front of
 it, and the quoting problems alone would be reason enough without the security
 ones.
+* **and the POSITIVE rule is s33**, because this bullet says what is forbidden and a builder also needs what is built: `runner: "go"` prepends `go run` and the target to the descriptor's argv, verbatim and unquoted.
 
 ### s20. The keeper, the IPC, and the lifecycle
 
@@ -1264,3 +1266,65 @@ And the rule that makes any prefix safe is the one git already uses: **refuse an
 * s5's CONCLUSION stands for the target SHA, full in storage and abbreviated on input, but not on the reasoning it gave.
 Its brute-force table was wrong by about five orders of magnitude and its threat model never checked delivery. Corrected in s5 on 7 Oct 2026.
 The structural point of this row survives that correction and is in fact strengthened by it: the git SHA has a real non-push attack route, path takeover, and the capability id has none.
+
+### s33. The launch rule: what `runner: "go"` actually constructs
+
+Found 7 Oct 2026, from an entirely fair complaint that a summary of this design had hidden the motivating example behind the abstraction.
+Checking why, the abstraction had hidden it in the SLATE too.
+
+[23] froze it as "Go invocation: construct `go run <module>@<full-sha> ...` directly".
+s19 records the prohibition, that argv is passed as separate arguments and never as a shell command, and no row records the positive rule.
+⚠️ **A builder cannot derive what to run from a statement of what not to run**, and s3 makes `runner` the field that selects between launch rules, so what each legal value MEANS has to be written down.
+
+#### The rule, for the one legal value
+
+```
+runner  = "go"
+target  = "github.com/davidnoz123/nielsoln_connectors/chatgpt_capture@<full-sha>"
+argv    = ["-root", ".", "-mode", "sweep"]
+```
+
+becomes, as separate arguments with no shell anywhere:
+
+```
+argv[0] = "go"
+argv[1] = "run"
+argv[2] = "github.com/davidnoz123/nielsoln_connectors/chatgpt_capture@<full-sha>"
+argv[3:] = the descriptor's argv, in order, unmodified
+```
+
+So `runner: "go"` means exactly: prepend `go run`, then the target, then the descriptor's argv verbatim.
+Nothing is quoted, joined, split or expanded on the way, and `SHIMP_ENDPOINT` is added to the ENVIRONMENT rather than to argv, per s20's handshake.
+
+#### Why this is the whole motivating example and not a detail
+
+[4] asked for "a single, tiny custom URI tool that installs with `go run` on a remote git sha, and a url of this scheme is an encoding of another `go run` on a remote git sha".
+That sentence is the project.
+The chain in full:
+
+```
+shimp://8f74b19c5d2a3e01/thread/92817
+   |                      |
+   |                      +-- the action, delivered over IPC, not part of identity
+   +-- 16 hex of sha256(descriptor), which resolves locally to:
+
+{ "version":1, "runner":"go",
+  "target":"github.com/.../chatgpt_capture@<full-sha>",
+  "argv":["-root",".","-mode","sweep"] }
+
+   which this rule launches as:
+
+go run github.com/.../chatgpt_capture@<full-sha> -root . -mode sweep
+```
+
+⚠️ **And the `go run` is why identity could never be the executable's path.**
+[5] noted the wrinkle: `go run` downloads, builds and then runs a TEMPORARY executable, so a design identifying processes by pathname would be identifying a path that changes per build.
+Identity comes from the requested specification instead, which is what makes the whole scheme work rather than being a nicety.
+s7 is the same fact biting the installer, where the binary is copied from `os.Executable()` precisely because that path is the toolchain's scratch output.
+
+#### What this rule does NOT permit
+
+* no `sh -c`, no `cmd /c`, no shell at any point, which is s19 and remains the hard rule
+* no `go get`, no `go install`, no building into a cache the descriptor does not name
+* no argv the descriptor did not contain, except that the environment carries the endpoint
+* an unknown `runner` value **fails closed**, exactly as an unknown `version` does, which is s3's reason for the field existing at all

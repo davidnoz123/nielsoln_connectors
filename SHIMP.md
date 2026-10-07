@@ -713,6 +713,49 @@ Beside them, and the claim is not covered by the id a link carries, so an audit 
 Adding either later changes every descriptor's canonical bytes, which changes every capability hash, which changes every capability id, **which breaks every link ever written.**
 s3 got a whole row for `runner`. These got none, which is how a re-audit came to find them.
 
+#### The same thing, for a ten year old
+
+Think of a **recipe card**.
+It says which program to run, exactly which version of it, what to type after it and which folder to be in when you do.
+
+A link is a sticker with the card's **secret number** on it.
+You get the number by adding up everything written on the card, and nothing else.
+
+⚠️ **So adding a new line to the card changes every card's number.**
+Every sticker anybody has ever written now points at a number no card has.
+The stickers do not break noisily. They just quietly stop finding anything.
+
+That is why every line on the card has to be agreed BEFORE the first card is written.
+It is the whole of s3, and it turns out two more lines were forgotten.
+
+#### The first forgotten line: "start counting from here"
+
+A card that says "be in the `workspace` folder" has not actually said where.
+`workspace` inside what?
+Your computer would pick one place and mine would pick another, so the same card would mean two different things, which is exactly what the secret number exists to make impossible.
+So the card needs a line saying where to start counting from, and [25] calls it `base`.
+
+There is now a second reason, which is newer than the row above.
+s9 decided the card gets pasted into a chat window so a stranger can check it.
+A card holding the full path to a folder inside my own user account tells that stranger how my computer is laid out.
+A card that says "start at the capability folder, then `workspace`" tells them nothing about me and still means exactly one place.
+
+#### The second forgotten line: a promise the program makes about itself
+
+A card can carry a note saying "this program only needs to touch its own folder".
+
+⚠️ **That note is a CLAIM and not a lock.**
+Nothing stops the program doing more, and s17 is firm about it: SHIMP reads the note out, it does not enforce it.
+The note is useful anyway, because somebody checking the card can go and see whether the program really behaves that way.
+
+The part nobody has decided is whether that note is part of the adding-up.
+
+* **inside the sum:** two cards identical except for the note are different recipes, with different numbers, and each gets its own one-running-copy.
+* **outside the sum:** the note is not covered by the number on the sticker, so a person checking the sticker cannot tell whether the note they read is the note that was used.
+
+Either answer is workable.
+Having no answer is the thing that is not, because the first card cannot be written until it is settled.
+
 ### s22. Windows first, and the spec must not learn the word "pipe"
 
 [21] lists platform scope among the ten decisions that had to be frozen before the design could be called ready, [23] froze it, and the re-audit of 7 Oct found it in no row.

@@ -132,6 +132,52 @@ The argument above is about a GIT SHA, which names code an adversary may publish
 A capability id names bytes already in a local store, where an attacker needs write access before length matters at all.
 s32 carries that distinction, because repeating "the adversarial number is the one that matters" for both objects is repeating the words rather than the argument.
 
+#### ⚠️ THE TABLE ABOVE IS WRONG, AND IN THE GENEROUS DIRECTION
+
+Corrected 7 Oct 2026, prompted by the entirely reasonable objection that 9 characters ought to be enough.
+
+The table calls 7 hex "minutes", which implies roughly a million attempts a second.
+That is the rate for driving `git commit`.
+⚠️ **An attacker does not drive git.** A commit object is `commit <len>\0tree ...\nparent ...\nauthor ...\ncommitter ...\n\n<message>`, and the committer timestamp or trailing whitespace in the message can be varied freely, so the bytes are constructed directly and hashed at raw SHA-1 speed.
+Grinding a commit for a vanity prefix is a thing people do for fun.
+
+One current GPU does on the order of 5e10 SHA-1 per second:
+
+| prefix | bits | one GPU |
+|---|---|---|
+| 7 hex | 28 | about 5 **milliseconds** |
+| 9 hex | 36 | about 1.4 **seconds** |
+| 12 hex | 48 | about 1.6 hours |
+| 40 hex | 160 | not by this route |
+
+So the original table understated 7 hex by around five orders of magnitude, and 9 hex is a second and a half rather than anything to lean on.
+
+#### And the caveat the row never checked: a prefix match still has to be DELIVERED
+
+Grinding the hash is not the attack. The ground object has to be **fetchable at the module path in the descriptor**, because that is what `go run <path>@<abbrev>` resolves the abbreviation against.
+
+* if the attacker can push to that repo, they do not need a collision at all, so the brute-force number is irrelevant
+* so is the case the row was implicitly worried about
+
+⚠️ **The route that does NOT need push access is path takeover**: a module path that comes to be served by something other than the intended repo.
+A repo renamed, transferred, deleted and its name re-registered, or a proxy answering for that path.
+The attacker then owns the path, grinds a commit matching the 9 characters in a descriptor somebody wrote months ago, and the link runs their code.
+A full SHA refuses that. Nine characters does not.
+
+#### So the decision is unchanged, on a sounder basis than its own numbers
+
+| where | how much | why |
+|---|---|---|
+| what a human types | **9 characters, or 7** | s1 PROVED it: `@bdc56ca` resolved and the toolchain expanded it |
+| what a descriptor stores | **the full 40** | it costs 31 characters in a file no human reads, and it closes path takeover permanently |
+
+The expansion happens once, at capability creation, performed by the toolchain rather than by a person.
+There is no upside to storing nine, which is what decides it: a weak argument beats a zero-cost concession.
+
+The only place the 31 characters could matter is s31's bearer form, where the descriptor travels inside the link. There it is 31 of 255, which does not change whether that form fits.
+
+And `go.sum` plus the checksum database, which s2 records, are what cover the dependency graph below the top-level commit. Neither is affected by abbreviation.
+
 ### s6. The cold fallback, which SHIMP/1 does not specify
 
 If the singleton cannot be reached, **the clicking process does the work
@@ -1215,4 +1261,6 @@ And the rule that makes any prefix safe is the one git already uses: **refuse an
 
 * the descriptor still hashes to a full sha256. Only the LINK is abbreviated.
 * the IPC endpoint and the lock keep using the full identity internally, where length costs nothing.
-* s5 stands unaltered for the target SHA, because that argument is about published code and it is still right.
+* s5's CONCLUSION stands for the target SHA, full in storage and abbreviated on input, but not on the reasoning it gave.
+Its brute-force table was wrong by about five orders of magnitude and its threat model never checked delivery. Corrected in s5 on 7 Oct 2026.
+The structural point of this row survives that correction and is in fact strengthened by it: the git SHA has a real non-push attack route, path takeover, and the capability id has none.

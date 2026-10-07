@@ -27,9 +27,10 @@
 | s25 | The command surface: nobody hand-builds a capability id | **DECIDED** in the source (s18), NOT implemented | nothing |
 | s26 | What a target must carry before it can be a capability | **DECIDED** in the source (s18), NOT implemented, and it has a wrinkle here | nothing |
 | s27 | SHIMP is Shim Protocol, and the name collision is known | **DECIDED** in the source (s18) | nothing |
-| s28 | Adopting a descriptor: hash the bytes, never trust the id | RAISED, with one rule already clear | a decision on WHEN a descriptor is adopted, and by what |
+| s28 | Adopting a descriptor: hash the bytes, never trust the id | RAISED, with one rule already clear | a decision on WHEN a descriptor is adopted, and s31 may dissolve this row |
 | s29 | cwd derived from identity rather than declared in it | RAISED 7 Oct 2026, and it would close most of s21 | a decision, and s21 waits on this one |
 | s30 | A singleton per session, and an immutable store per user | **DECIDED** 7 Oct 2026 | nothing |
+| s31 | Two link forms, one identity: the short id and the self-describing link | RAISED 7 Oct 2026, and it would dissolve most of s28 | a decision on whether a second link form is legal |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -979,6 +980,11 @@ The third is the smallest and is the one that needs the hash rule hardest.
 
 Related: s25's `cap create` is the author's side of the same object, and this is the consumer's.
 
+#### s31 may dissolve this row
+
+Raised 7 Oct 2026: if a self-describing bearer link is legal, the descriptor arrives WITH the click rather than ahead of it, and this row's open question stops being "when is a descriptor adopted" because the answer is "on the click that carries it".
+The rule above survives either way, and under s31 it stops being an adoption policy and becomes the bearer form's defining behaviour.
+
 ### s29. cwd derived from identity rather than declared in it
 
 Raised 7 Oct 2026, from the observation that a capability is a system-wide singleton, so the folder it runs in cannot sensibly be some arbitrary place the author happened to be standing.
@@ -1086,3 +1092,66 @@ The Unix equivalent, `$XDG_RUNTIME_DIR`, is per-user and typically shared across
 The protocol says the live-state scope is the user's interactive session and each platform implements the closest thing it has.
 Where a platform cannot be that precise, it says so, per the house rule about saying what a tool cannot tell you.
 s22 keeps the spec from naming either mechanism.
+
+### s31. Two link forms, one identity: the short id and the self-describing link
+
+Raised 7 Oct 2026, from the question of why the URI is not the self-describing form the design started with:
+
+```
+shimp://go/run/github.com/...?go_arg1=xyz&arg2=bbb/actionx?arg1=123&arg2=1234
+```
+
+That was the form in [5] and [7], and [15] and [23] replaced it with `shimp://<capability-id>/<action>`.
+Worth being straight about why, because the fat form has a real advantage and the short one has to buy it back.
+
+#### What the fat form genuinely buys
+
+It is **self-describing**, which is the property s9 spends a whole third line acquiring.
+Taken fully it deletes a surprising amount: s9's line 2, s28's adoption problem, and the empty-store failure that stops a fresh customer's first click resolving at all.
+The customer flow becomes install, then click, with nothing in between.
+That is what was wanted, so the short form is a cost rather than an obvious win.
+
+#### ⚠️ The objection that settles it: canonicalisation, which was in no row
+
+If identity is the hash of the URI, then **every spelling difference is a different singleton.**
+
+Query parameter order. Percent-encoding choices, `.` against `%2E`. `+` against `%20`. A trailing slash. Case in the host part. The order of repeated `arg=` keys, which URI query semantics do not guarantee any parser preserves.
+
+Each variation hashes differently, so two links a human would call identical start two copies, which is the one thing a singleton exists to prevent, and it fails silently.
+
+The fix is to canonicalise the URI before hashing. But a canonical form for a structure with arrays, escaping and Unicode in it **is** the descriptor, just expressed in a syntax with worse escaping rules than JSON.
+[25] made exactly this point choosing JSON over line-based text: once you need arrays, escaping and nested metadata, you are inventing a format, and JSON already solved those problems.
+
+⚠️ **So the descriptor is not an extra layer. It is the canonical form the fat URI would have needed anyway.**
+The only real question is whether it is also the transport.
+
+And the short form has a property worth stating positively rather than defensively: **it has no canonicalisation surface at all.** Sixty-four hex characters and a path. There is nothing to spell two ways.
+
+#### Two smaller objections, stated for completeness
+
+* ⚠️ **the example's grammar does not parse.** Only the first `?` starts a query; everything after it is query. So `/actionx?arg1=123` is part of the first query string rather than a separate path and query, and recovering the three parts needs a custom mini-grammar inside the query string. Which is, again, inventing a format.
+* **length, measured rather than asserted.** `shimp://go/run/github.com/davidnoz123/nielsoln_connectors/chatgpt_capture@` plus a 40-hex SHA is **114 characters before a single argument**. s17 records `HYPERLINK()` capping `link_location` at 255, so roughly half the budget is gone on provenance alone. The Hyperlink OBJECT has no such cap, so this bites a formula and not a VBA-inserted link, which is worth knowing rather than overstating.
+
+#### The proposal: both forms, one identity
+
+The tension is real and it is not resolvable by picking a side, because the two surfaces want opposite things.
+Excel wants short. A webpage and a chat window want self-describing.
+
+So make two forms legal, distinguished unambiguously by their first segment:
+
+| form | looks like | for |
+|---|---|---|
+| **reference** | `shimp://<64-hex>/<action>` | Excel, and anything on a machine that already holds the descriptor |
+| **bearer** | `shimp://v1+<encoded canonical descriptor>/<action>` | a webpage, a chat window, a first click on a fresh machine |
+
+⚠️ **And the point that makes it work: the id is the SAME in both.**
+Both are the hash of the same canonical descriptor bytes, so a bearer link on a page and a reference link in a workbook address **one singleton**.
+The bearer form is how a capability ARRIVES; the reference form is how it is referred to afterwards.
+
+Encoding the canonical bytes rather than a query string keeps the canonicalisation objection answered: the encoding of an already-canonical byte string is itself canonical, so there is still nothing to spell two ways.
+
+What it would change elsewhere:
+
+* **s28 mostly dissolves.** Its rule, hash the bytes and never trust the id, becomes the bearer form's defining behaviour rather than a separate adoption step.
+* **s9 keeps three lines for the reference form and needs only two for the bearer form**, because a bearer link IS its own line 2. That is a genuinely better answer than either row currently gives.
+* the bearer form is long, so it does not rescue the Excel case, and nothing here claims it does.

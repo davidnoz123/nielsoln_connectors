@@ -20,7 +20,7 @@
 | s18 | Where this design came from | **REFERENCE** | nothing |
 | s19 | The URI grammar, and what identity IS | **DECIDED** in the source (s18), NOT implemented | nothing, except that s21 must close before the first descriptor is written |
 | s20 | The keeper, the IPC, and the lifecycle | **DECIDED** in the source (s18), NOT implemented | nothing. These are the spec to build against. |
-| s21 | Two more descriptor fields the source froze, and s19's list is short | **OPEN**, and it blocks the first descriptor exactly as s3 does | a decision on whether `policy` is inside the hashed bytes |
+| s21 | Two more descriptor fields the source froze, and s19's list is short | **OPEN**, and it blocks the first descriptor exactly as s3 does | a decision on whether `policy` is inside the hashed bytes, and s29 on whether `base` survives at all |
 | s22 | Windows first, and the spec must not learn the word "pipe" | **DECIDED** in the source (s18), NOT implemented | nothing. It is the build order. |
 | s23 | Two audit questions, and only one of them is answerable today | **DECIDED** in the source (s18), NOT implemented | nothing |
 | s24 | Four verdicts, because UNVERIFIED is the one that earns the set | **DECIDED** in the source (s18), NOT implemented | nothing |
@@ -28,6 +28,8 @@
 | s26 | What a target must carry before it can be a capability | **DECIDED** in the source (s18), NOT implemented, and it has a wrinkle here | nothing |
 | s27 | SHIMP is Shim Protocol, and the name collision is known | **DECIDED** in the source (s18) | nothing |
 | s28 | Adopting a descriptor: hash the bytes, never trust the id | RAISED, with one rule already clear | a decision on WHEN a descriptor is adopted, and by what |
+| s29 | cwd derived from identity rather than declared in it | RAISED 7 Oct 2026, and it would close most of s21 | a decision, and s21 waits on this one |
+| s30 | Local or Global: the singleton's scope, and the two halves disagree | RAISED 7 Oct 2026, and it is a defect in the frozen design | a decision, though only one answer looks defensible |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -825,6 +827,12 @@ An absolute path is unknowable at authoring time, and a caller-relative path is 
 So a capability that can be distributed on a page is only writable as `base=capdir` plus a relative tail.
 The webpage case does not merely prefer `base`; it is impossible without it.
 
+#### s29 may delete half of this row
+
+Raised 7 Oct 2026: if cwd is derived from the capability id rather than declared, then `cwd` leaves the descriptor and `base` has nothing left to anchor.
+Half of this row would then be answered by deletion rather than by decision, and the `policy` half would be all that is left.
+See s29, which also records why a derived cwd cannot itself be a descriptor field.
+
 ### s22. Windows first, and the spec must not learn the word "pipe"
 
 [21] lists platform scope among the ten decisions that had to be frozen before the design could be called ready, [23] froze it, and the re-audit of 7 Oct found it in no row.
@@ -965,3 +973,74 @@ The decision needs one of: install takes descriptors as arguments, a `shimp cap 
 The third is the smallest and is the one that needs the hash rule hardest.
 
 Related: s25's `cap create` is the author's side of the same object, and this is the consumer's.
+
+### s29. cwd derived from identity rather than declared in it
+
+Raised 7 Oct 2026, from the observation that a capability is a system-wide singleton, so the folder it runs in cannot sensibly be some arbitrary place the author happened to be standing.
+
+The proposal: the working directory is `~/.shimp/caps/<capability-id>/work`, owned by shimp and derived from the id.
+
+#### Taken fully, it removes TWO fields rather than adding one
+
+⚠️ **A derived cwd must not be IN the descriptor, or there is no fixed point.**
+The id is the hash of the descriptor. If the descriptor holds cwd, and cwd is a function of the id, then computing the hash requires the hash.
+That is not a hard problem to work around, it is a problem that dissolves: a value derived from the id carries no information, so it does not belong in the hashed bytes at all.
+
+So the descriptor loses `cwd`.
+And with no cwd to anchor, `base` has nothing left to do, so the descriptor loses that too, which is half of s21 answered by deletion rather than by decision.
+
+What remains is clean: **identity is what code, at what commit, with what arguments.** Nothing about where.
+
+And it is exactly what s9's webpage needs.
+A descriptor containing no path is machine-independent by construction rather than by a careful choice of symbol, so the same bytes hash to the same id on every machine, and there is nothing in the pasted line 2 that describes anybody's disk.
+
+#### ⚠️ The catch: it relocates the path problem, it does not solve it
+
+Most of the tools this is for operate on data that lives somewhere else: a workbook in a repo, a database in `chatgpt_tools`, a folder of captures.
+A connector started in an empty per-capability directory finds none of it.
+So the data path moves out of cwd and into argv.
+
+That is a real improvement rather than a shuffle, and the reason is worth keeping: an implicit cwd that silently differs per machine is the dangerous kind of path, and an explicit `--db <path>` sitting in the pasted descriptor is one an auditor can read.
+But portability and leaking come with it, so they are not gone.
+
+[25] anticipated this exactly: support symbols such as `$HOME` or `$CAPDIR`, resolved deterministically before identity is hashed.
+⚠️ So `base` does not disappear so much as **change job**: from "what is cwd relative to" into "the expansion rule for argv".
+Whether that is still a descriptor field, or a rule the whole descriptor is read under, is the part this row has to settle.
+
+#### ⚠️ And the new directory has a lifecycle that contradicts two frozen rules
+
+s20 says runtime state is disposable and self-healing, detected and recreated after a crash.
+s17 says uninstall removes only what shimp installed: its registration, its binary, its runtime state.
+
+If `~/.shimp/caps/<id>/work` holds a tool's real working data, it is **not** disposable, and an uninstall removing "what shimp installed" would delete the user's files.
+Both rules stay true only if the directory is declared SCRATCH and targets are forbidden from keeping anything there that matters.
+The alternative is that uninstall refuses it and says why.
+Either is fine. Having neither written down is how a cleanup becomes a data loss, so it belongs in this row before anything is built.
+
+### s30. Local or Global: the singleton's scope, and the two halves disagree
+
+Found 7 Oct 2026, while answering what "system-wide singleton" actually means.
+This is not an open choice the source left. It is two frozen decisions that contradict each other.
+
+| frozen in | says | scope |
+|---|---|---|
+| [5] | the lock is a named mutex, `Global\shimp-<hash>` | every logged-in session on the machine |
+| [15] | descriptors live under `~/.shimp/caps/<sha256>` | the calling user alone |
+
+⚠️ **So two users on one machine would share a singleton while holding separate capability stores.**
+User B clicks a link, the lock says an instance is already live, and the action is forwarded to a process that user A started, running under A's account, against A's files, writing to A's directories.
+B's own descriptor for that id might not even be the one that was launched, because B's store was never consulted.
+
+The failure is quiet in the way this repo keeps naming: B's click SUCCEEDS.
+Something ran. The reply says delivered. The work happened somewhere B cannot see and to data B does not own.
+
+#### Only one answer looks defensible
+
+Per-user, which on Windows means `Local\shimp-<hash>` rather than `Global\`, because `Local\` is scoped to the caller's session.
+The descriptor store is already per-user and that is the right scope for it: a capability is a thing a person installed, not a thing a machine has.
+s17's guarantee then reads "at most one managed live instance **per user**", which is what it has to say rather than what it currently says.
+
+The case for `Global\` is a shared service two users should not duplicate, and SHIMP/1 explicitly is not a service manager, s17.
+Where a target genuinely must be machine-wide, that is the target's problem and it can say so, rather than every capability inheriting the hazard above by default.
+
+Worth stating plainly: this is a documentation-stage find, not a bug report. Nothing is built, so the cost of fixing it is one word.

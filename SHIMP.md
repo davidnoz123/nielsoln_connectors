@@ -756,6 +756,41 @@ The part nobody has decided is whether that note is part of the adding-up.
 Either answer is workable.
 Having no answer is the thing that is not, because the first card cannot be written until it is settled.
 
+#### "So this is about hashing without absolute paths?"
+
+Asked on the sheet, 7 Oct 2026.
+For `base`, yes, and that is the whole of it.
+For `policy`, no.
+The two halves of this row are one problem rather than one topic: both are fields missing from s19's list, which is s3's failure happening twice, and only one of them is about paths.
+
+**The fix is not "use relative paths instead".**
+⚠️ **A bare relative `cwd` is WORSE than an absolute one**, because `.` is resolved against whoever clicked the link.
+s19 already names the consequence: two identical-looking links mean different things depending on whether Excel or a browser was clicked in.
+
+| what the card stores | deterministic | portable | safe to paste |
+|---|---|---|---|
+| an absolute path | yes | no, it hashes differently on every machine | no, it publishes your layout |
+| a bare relative path | **no** | looks portable | yes |
+| `base` plus a relative tail | yes | yes | yes |
+
+Only the third is all three at once, which is why the answer is a named anchor rather than a shorter path.
+`base` names one of a small set of meanings, `capdir` and perhaps `home`, each with a single definition.
+
+⚠️ **And the resolution happens at LAUNCH, never at hash time.**
+The descriptor stores the symbol and the tail, so what gets hashed is the symbol and the number is identical everywhere.
+What the process actually receives is the directory that symbol resolves to on the machine it starts on.
+Resolve before hashing and the portability is gone again, which is the trap the words "resolve deterministically before hashing" in s19 can be read into: it means the SYMBOL must have one unambiguous meaning, not that the path must be expanded into the bytes.
+
+**One correction to the question.**
+Nothing hashes a command.
+s19 forbids a command string existing anywhere, because a URI that becomes `cmd /c` is an arbitrary code transport with a scheme in front of it.
+So what is hashed is the descriptor, and the descriptor holds an argv array rather than a line of shell.
+There is no command to hash at any point in the design.
+
+**Which half of this row is actually open.**
+`base` is frozen. [25] chose it over absolute paths and nothing since has argued with that.
+The open decision is `policy` alone, which is what this row's `waiting on` cell has said from the start while the body above read as though both were undecided.
+
 ### s22. Windows first, and the spec must not learn the word "pipe"
 
 [21] lists platform scope among the ten decisions that had to be frozen before the design could be called ready, [23] froze it, and the re-audit of 7 Oct found it in no row.

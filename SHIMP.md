@@ -31,6 +31,7 @@
 | s29 | cwd derived from identity rather than declared in it | RAISED 7 Oct 2026, and it would close most of s21 | a decision, and s21 waits on this one |
 | s30 | A singleton per session, and an immutable store per user | **DECIDED** 7 Oct 2026 | nothing |
 | s31 | Two link forms, one identity: the short id and the self-describing link | RAISED 7 Oct 2026, and it would dissolve most of s28 | a decision on whether a second link form is legal |
+| s32 | A link carries a SHORT capability id, because s5's threat model does not transfer | RAISED 7 Oct 2026, and it looks decidable immediately | a decision on how many hex characters |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -123,6 +124,13 @@ makes abbreviation tempting. The asymmetry that decides it: the thing being
 authorised is **code execution on click**, so the adversarial number is the one
 that matters, and git grows its own abbreviations with repo size for a weaker
 reason than that.
+
+#### And the same reasoning does NOT cover the capability id
+
+Added 7 Oct 2026.
+The argument above is about a GIT SHA, which names code an adversary may publish, so a prefix match is an attack worth money.
+A capability id names bytes already in a local store, where an attacker needs write access before length matters at all.
+s32 carries that distinction, because repeating "the adversarial number is the one that matters" for both objects is repeating the words rather than the argument.
 
 ### s6. The cold fallback, which SHIMP/1 does not specify
 
@@ -1155,3 +1163,56 @@ What it would change elsewhere:
 * **s28 mostly dissolves.** Its rule, hash the bytes and never trust the id, becomes the bearer form's defining behaviour rather than a separate adoption step.
 * **s9 keeps three lines for the reference form and needs only two for the bearer form**, because a bearer link IS its own line 2. That is a genuinely better answer than either row currently gives.
 * the bearer form is long, so it does not rescue the Excel case, and nothing here claims it does.
+
+### s32. A link carries a SHORT capability id, because s5's threat model does not transfer
+
+Raised 7 Oct 2026, from an objection that the 40-hex SHA is too pedantic.
+Two separate things, and the first is already settled in the objector's favour.
+
+#### Nothing types a SHA, and no link contains one
+
+s5 decided it: accept an abbreviated SHA, store the full one, and the pedantry "appears once, when a capability is created, and never in a link, because nobody types a `shimp://` URI and a tool emits it."
+
+So under the reference form there is no SHA in a link at all.
+The 40 hex characters measured in s31 are the cost of the **fat self-describing form**, which puts the target in the link, and they are therefore an argument against that form rather than a requirement imposed by this one.
+
+#### ⚠️ But the objection lands somewhere worse, and this part is conceded
+
+The capability id is **sha256, so 64 hex characters**, which is *longer* than the 40-hex SHA being objected to.
+If the complaint is that there is too much hex in a link, the current form is the bigger offender, and s31 quietly used the fat form's SHA as the example while the short form was carrying more.
+
+#### ⚠️ And the reason for the strictness does not transfer
+
+s5's argument is specific and it is about GIT SHAs:
+
+> the thing being authorised is **code execution on click**, so the adversarial number is the one that matters
+
+That holds because a git SHA names code **an adversary may publish**. A prefix match is then an attack: grind out a commit whose hash shares the prefix, get it fetched, and the link runs it.
+
+A capability id is a different object with a different threat model.
+It names **bytes already on this machine**, in a local content-addressed store.
+For a shortened id to resolve to the wrong descriptor, an attacker must get a colliding descriptor INTO that store, and anybody who can write the store has already won at full length.
+s28's rule closes the remaining door: the store is keyed by what the bytes actually hash to, never by an id somebody supplied.
+
+⚠️ So the 64 hex is **inherited pedantry rather than reasoned pedantry**, and applying s5's asymmetry to it is repeating the words rather than the argument.
+
+Under s31's bearer form it is weaker still: the descriptor travels with the link, so the id is a CHECK against bytes in hand rather than a lookup key, and a shorter check is still a check.
+
+#### What is left is only accidental collision, which is arithmetic
+
+| prefix | bits | collision chance across 1,000,000 capabilities |
+|---|---|---|
+| 8 hex | 32 | far too high to consider |
+| 12 hex | 48 | about 1 in 550 |
+| 16 hex | 64 | about 3 in 100,000,000 |
+
+16 hex looks comfortable and 12 is defensible.
+`shimp://8f74b19c5d2a3e01/thread/92817` is the shape, which is short enough to read and to sit in a cell.
+
+And the rule that makes any prefix safe is the one git already uses: **refuse an ambiguous prefix rather than guess at it.** The full id stays in the store, exactly as s5 has the full SHA stay in the descriptor.
+
+#### What this does not change
+
+* the descriptor still hashes to a full sha256. Only the LINK is abbreviated.
+* the IPC endpoint and the lock keep using the full identity internally, where length costs nothing.
+* s5 stands unaltered for the target SHA, because that argument is about published code and it is still right.

@@ -34,6 +34,8 @@
 | s32 | A link carries a SHORT capability id, because s5's threat model does not transfer | RAISED 7 Oct 2026, and it looks decidable immediately | a decision on how many hex characters |
 | s33 | The launch rule: what `runner: "go"` actually constructs | **DECIDED** in the source (s18), NOT implemented, and it was in no row | nothing |
 | s34 | The descriptor is BYTES, not an object, so nothing is ever canonicalised | RAISED 7 Oct 2026, and it is the strongest recommendation on this slate | a decision, and it changes what s3 and s19 mean |
+| s35 | Drop the descriptor store: the URI IS the canonical form | DIRECTION SET 7 Oct 2026, the grammar is the open part | a decision on the exact grammar, and s36's measurement |
+| s36 | The URI length budget, measured, and what actually eats it | PART MEASURED 7 Oct 2026, and it corrects s17 | the handler, which is the only way to measure the number that decides it |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -538,6 +540,12 @@ capability-id form over inlining target and args.
 
 The guarantee above says "at most one managed live instance".
 s30 pins the scope that sentence left out: **per interactive session**, not per machine, because the source's `Global\` mutex contradicted its own per-user descriptor store, and s10's visible console makes the session the right boundary rather than merely the safe one.
+
+#### ⚠️ The hyperlink-length note above is WRONG, corrected 7 Oct 2026
+
+Measured: `Hyperlinks.Add` refuses an `Address` beyond **2084**, so the claim that the Hyperlink object has no cap is false, and the object route is the tighter of the two.
+The 255 figure for `HYPERLINK()` is NOT refuted, because what was measured is how much the formula stores (4095) rather than whether a click follows a link longer than 255.
+s36 carries the numbers and says which question each one answered.
 
 ### s18. Where this design came from
 
@@ -1223,6 +1231,11 @@ What it would change elsewhere:
 * **s9 keeps three lines for the reference form and needs only two for the bearer form**, because a bearer link IS its own line 2. That is a genuinely better answer than either row currently gives.
 * the bearer form is long, so it does not rescue the Excel case, and nothing here claims it does.
 
+#### s35 supersedes the choice here, and the length objection above was pessimistic
+
+7 Oct 2026. The reason is new and it is operational rather than technical: a local store is state that gets lost, and it is empty exactly when a new user clicks their first link.
+Also, the "114 characters before a single argument" measured here is 146 of 255 for a complete realistic link, leaving 109 spare. s36 has the real numbers, including the correction that the Hyperlink OBJECT caps at 2084 while this row relied on s17 saying it does not.
+
 ### s32. A link carries a SHORT capability id, because s5's threat model does not transfer
 
 Raised 7 Oct 2026, from an objection that the 40-hex SHA is too pedantic.
@@ -1397,3 +1410,116 @@ Two things, now that the shape is cheap to change rather than frozen by fear:
 
 * **it pins the module graph and not the toolchain.** `go run module@sha` pins what s2 says it pins, through `go.sum` and the checksum database, and says nothing about which Go built it. So "this exact software" is slightly overclaimed, and the honest home for that gap is s24's UNVERIFIED rather than a promise.
 * **string or object.** `"runner":"go"` against `"runner":{"kind":"go","toolchain":"1.27"}`. Under bytes-as-identity this is a free choice later, because a v2 descriptor may carry a different shape without disturbing a single v1 id. s26 put toolchain pinning out of SHIMP/1 and that stands, and this row is what makes deferring it genuinely cheap rather than apparently cheap.
+
+#### s35 inverts this row
+
+Direction set 7 Oct 2026: if the descriptor store is dropped and the URI carries everything, there is no JSON to canonicalise and this row's recommendation is replaced rather than adopted.
+The principle survives in a different shape: **constrain the grammar so there is exactly one legal spelling, then REFUSE anything else rather than normalise it.**
+The asymmetry is the same one that decides this row. A wrong normaliser maps two spellings to one id silently; a wrong validator rejects a good link loudly.
+
+### s35. Drop the descriptor store: the URI IS the canonical form
+
+Direction set 7 Oct 2026.
+Every argument for a separate descriptor assumed the store would simply be there.
+
+⚠️ **A store is state, and state gets forgotten, ignored, lost and neglected.**
+It has to survive a backup, a machine move and a reinstall, and it is empty exactly when a new user clicks their first link, which s9 already discovered from the other end.
+That reason was on no row and it outweighs the technical tidiness the descriptor was bought with.
+
+#### The move that answers s34's objection
+
+s31 refused the self-describing URI because hashing a URI makes every spelling a different singleton.
+That assumed identity is the hash of the URI text **while the grammar stays loose.** Tighten the grammar and the objection evaporates.
+
+⚠️ **REFUSE, NEVER NORMALISE.**
+Define the grammar so that exactly one byte string can denote a given capability, then VALIDATE rather than transform:
+
+* **positional segments, never query parameters.** A query is reorderable and its repeated-key order is parser-dependent. A path is ordered by construction.
+* **percent-encoding is canonical**: encode only what must be encoded, uppercase hex always, and reject a URI carrying an unnecessary or lowercase escape.
+* lowercase SHA, exact length, no trailing slash, NFC required and non-NFC **refused** rather than normalised.
+
+The asymmetry that makes this the right shape: a normaliser that is subtly wrong maps two spellings onto one id **silently**, which is s34's whole fear.
+A validator that is subtly wrong rejects a good link **loudly**.
+Only the validator is needed, and it is a far smaller thing to get right than RFC 8785.
+
+#### The fragment carries the action
+
+```
+shimp://v1/go/github.com/.../chatgpt_capture@<sha>/-root/./-mode/sweep#thread/92817
+     |------------------- identity -------------------------------| |-- action --|
+```
+
+Identity is everything before `#`. The action is the fragment.
+That makes s19's rule, that the action is not part of identity, **syntactically enforced** instead of a convention, and "just ensure it is running" is the URI with no fragment at all.
+
+#### What this deletes or changes
+
+| row | effect |
+|---|---|
+| s9 | back to **two lines**, which is what was wanted before the store forced a third |
+| s28 | gone. There is nothing to adopt |
+| s34 | inverts: not "hash the bytes rather than the structure" but "constrain the grammar, validate, never normalise" |
+| s25 | `cap create` becomes a URI builder and `inspect` just parses a link. Still useful, no longer load-bearing |
+| s29 | survives, and s36 makes it load-bearing for a second reason |
+| s21 | `policy` loses its home. Recommended: drop it. s17 says SHIMP never enforces it, so a field nobody enforces and every link pays for in length is a poor trade |
+
+#### Two costs, stated rather than glossed
+
+* **a rigid grammar.** JSON takes a new field gracefully and positional segments do not. But `v1` is in the path, so a v2 grammar is a different first segment, which is cleaner than a schema migration.
+* ⚠️ **links become editable.** Somebody will hand-change `-mode/sweep` to `-mode/delete`, and under this form that is a VALID different capability which runs, where a hash would have failed loudly.
+Not a security hole, because the URI is the authority either way and s9 audits the link actually clicked. But it changes a link from an opaque token into an editable instruction, and s10's console echoing the resolved command is the mitigation.
+
+### s36. The URI length budget, measured, and what actually eats it
+
+Measured 7 Oct 2026 in a scratch workbook in this session's Excel, by binary search on the longest URI that round-trips.
+
+| route | longest URI that round-trips | what it means |
+|---|---|---|
+| `Hyperlinks.Add`, `.Address` | **2084** | a hard refusal beyond it |
+| `=HYPERLINK(...)` as a formula | **4095** | the formula STORES this much. See the caveat |
+| a plain string in a cell | 32767 | the cell limit, no link involved |
+
+#### ⚠️ AND THIS CORRECTS s17
+
+s17 says `HYPERLINK()` caps `link_location` at 255 characters "while the Hyperlink object does not".
+
+⚠️ **The second half is false.** `Hyperlinks.Add` refuses an `Address` beyond 2084, measured. The object route is in fact the TIGHTER of the two.
+
+⚠️ **And the first half is not refuted by the number above, because the test measured the wrong thing.**
+4095 is how much the formula will STORE. Whether a click FOLLOWS a link longer than 255 is a different question and was not tested, which is the claim s17 actually makes.
+So 255 stands unrefuted and must be treated as binding until somebody clicks one.
+Saying "measured 4095, so 255 is wrong" would be exactly the false confidence the house rule about fakes warns about.
+
+#### The number that actually decides it is NOT measured
+
+What matters on a click is what the registry handler RECEIVES as `os.Args[1]`.
+That needs a registered `shimp:` handler which logs the length, and there is none, because s35's grammar is not built.
+So: design to **255** and rely on nothing more, and the first thing the handler should do when it exists is report that number.
+
+#### ⚠️ What actually eats the budget is path-shaped arguments
+
+A bare capability is comfortable. Counted:
+
+```
+shimp://v1/go/github.com/davidnoz123/nielsoln_connectors/chatgpt_capture@<40 hex>
+= 113 characters, and 82 with the 9-character abbreviation s5 permits on input
++ /-root/./-mode/sweep         =  20
++ #thread/92817                =  13
+                               = 146 of 255, or 115 abbreviated
+```
+
+An earlier framing of mine called 113 "half the budget gone on provenance alone", which was pessimistic: 109 characters remain and most capabilities will not use them.
+
+The real hazard is a path in argv, and it is worse than its character count:
+
+* every `/` inside an argument must be `%2F`, costing **3 characters per separator**
+* ⚠️ every `..` must be `%2E%2E`, costing **6 characters for 2**, and NOT for length reasons: a literal `..` in a URI path is subject to RFC 3986 dot-segment removal by any parser or intermediary that touches it, so an un-encoded relative path can arrive **silently different from the one written**
+
+`--db ../chatgpt_tools/chatgpt_1davidnoz_at_googlemail_dot_com.db` is 62 characters plain and grows past 70 encoded, and it is the dangerous shape as well as the long one.
+
+#### So s36 makes s29 load-bearing twice
+
+s29 proposes that cwd is derived from identity rather than declared, which keeps paths out of the URI.
+Recorded there as portability and as not leaking a filesystem layout.
+**This row adds a third reason: it is what keeps a link inside 255 and away from dot-segment normalisation.**
+A symbolic base token is short and contains no separators, which is the shape a URI wants.

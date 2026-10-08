@@ -1971,6 +1971,9 @@ var ops = map[string]func(string, json.RawMessage) (any, error){
 
 type connector struct {
 	host, port, root, token string
+	// Which seat's bridge to dial. Empty is the single-seat server, where
+	// /bridge is the only route there is.
+	seat string
 	// "auto", "tcp" or "wss". See dial().
 	wire    string
 	record  string
@@ -2001,9 +2004,24 @@ func (c *connector) runOnce() error {
 	return c.serve(t)
 }
 
-// wsPath is the single route Caddy forwards to the bridge. The bridge
-// refuses a handshake for anything else, which test_ws_transport.py checks.
+// wsPath is the route Caddy forwards to the bridge. The bridge refuses a
+// handshake for anything else, which test_ws_transport.py checks.
 const wsPath = "/bridge"
+
+// seatName is what a -seat value may contain. Narrow on purpose: this goes
+// into a URL path, so anything that could carry a slash, a dot segment or a
+// query would be asking a proxy to route somewhere else entirely.
+var seatName = regexp.MustCompile(`^[a-z][a-z0-9-]{1,30}$`)
+
+// wsPath is per seat once there is more than one. A seat NAME is not a
+// secret: it identifies which bridge to reach, before the socket is open,
+// and the token in the hello is still the only thing that authenticates.
+func (c *connector) path() string {
+	if c.seat == "" {
+		return wsPath
+	}
+	return wsPath + "/" + c.seat
+}
 
 // dial opens whichever transport this session uses.
 //
@@ -2057,7 +2075,7 @@ func (c *connector) dial() (transport, error) {
 	// not confirm it, and this end drops back to plain frames: the binary a
 	// participant downloaded last week has to keep working, because there is
 	// no way to make them download it again.
-	deflate, err := wsClientHandshake(conn, r, c.host, wsPath, true)
+	deflate, err := wsClientHandshake(conn, r, c.host, c.path(), true)
 	if err != nil {
 		conn.Close()
 		return nil, err
@@ -2066,7 +2084,7 @@ func (c *connector) dial() (transport, error) {
 	if !useTLS {
 		scheme = "ws"
 	}
-	logf("connected to %s://%s%s", scheme, addr, wsPath)
+	logf("connected to %s://%s%s", scheme, addr, c.path())
 	if deflate != nil {
 		logf("  compression agreed: %s", wsExtDeflate)
 	}
@@ -2563,11 +2581,21 @@ func main() {
 	port := flag.String("port", defaultPort, "bridge port")
 	root := flag.String("root", "", "the only folder this session may read or write")
 	token := flag.String("token", "", "pairing token, sent in hello")
+	seat := flag.String("seat", "", "which seat's bridge to dial, appended to /bridge")
 	record := flag.String("record", "", "append every exchange here as JSON lines")
 	once := flag.Bool("once", false, "do not reconnect; exit when the socket closes")
 	wire := flag.String("transport", "auto",
 		"auto, tcp, ws or wss. auto means wss on 443 and tcp elsewhere")
 	flag.Parse()
+
+	// REFUSED HERE, not where it is used. This value goes into a URL path, so
+	// a slash or a dot segment would be asking the proxy to route somewhere
+	// else: -seat ../bridge is the shape. Checked once, at the edge.
+	if *seat != "" && !seatName.MatchString(*seat) {
+		logf("FATAL: -seat %q is not a seat name: a lowercase letter then "+
+			"letters, digits or hyphens, at most 31 characters.", *seat)
+		os.Exit(2)
+	}
 
 	// The key rides in this program's own filename, because a participant has
 	// no command line. --token still wins, for scripts and for the tests.
@@ -2666,7 +2694,8 @@ func main() {
 
 	c := &connector{
 		host: *host, port: *port, root: abs,
-		token: *token, record: *record, wire: *wire, done: map[int][]byte{},
+		token: *token, seat: *seat, record: *record, wire: *wire,
+		done: map[int][]byte{},
 	}
 	// The resolved folder, not what was typed. A participant should be able to
 	// read back exactly what they have shared before anything is read from it.

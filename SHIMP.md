@@ -36,6 +36,7 @@
 | s34 | The descriptor is BYTES, not an object, so nothing is ever canonicalised | RAISED 7 Oct 2026, and it is the strongest recommendation on this slate | a decision, and it changes what s3 and s19 mean |
 | s35 | Drop the descriptor store: the URI IS the canonical form | DIRECTION SET 7 Oct 2026, the grammar is the open part | a decision on the exact grammar, and s36's measurement |
 | s36 | The URI length budget, measured, and what actually eats it | PART MEASURED 7 Oct 2026, and it corrects s17 | the handler, which is the only way to measure the number that decides it |
+| s37 | The SHA in the URI: exactly one legal length, and it should be 40 | RAISED 7 Oct 2026, recommending 40 | one measurement: what Go does with an AMBIGUOUS abbreviation |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -190,6 +191,12 @@ There is no upside to storing nine, which is what decides it: a weak argument be
 The only place the 31 characters could matter is s31's bearer form, where the descriptor travels inside the link. There it is 31 of 255, which does not change whether that form fits.
 
 And `go.sum` plus the checksum database, which s2 records, are what cover the dependency graph below the top-level commit. Neither is affected by abbreviation.
+
+#### ⚠️ AND s35 REMOVES THE STORE THIS RULE DEPENDS ON
+
+7 Oct 2026. "Store the full one" presumes a descriptor to expand into at creation time.
+Under s35 the URI is the only artifact, so there is nowhere to put the full SHA and an abbreviation in a link becomes permanent and re-resolved on every click.
+s37 carries the question in its new form. This row's input-side generosity survives wherever a tool still accepts typing, but its storage half has no home under s35.
 
 ### s6. The cold fallback, which SHIMP/1 does not specify
 
@@ -1469,6 +1476,11 @@ That makes s19's rule, that the action is not part of identity, **syntactically 
 * ⚠️ **links become editable.** Somebody will hand-change `-mode/sweep` to `-mode/delete`, and under this form that is a VALID different capability which runs, where a hash would have failed loudly.
 Not a security hole, because the URI is the authority either way and s9 audits the link actually clicked. But it changes a link from an opaque token into an editable instruction, and s10's console echoing the resolved command is the mitigation.
 
+#### One thing this direction invalidates, named rather than left to collide
+
+s5 decided "accept an abbreviated SHA, store the full one", and there is no store here to expand into.
+s37 carries what replaces it: the grammar must name exactly ONE legal SHA length, because under this direction two spellings of one commit are two identities, and expanding an abbreviation would make identity depend on network state.
+
 ### s36. The URI length budget, measured, and what actually eats it
 
 Measured 7 Oct 2026 in a scratch workbook in this session's Excel, by binary search on the longest URI that round-trips.
@@ -1523,3 +1535,63 @@ s29 proposes that cwd is derived from identity rather than declared, which keeps
 Recorded there as portability and as not leaking a filesystem layout.
 **This row adds a third reason: it is what keeps a link inside 255 and away from dot-segment normalisation.**
 A symbolic base token is short and contains no separators, which is the shape a URI wants.
+
+### s37. The SHA in the URI: exactly one legal length, and it should be 40
+
+Raised 7 Oct 2026, and it is a different question from s5 because the ground moved.
+
+#### ⚠️ s35 DELETED THE PLACE s5 PUT THE FULL SHA
+
+s5's answer was "accept an abbreviated SHA, store the full one", and the whole rule rested on there being a descriptor to expand into at creation time.
+s35 drops the descriptor store and makes the URI the only artifact.
+⚠️ **So there is nowhere left to store the full one, and an abbreviation in a link is permanent.**
+That is a DECIDED row invalidated by a direction set later, which is worth saying plainly rather than leaving the two to coexist.
+
+#### The grammar forces one length, whichever it is
+
+Under s35 identity is the hash of the URI bytes, so `@bdc56ca` and `@bdc56ca708bb...` are **two different capability identities for the same code**, and therefore two singletons.
+
+That leaves two ways out and only one of them works:
+
+* **normalise by expanding the abbreviation.** ⚠️ Fatal. Expanding requires asking the module proxy, so identity would depend on network state and on what the repo contains at the moment of the click. The same link could resolve differently on two machines or on two days, which destroys the one property this design has.
+* **refuse every length but one.** Which is s35's refuse-never-normalise rule applied here, and it is the answer. The grammar names a single legal SHA length and rejects anything else.
+
+So the question is not "may a link be abbreviated". It is "what is the one legal length".
+
+#### And the reason for 40 is now stronger than s5's, and different
+
+s5 argued brute force, and s5's corrected numbers still stand: 9 hex is about 1.4 seconds on one GPU, 12 hex about 1.6 hours, and grinding only pays if the attacker can serve that module path at all.
+
+⚠️ **The new reason has nothing to do with attackers.**
+Under s35 the abbreviation is re-resolved **by the toolchain, at click time, on every click, for the life of the link.**
+Under the old design the full SHA was frozen into a descriptor once and never resolved again.
+
+So a commit pushed to that repo next year, which happens to share nine hex characters with a link written today, changes what that link means.
+No adversary is required. The repo simply grew.
+A full SHA is the only form whose meaning cannot change, which is the whole of what a link is supposed to buy.
+
+#### The one measurement that could soften this
+
+s1 proved an abbreviation RESOLVES: `@bdc56ca` became `v0.0.0-20261006210611-bdc56ca708bb`.
+⚠️ **It did not test what happens when an abbreviation is AMBIGUOUS.**
+
+* if the toolchain REFUSES an ambiguous abbreviation, the failure is loud and an abbreviated link degrades to a broken link, which is survivable and would make a shorter length arguable
+* if it picks one, the failure is silent and an abbreviated link is indefensible at any length
+
+Nothing on this slate establishes which, and the difference decides how bad abbreviation is rather than whether 40 is safest.
+It is the same shape of experiment as s1 and s7 and it needs a repo holding two commits that share a prefix.
+
+#### ⚠️ If links must be shorter, the SHA is the wrong target
+
+Counted, from s36:
+
+| part | characters |
+|---|---|
+| `github.com/davidnoz123/nielsoln_connectors/chatgpt_capture` | **58** |
+| the full SHA | 40 |
+| `shimp://v1/go/` and the `@` | 15 |
+
+The module path is HALF AGAIN the size of the SHA and it is the compressible part: a shorter repo name, a connector at the repo root, or an alias resolved by the handler would all save more than abbreviating the SHA.
+Attacking the SHA saves 31 characters of a 255 budget that a realistic link uses 146 of, and it spends the only guarantee the design has to pay for them.
+
+So: 40, and if length ever genuinely bites, shorten the path.

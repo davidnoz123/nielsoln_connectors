@@ -30,13 +30,16 @@
 | s28 | Adopting a descriptor: hash the bytes, never trust the id | RAISED, with one rule already clear | a decision on WHEN a descriptor is adopted, and s31 may dissolve this row |
 | s29 | cwd derived from identity rather than declared in it | RAISED 7 Oct 2026, and it would close most of s21 | a decision, and s21 waits on this one |
 | s30 | A singleton per session, and an immutable store per user | **DECIDED** 7 Oct 2026 | nothing |
-| s31 | Two link forms, one identity: the short id and the self-describing link | RAISED 7 Oct 2026, and it would dissolve most of s28 | a decision on whether a second link form is legal |
-| s32 | A link carries a SHORT capability id, because s5's threat model does not transfer | RAISED 7 Oct 2026, and it looks decidable immediately | a decision on how many hex characters |
+| s31 | Two link forms, one identity: the short id and the self-describing link | SUPERSEDED by s35, which is SETTLED | a decision on whether a second link form is legal |
+| s32 | A link carries a SHORT capability id, because s5's threat model does not transfer | SUPERSEDED by s35, kept for its argument | a decision on how many hex characters |
 | s33 | The launch rule: what `runner: "go"` actually constructs | **DECIDED** in the source (s18), NOT implemented, and it was in no row | nothing |
 | s34 | The descriptor is BYTES, not an object, so nothing is ever canonicalised | RAISED 7 Oct 2026, and it is the strongest recommendation on this slate | a decision, and it changes what s3 and s19 mean |
-| s35 | Drop the descriptor store: the URI IS the canonical form | DIRECTION SET 7 Oct 2026, the grammar is the open part | a decision on the exact grammar, and s36's measurement |
+| s35 | Drop the descriptor store: the URI IS the canonical form | **DIRECTION SETTLED** 7 Oct 2026, confirmed 10 Oct; the grammar detail is open | a decision on the exact grammar, and s36's measurement |
 | s36 | The URI length budget, measured, and what actually eats it | PART MEASURED 7 Oct 2026, and it corrects s17 | the handler, which is the only way to measure the number that decides it |
 | s37 | The SHA in the URI: exactly one legal length, and it should be 40 | RAISED 7 Oct 2026, recommending 40 | one measurement: what Go does with an AMBIGUOUS abbreviation |
+| s38 | The Excel surface, measured twice: the object refuses, the formula corrupts | **DECIDED** 10 Oct 2026, measured in two repos | nothing. Length is not a constraint on this design. |
+| s39 | The minimum SHAPE another tool may refuse a shimp URI on | **DECIDED** 10 Oct 2026, answered to slate_tools | nothing, except that check 4's length follows s37 |
+| s40 | FIRST CAPABILITY: open an editor at a line of a file | ACCEPTED 10 Oct 2026 as the first capability, not built | the grammar freeze, then the handler |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -553,6 +556,12 @@ s30 pins the scope that sentence left out: **per interactive session**, not per 
 Measured: `Hyperlinks.Add` refuses an `Address` beyond **2084**, so the claim that the Hyperlink object has no cap is false, and the object route is the tighter of the two.
 The 255 figure for `HYPERLINK()` is NOT refuted, because what was measured is how much the formula stores (4095) rather than whether a click follows a link longer than 255.
 s36 carries the numbers and says which question each one answered.
+
+#### Refined 10 Oct 2026
+
+The correction above said the object "caps at 2084, so the claim that it has no cap is false".
+Pinned since: it refuses at 2085 rather than truncating, and 2084 is far above any realistic link.
+So this row's original claim is wrong in principle and harmless in practice, and the figure that actually matters is not the size but that **the object refuses loudly where the formula truncates silently**. s38 holds it.
 
 ### s18. Where this design came from
 
@@ -1243,6 +1252,13 @@ What it would change elsewhere:
 7 Oct 2026. The reason is new and it is operational rather than technical: a local store is state that gets lost, and it is empty exactly when a new user clicks their first link.
 Also, the "114 characters before a single argument" measured here is 146 of 255 for a complete realistic link, leaving 109 spare. s36 has the real numbers, including the correction that the Hyperlink OBJECT caps at 2084 while this row relied on s17 saying it does not.
 
+#### ⚠️ SUPERSEDED BY s35, confirmed SETTLED 10 Oct 2026
+
+slate_tools asked whether s31 and s37 are a reversal and which wins.
+They are, and the later rows win: **s35 settled the direction, self-describing URI and no descriptor store**, and s37 follows from it.
+This row is kept for its canonicalisation argument, which s35 answers rather than discards, by constraining the grammar and refusing instead of normalising.
+⚠️ What is SETTLED is the direction. What is still open is grammar DETAIL: s37's SHA length, whether an action may carry a query (s40), and whether `policy` dies (s21). Anyone writing Go may rely on the direction and not yet on the exact segment list.
+
 ### s32. A link carries a SHORT capability id, because s5's threat model does not transfer
 
 Raised 7 Oct 2026, from an objection that the 40-hex SHA is too pedantic.
@@ -1297,6 +1313,13 @@ And the rule that makes any prefix safe is the one git already uses: **refuse an
 * s5's CONCLUSION stands for the target SHA, full in storage and abbreviated on input, but not on the reasoning it gave.
 Its brute-force table was wrong by about five orders of magnitude and its threat model never checked delivery. Corrected in s5 on 7 Oct 2026.
 The structural point of this row survives that correction and is in fact strengthened by it: the git SHA has a real non-push attack route, path takeover, and the capability id has none.
+
+#### ⚠️ SUPERSEDED BY s35, and a reader has already been misled
+
+10 Oct 2026. s35 dropped the descriptor store, so **there is no capability id in a shimp URI**, and this row's whole subject no longer exists in the design.
+It is kept because its ARGUMENT is still the right one and still unused elsewhere: s5's strictness is about code an adversary may publish, and a hash of local bytes has a different threat model.
+But the shape it describes is gone.
+Measured consequence rather than a tidiness note: slate_tools read this row on 10 Oct and inferred "a capability id plus an action" as the URI shape to validate, which would have refused every valid link. s39 carries the correction.
 
 ### s33. The launch rule: what `runner: "go"` actually constructs
 
@@ -1481,6 +1504,16 @@ Not a security hole, because the URI is the authority either way and s9 audits t
 s5 decided "accept an abbreviated SHA, store the full one", and there is no store here to expand into.
 s37 carries what replaces it: the grammar must name exactly ONE legal SHA length, because under this direction two spellings of one commit are two identities, and expanding an abbreviation would make identity depend on network state.
 
+#### SETTLED, confirmed 10 Oct 2026 for anyone about to write Go
+
+Asked by slate_tools, which read s31 and s37 as a reversal and wanted to know which stands.
+
+**The DIRECTION is settled**: the URI is self-describing, there is no descriptor store, and identity is the hash of the identity-bearing bytes.
+s31 and s32 are superseded and marked as such.
+
+⚠️ **The GRAMMAR is not frozen**, and these are the open details: s37's SHA length, whether an action may carry a query (s40), and whether `policy` dies with the store (s21).
+s39 is the subset that is stable across all of them, and it is what another repo may validate against today.
+
 ### s36. The URI length budget, measured, and what actually eats it
 
 Measured 7 Oct 2026 in a scratch workbook in this session's Excel, by binary search on the longest URI that round-trips.
@@ -1535,6 +1568,16 @@ s29 proposes that cwd is derived from identity rather than declared, which keeps
 Recorded there as portability and as not leaking a filesystem layout.
 **This row adds a third reason: it is what keeps a link inside 255 and away from dot-segment normalisation.**
 A symbolic base token is short and contains no separators, which is the shape a URI wants.
+
+#### Superseded in part, 10 Oct 2026: the boundary is pinned and 255 does not bind
+
+s38 carries the pinned numbers and the reconciliation with slate_tools' independent measurement.
+Two corrections to this row:
+
+* the object caps at **2084** and **REFUSES** at 2085 rather than truncating, which this row did not establish
+* ⚠️ **the formula route is not an alternative at all.** slate_tools measured that a formula cell reads back as its result, so a slate pull stores the display text and the next publish writes it as a value, destroying the link silently. So the 255 figure is not a budget to design against; it is a route not to use.
+
+Which means **length is not a constraint on this design**, and the arithmetic here stands as arithmetic rather than as a limit. The handler-argv measurement this row asks for is still unmeasured and still the only number that could reintroduce one.
 
 ### s37. The SHA in the URI: exactly one legal length, and it should be 40
 
@@ -1595,3 +1638,109 @@ The module path is HALF AGAIN the size of the SHA and it is the compressible par
 Attacking the SHA saves 31 characters of a 255 budget that a realistic link uses 146 of, and it spends the only guarantee the design has to pay for them.
 
 So: 40, and if length ever genuinely bites, shorten the path.
+
+### s38. The Excel surface, measured twice: the object refuses, the formula corrupts
+
+slate_tools measured this on 8 Oct and sent it in `TO_NIELSOLN_CONNECTORS.md`.
+This session had measured the same surface on 7 Oct and recorded a contradictory number, so both were pinned exactly on 10 Oct.
+
+| route | cap | at the boundary |
+|---|---|---|
+| the Hyperlink **object** | **2084** | **REFUSES**, COM error, nothing stored |
+| `=HYPERLINK()` as a formula | **255** | **TRUNCATES SILENTLY** |
+
+Pinned, asked against stored:
+
+```
+2083 -> 2083  exact
+2084 -> 2084  exact
+2085 -> REFUSED, nothing stored
+```
+
+#### The two measurements were never in conflict
+
+slate_tools found "no cap" and this session found 2084.
+Both are right: a search that stops below 2085 finds no cap, because there is none to find until then.
+⚠️ **And the number was never the point.** The object refuses loudly and the formula truncates quietly, and that difference decides the design where 2084 against "none" does not.
+
+A realistic shimp link is under 200 characters, so **length is not a constraint on this design.**
+s36's budget arithmetic stands as arithmetic and stops being a limit.
+
+#### ⚠️ `=HYPERLINK()` is a trap, not an alternative route
+
+Measured in slate_tools, and it is worse than the silent truncation:
+
+A formula cell reads back as its **result**.
+So a slate `pull` stores the DISPLAY TEXT, and the next `publish` writes that text as a plain value, and the link is gone with nothing reporting it.
+That is how 33 live hyperlinks were lost on 2 Oct.
+
+So shimp links belong in a column declared `set_format(..., hyperlink=True)`, which uses the object, and **never in a formula**.
+⚠️ No shimp documentation may show `=HYPERLINK("shimp://...")`, because that example destroys itself on the next publish.
+
+### s39. The minimum SHAPE another tool may refuse a shimp URI on
+
+Asked by slate_tools, which will accept `shimp://` in `link_target` as a one-branch replacement for `slate://`, under a standing rule of **shape only, never liveness**: no network call, no registry lookup, no filesystem check, because "is this a URL" is local and deterministic while "does this handler exist" is slow and fails for unrelated reasons.
+
+```
+shimp://<version>/<runner...>/<module>@<sha>[/<arg>...][#<action>]
+```
+
+| # | check | why this one |
+|---|---|---|
+| 1 | scheme is exactly `shimp://`, lowercase | |
+| 2 | the first segment matches `^v[0-9]+$` | it is what lets this grammar change without their code changing. An unknown version is OURS to refuse at click time |
+| 3 | exactly one `@` before any `#` | |
+| 4 | the text from `@` to the next `/`, `#` or end matches `^[0-9a-f]{40}$` | the check worth having: it catches an abbreviated SHA, uppercase hex, a branch name pasted in and a truncated paste, which are the four things a human typing a cell actually gets wrong |
+| 5 | at least three non-empty segments before the `@` segment, and a non-empty module part before the `@` | |
+| 6 | no `?` anywhere | the grammar is positional; a query is reorderable and its repeated-key order is parser-dependent |
+| 7 | at most one `#` | |
+| 8 | no empty segment, and no trailing `/` before `#` or end | |
+
+⚠️ **Check 4's length is s37's and s37 is RAISED rather than DECIDED**, so they were asked to make 40 a named constant. It waits on one measurement, what the toolchain does with an AMBIGUOUS abbreviation. Nothing else in the shape would move.
+
+#### One check deliberately NOT delegated
+
+The grammar also requires canonical percent-encoding: uppercase hex, and no unnecessary escapes.
+Uppercase-hex is cheap and they may have it.
+⚠️ **"No unnecessary escapes" is not cheap**, because it means knowing what the author was obliged to encode, and asking another repo to implement it would make it the second implementation of this grammar.
+That belongs in the handler's own validator, which is s35, and the house rule about two implementations of subtle machinery is s13's measured reason.
+
+#### ⚠️ And the correction they needed first
+
+Their note inferred the shape from s32 and s37 as "a capability id plus an action".
+True on 7 Oct, false now: s35 dropped the store, so **there is no capability id in a shimp URI at all**.
+A tool implementing a capability-id shape would refuse every valid link.
+Marked on s32 so the next reader of that row cannot repeat it.
+
+### s40. FIRST CAPABILITY: open an editor at a line of a file
+
+Proposed by slate_tools and accepted 10 Oct 2026.
+
+```
+shimp://v1/<runner>/<editor-target>@<sha>/<args>#open?file=...&line=123
+```
+
+The shape of the action is not settled: `#open?file=...&line=123` carries a query in the FRAGMENT, which s35's no-query rule does not cover because that rule is about the identity part. Whether an action may carry a query at all is a grammar question this row inherits.
+
+#### Why this one first
+
+Tiny, used every day, no authentication, no Chrome and no Excel, so it exercises the handler, the singleton, the IPC and the launch rule without any of the hard dependencies.
+And it has a live requester, which beats a clean design nobody is waiting for.
+
+#### The route it replaces, and why that one is dead
+
+The session in `dataannotation_tools/raccoon` is building this as an Excel right-click VBA handler.
+Three measured reasons from slate_tools:
+
+* the slate workbook is `sx_<repo>.xlsx`, and an `.xlsx` cannot hold VBA. Saving strips it, so every slate workbook in every repo would have to become `.xlsm`
+* ⚠️ `publish` DELETES the worksheet and adds a new one, so every publish hands the sheet a **new CodeName**. A handler bound to the old one silently stops firing and looks identical to a working one
+* it needs Trust Center's "Trust access to the VBA project object model", per machine, which `excel_tools` already carries a refusal message for
+
+The second is the dangerous one and it is this repo's recurring shape: it appears to work, then stops, and nothing reports it.
+
+#### ⚠️ What was told to raccoon, stated honestly
+
+Written to `dataannotation_tools` on 10 Oct, needs-action, as `617bc6d2fdc5-034e87e9f030`.
+Including the part that matters most: **shimp is designed and NOT built.** There is no `shimp/` folder, no handler and no registered scheme.
+So they were told not to block on it, and given slate_tools' own interim answer: a `hyperlink=True` column opens the file today and loses the line number.
+Promising a date here would have been the one thing worse than the VBA route.

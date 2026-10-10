@@ -220,21 +220,22 @@ route of all when the question is "what was decided".
 
 ---
 
-## Check what this repo owes, at the start of every session
+## inter_repo_minutes is WITHDRAWN, 11 October 2026
 
-Other repos ask things of this one through `inter_repo_minutes`, and an
-obligation nobody reads is an obligation nobody meets.
+The session-start check that stood here is gone, and this repo no longer uses
+`inter_repo_minutes`.
 
-```powershell
-$irm = "..\inter_repo_minutes\inter_repo_minutes.py"
-& "<venv>\Scripts\python.exe" $irm --pending --oneline
-& "<venv>\Scripts\python.exe" $irm --thread <message-id>
-```
+⚠️ **Do not re-add it by copying from another repo.** Copying is how it spread
+in the first place: five repos ended up carrying four different versions of the
+same paragraph, one of them documenting a workaround for a defect that had
+already been fixed, and another pointing at a file path that never existed.
 
-⚠️ **`--thread` truncates at 120 characters**, measured 6 Oct 2026 across three
-messages of 3,860, 2,482 and 2,259 characters. The record itself is intact, so
-the full text is in `inter_repo_minutes/db/irm.db`, table `message`, column
-`text`. That is a defect in their tool and not a reason to skip the check.
+It was withdrawn because the tool was adopted during the week when it could
+report an obligation and offered no way to clear one, and when the command
+documented as showing a message printed a sixteenth of it. Those are fixed. The
+reason for withdrawing anyway is release hygiene: the convention is still
+moving, and partial deployment by hand-copy would have to be reconciled later
+in five places.
 
-Discharging an obligation is `--mark <id> actioned`, and only the recipient may
-set it. A reply does not discharge anything.
+It returns as ONE generated block from `nielsoln_agent_standards`, when that is
+released. Not as a paragraph anybody pastes.

@@ -45,7 +45,7 @@
 | s43 | The runner is a TABLE, not a parse: `go/run` consumes two segments | **DECIDED** 11 Oct 2026 | nothing |
 | s44 | The identity bytes, exactly, with a test vector | **DECIDED** 11 Oct 2026, and it can never be revised | nothing |
 | s45 | Argv encoding, and the arguments that are REFUSED | **DECIDED** 11 Oct 2026 | nothing |
-| s46 | The TARGET-side IPC client, which s20 requires and s11 declined to provide | **OPEN**, and it is the only architectural question left before building | s13: where a shared package lives, given every connector is its own module |
+| s46 | The TARGET-side IPC client, which s20 requires and s11 declined to provide | **OPEN**, the last blocker, with a recommendation: the keeper adapts | s13: where a shared package lives, given every connector is its own module |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -2045,3 +2045,59 @@ The options, none chosen:
 #### Why this is the only architectural question left
 
 Items 1 to 5 of the pre-build list are decided as s43, s29, s21, s44 and s45. This one is not a grammar detail; it decides whether a shimp capability is a normal program or a program that links shimp.
+
+#### A fifth option, recorded because it was PROPOSED AND WITHDRAWN
+
+11 Oct 2026. Asked whether this had been decided as "a small file in each connector folder", which it had not. It was proposed and then withdrawn by its proposer a turn later, and neither half was on this row until now.
+
+**Option E: one source file, copied, with a pinned-hash drift test.**
+A single `shimpipc.go` vendored by copy into each target, plus a test asserting its sha256 against a recorded constant.
+
+The argument for it: s13's objection to copying is "two implementations of subtle machinery", and a copy WITH a tripwire is not two implementations, it is one implementation in N places with a loud alarm when they diverge. It is also this repo's own idiom, since `AGENTS.project.md` already requires that any new syscall struct gets a test pinning a known value, for this exact class of problem. It keeps empty `require` blocks, keeps the trust root uncoupled and keeps stdout free.
+
+⚠️ **And then the evidence below made it unnecessary.** Recorded anyway, because a withdrawn option with its reason is worth more than an option list that looks exhaustive.
+
+#### The evidence that changed the recommendation
+
+Asked why a target needs to know anything about shimp at all. The answer is that it is **only** the listener protocol: identity, hashing, the lock, the registry, the URI and the singleton are all invisible to a target, and its entire obligation is to be reachable, so that a SECOND click can arrive at the instance already running.
+
+Then `pdf_view_server` was read rather than assumed, and it already has **two** action channels:
+
+| channel | where |
+|---|---|
+| `POST /select`, token-guarded | `main.go:132` |
+| a watched `.nav` file, polled every 100ms | `main.go:656` |
+
+Neither needs a line of shimp code.
+
+⚠️ **And s4 is what makes the keeper able to use them, which neither row said.**
+"Declared ports, never allocated" exists so identity is computable before the process runs. Its second consequence is that the port is in the capability's argv, argv is in the URI, so **the keeper knows where to send an action by reading the link.** No discovery, no registry, nothing to ask the target.
+
+There is a matching answer for `READY`: for a port-serving target, liveness IS the handshake, by polling the port until it answers, which is what `chrome_sessions` already does with `/json/version`. s12's warning that liveness is not authority does not bite, because "is it up" is all the keeper needs.
+
+#### So the question is smaller than this row first stated
+
+| class of target | needs | example |
+|---|---|---|
+| **one-shot** | nothing. No resident process, so no channel. Every click is s6's cold path at ~650ms | `chrome_sessions` |
+| **already reachable** | nothing IN THE TARGET. One adapter per mechanism, one copy, in the keeper | `pdf_view_server`, `remote_chrome_cdp` |
+| **resident with no channel of its own** | the listener code | ⚠️ possibly empty for a long time |
+
+#### ⚠️ A correction to this row's own reasoning
+
+When option C was first weighed, it was claimed that s10's visible console kills it, because stdout would be the reply channel.
+
+**That was too broad.** It kills the stdin/stdout VARIANT of adapting, where stdout and the console are the same file descriptor. It does not kill keeper-adapts generally: an adapter that POSTs to a declared port or writes a nav file leaves stdout entirely free for s10's `[full_update] step 1/3`.
+
+#### The recommendation, not yet a decision
+
+**The keeper adapts, with the declared port as the primary adapter, and no target-side library until a target appears with no channel of its own.**
+
+It also lands best against the audit story: a capability stays a normal program that can be `go run` standalone and understood without understanding shimp, which is what s9's second line is for.
+
+The residual cost, stated: the keeper carries an adapter per mechanism and that set is open-ended. But it is one copy in one place rather than N copies in N targets, which is s13's distinction exactly.
+
+#### And one spec gap found while describing this row
+
+⚠️ s20's framing row says only **"length-prefixed UTF-8 JSON"**, with no prefix width and no byte order.
+With one implementation that is invisible. With several hand-rolled ones it is an interop bug that appears under load. So the framing needs pinning whichever option wins, and that is a one-line decision nobody has taken.

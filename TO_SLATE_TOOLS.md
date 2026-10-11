@@ -39,10 +39,12 @@ consequence of leaving a stale row readable.
 shimp://<version>/<runner...>/<module>@<sha>[/<arg>...][#<action>]
 ```
 
-A real example, 196 characters, from the capability in section 5:
+A real example, 170 characters, from the capability in section 5.
+The file is RELATIVE on purpose: an absolute path would leak a machine's
+layout into every cell holding the link, and into the audit paste:
 
 ```
-shimp://v1/go/run/github.com/davidnoz123/nielsoln_connectors/editor_open@1173327f58213898a33698949e49c5aa6d9a83e2/-editor/code#open?file=%2Fc%2Fanalytics%2Fdave%2Fslate_tools%2Fslatex.py&line=1735
+shimp://v1/go/run/github.com/davidnoz123/nielsoln_connectors/editor_open@1173327f58213898a33698949e49c5aa6d9a83e2/-editor/code#open?file=slate_tools%2Fslatex.py&line=1735
 ```
 
 Eight checks, all pure string work. No network, no filesystem, no registry,

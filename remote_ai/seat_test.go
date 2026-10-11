@@ -18,18 +18,18 @@ func TestSeatNameRefusesAnythingThatCouldRoute(t *testing.T) {
 		}
 	}
 	for _, name := range []string{
-		"../bridge",   // the whole reason this is checked at all
-		"a/b",         // a path of its own
-		"a..b",        // dot segments, which a proxy may normalise
-		".",           // "
-		"",            // the empty case is handled before the regexp
-		"A",           // a Linux account may not have it, nor may this
-		"1seat",       // useradd refuses a leading digit
-		"a_b",         // not in the manifest's charset either
-		"a b",         // a space ends an argument somewhere
-		"a?b",         // a query string
-		"a%2fb",       // an encoded slash, decoded by somebody downstream
-		"ことり",         // not ASCII
+		"../bridge", // the whole reason this is checked at all
+		"a/b",       // a path of its own
+		"a..b",      // dot segments, which a proxy may normalise
+		".",         // "
+		"",          // the empty case is handled before the regexp
+		"A",         // a Linux account may not have it, nor may this
+		"1seat",     // useradd refuses a leading digit
+		"a_b",       // not in the manifest's charset either
+		"a b",       // a space ends an argument somewhere
+		"a?b",       // a query string
+		"a%2fb",     // an encoded slash, decoded by somebody downstream
+		"ことり",       // not ASCII
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", // 40, over the limit
 	} {
 		if seatName.MatchString(name) {

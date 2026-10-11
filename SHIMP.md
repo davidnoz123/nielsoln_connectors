@@ -27,13 +27,13 @@
 | s25 | The command surface: nobody hand-builds a capability id | **DECIDED** in the source (s18), NOT implemented | nothing |
 | s26 | What a target must carry before it can be a capability | **DECIDED** in the source (s18), NOT implemented, and it has a wrinkle here | nothing |
 | s27 | SHIMP is Shim Protocol, and the name collision is known | **DECIDED** in the source (s18) | nothing |
-| s28 | Adopting a descriptor: hash the bytes, never trust the id | RAISED, with one rule already clear | a decision on WHEN a descriptor is adopted, and s31 may dissolve this row |
+| s28 | Adopting a descriptor: hash the bytes, never trust the id | SUPERSEDED by s35, there is nothing to adopt | nothing |
 | s29 | cwd derived from identity rather than declared in it | **DECIDED** 11 Oct 2026: derived, and the directory is SCRATCH | nothing |
 | s30 | A singleton per session, and an immutable store per user | **DECIDED** 7 Oct 2026 | nothing |
 | s31 | Two link forms, one identity: the short id and the self-describing link | SUPERSEDED by s35, which is SETTLED | a decision on whether a second link form is legal |
 | s32 | A link carries a SHORT capability id, because s5's threat model does not transfer | SUPERSEDED by s35, kept for its argument | a decision on how many hex characters |
 | s33 | The launch rule: what `runner: "go"` actually constructs | **DECIDED** in the source (s18), NOT implemented, and it was in no row | nothing |
-| s34 | The descriptor is BYTES, not an object, so nothing is ever canonicalised | RAISED 7 Oct 2026, and it is the strongest recommendation on this slate | a decision, and it changes what s3 and s19 mean |
+| s34 | The descriptor is BYTES, not an object, so nothing is ever canonicalised | SUPERSEDED by s35, kept for the principle it established | nothing |
 | s35 | Drop the descriptor store: the URI IS the canonical form | **BUILDABLE** 12 Oct 2026; grammar frozen and no blockers | nothing |
 | s36 | The URI length budget, measured, and what actually eats it | PART MEASURED 7 Oct 2026, and it corrects s17 | the handler, which is the only way to measure the number that decides it |
 | s37 | The SHA in the URI: exactly one legal length, and it should be 40 | RAISED 7 Oct 2026, recommending 40 | one measurement: what Go does with an AMBIGUOUS abbreviation |
@@ -1118,6 +1118,14 @@ Related: s25's `cap create` is the author's side of the same object, and this is
 Raised 7 Oct 2026: if a self-describing bearer link is legal, the descriptor arrives WITH the click rather than ahead of it, and this row's open question stops being "when is a descriptor adopted" because the answer is "on the click that carries it".
 The rule above survives either way, and under s31 it stops being an adoption policy and becomes the bearer form's defining behaviour.
 
+#### State corrected 12 Oct 2026: DISSOLVED, not open
+
+This row's state said "RAISED, with one rule already clear", and it pointed at s31 as the row that might dissolve it. s31 was itself superseded, and **s35 dissolved this row outright**: there is no descriptor store, so nothing is ever adopted into one.
+
+What survives is the rule, and it moved rather than died: **hash the bytes, never trust an id you were handed.** Under s35 that is no longer an adoption policy, it is how a URI is verified at all, and s44 is where it now lives, as the identity bytes being hashed verbatim after s35's validator has refused every other spelling.
+
+⚠️ Corrected for the same reason as s34: the state is what a reader scans, and s32 proved that a stale one gets implemented.
+
 ### s29. cwd derived from identity rather than declared in it
 
 Raised 7 Oct 2026, from the observation that a capability is a system-wide singleton, so the folder it runs in cannot sensibly be some arbitrary place the author happened to be standing.
@@ -1509,6 +1517,14 @@ Two things, now that the shape is cheap to change rather than frozen by fear:
 Direction set 7 Oct 2026: if the descriptor store is dropped and the URI carries everything, there is no JSON to canonicalise and this row's recommendation is replaced rather than adopted.
 The principle survives in a different shape: **constrain the grammar so there is exactly one legal spelling, then REFUSE anything else rather than normalise it.**
 The asymmetry is the same one that decides this row. A wrong normaliser maps two spellings to one id silently; a wrong validator rejects a good link loudly.
+
+#### State corrected 12 Oct 2026
+
+This row's STATE said "RAISED, and it is the strongest recommendation on this slate" while its own body said s35 had inverted it.
+
+⚠️ **A row whose state contradicts its body is the s32 failure waiting to happen again**: s32 was read by another repo, which derived a URI shape that no longer existed and would have refused every valid link. The body is not what a reader scans. The state is.
+
+What survives, and it is not small: **constrain the format so there is exactly one legal spelling, then REFUSE anything else rather than normalise it.** s35 applies that to the URI, s45 to argv encoding and s44 to the identity bytes, each for the asymmetry this row first named: a wrong normaliser maps two spellings onto one id silently, while a wrong validator rejects a good input loudly.
 
 ### s35. Drop the descriptor store: the URI IS the canonical form
 

@@ -20,7 +20,7 @@
 | s18 | Where this design came from | **REFERENCE** | nothing |
 | s19 | The URI grammar, and what identity IS | **DECIDED** in the source (s18), NOT implemented | nothing, except that s21 must close before the first descriptor is written |
 | s20 | The keeper, the IPC, and the lifecycle | **DECIDED** in the source (s18), NOT implemented | nothing. These are the spec to build against. |
-| s21 | Two more descriptor fields the source froze, and s19's list is short | **OPEN**, and it blocks the first descriptor exactly as s3 does | a decision on whether `policy` is inside the hashed bytes, and s29 on whether `base` survives at all |
+| s21 | Two more descriptor fields the source froze, and s19's list is short | **DECIDED** 11 Oct 2026: `base` deleted by s29, `policy` dropped | nothing |
 | s22 | Windows first, and the spec must not learn the word "pipe" | **DECIDED** in the source (s18), NOT implemented | nothing. It is the build order. |
 | s23 | Two audit questions, and only one of them is answerable today | **DECIDED** in the source (s18), NOT implemented | nothing |
 | s24 | Four verdicts, because UNVERIFIED is the one that earns the set | **DECIDED** in the source (s18), NOT implemented | nothing |
@@ -28,13 +28,13 @@
 | s26 | What a target must carry before it can be a capability | **DECIDED** in the source (s18), NOT implemented, and it has a wrinkle here | nothing |
 | s27 | SHIMP is Shim Protocol, and the name collision is known | **DECIDED** in the source (s18) | nothing |
 | s28 | Adopting a descriptor: hash the bytes, never trust the id | RAISED, with one rule already clear | a decision on WHEN a descriptor is adopted, and s31 may dissolve this row |
-| s29 | cwd derived from identity rather than declared in it | RAISED 7 Oct 2026, and it would close most of s21 | a decision, and s21 waits on this one |
+| s29 | cwd derived from identity rather than declared in it | **DECIDED** 11 Oct 2026: derived, and the directory is SCRATCH | nothing |
 | s30 | A singleton per session, and an immutable store per user | **DECIDED** 7 Oct 2026 | nothing |
 | s31 | Two link forms, one identity: the short id and the self-describing link | SUPERSEDED by s35, which is SETTLED | a decision on whether a second link form is legal |
 | s32 | A link carries a SHORT capability id, because s5's threat model does not transfer | SUPERSEDED by s35, kept for its argument | a decision on how many hex characters |
 | s33 | The launch rule: what `runner: "go"` actually constructs | **DECIDED** in the source (s18), NOT implemented, and it was in no row | nothing |
 | s34 | The descriptor is BYTES, not an object, so nothing is ever canonicalised | RAISED 7 Oct 2026, and it is the strongest recommendation on this slate | a decision, and it changes what s3 and s19 mean |
-| s35 | Drop the descriptor store: the URI IS the canonical form | **DIRECTION SETTLED** 7 Oct 2026, confirmed 10 Oct; the grammar detail is open | a decision on the exact grammar, and s36's measurement |
+| s35 | Drop the descriptor store: the URI IS the canonical form | **GRAMMAR FROZEN** 11 Oct 2026; s46 is the last blocker | s46, which is not a grammar question |
 | s36 | The URI length budget, measured, and what actually eats it | PART MEASURED 7 Oct 2026, and it corrects s17 | the handler, which is the only way to measure the number that decides it |
 | s37 | The SHA in the URI: exactly one legal length, and it should be 40 | RAISED 7 Oct 2026, recommending 40 | one measurement: what Go does with an AMBIGUOUS abbreviation |
 | s38 | The Excel surface, measured twice: the object refuses, the formula corrupts | **DECIDED** 10 Oct 2026, measured in two repos | nothing. Length is not a constraint on this design. |
@@ -42,6 +42,10 @@
 | s40 | FIRST CAPABILITY: open an editor at a line of a file | ACCEPTED 10 Oct 2026 as the first capability, not built | the grammar freeze, then the handler |
 | s41 | A query is legal AFTER the `#` and banned before it | **DECIDED** 11 Oct 2026 | nothing. It closes one of the four grammar blockers. |
 | s42 | Two outbound messages were silently never delivered | RECORDED 11 Oct 2026 | nothing from this repo |
+| s43 | The runner is a TABLE, not a parse: `go/run` consumes two segments | **DECIDED** 11 Oct 2026 | nothing |
+| s44 | The identity bytes, exactly, with a test vector | **DECIDED** 11 Oct 2026, and it can never be revised | nothing |
+| s45 | Argv encoding, and the arguments that are REFUSED | **DECIDED** 11 Oct 2026 | nothing |
+| s46 | The TARGET-side IPC client, which s20 requires and s11 declined to provide | **OPEN**, and it is the only architectural question left before building | s13: where a shared package lives, given every connector is its own module |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -446,6 +450,13 @@ sessions.
 Open: where a shared package lives, given every connector is its own module
 today. Not urgent until the second consumer exists, which is what s12's
 authority probe will make it.
+
+#### ⚠️ This now blocks the FIRST capability, not the second consumer
+
+11 Oct 2026. This row says the question is "not urgent until the second consumer exists, which is what s12's authority probe will make it".
+
+That was wrong, and I repeated it twice while listing what blocks building.
+s20 requires every target to speak READY and length-prefixed JSON, s11 never provided a target-side library, so the first capability already needs a shared package or a deliberate hand-rolled copy. s46 carries it.
 
 ### s14. patchbucket: transport and ordering, never merging
 
@@ -932,6 +943,20 @@ Raised 7 Oct 2026: if cwd is derived from the capability id rather than declared
 Half of this row would then be answered by deletion rather than by decision, and the `policy` half would be all that is left.
 See s29, which also records why a derived cwd cannot itself be a descriptor field.
 
+#### DECIDED 11 Oct 2026, and both halves are closed
+
+* **`base` is deleted**, not decided. s29 derives cwd from identity, so there is no relative path left for a base to anchor. s45 carries the symbolic tokens that argv needs instead.
+* **`policy` is DROPPED.**
+
+The reason for dropping it rather than including it: s17 already records that SHIMP never enforces a policy field, so it is a claim and never a lock.
+Under s35 every link pays for it in length, and under s44 it would be in the hashed bytes, so two capabilities differing only in a claim about themselves would be different capabilities with separate instances.
+
+⚠️ **A field nobody enforces, that every link pays for, and that forks identity, is a poor trade three times over.**
+
+What the field was FOR survives and lands better: s24's audit report states what a target can actually reach, having read the source, rather than repeating what the target claimed about itself. A verified observation beats an unenforced declaration, which was s17's point all along.
+
+⚠️ And s26's conclusion is now the general rule: a descriptor field cannot be "added later", so there are only two honest positions, in the first version or never. `policy` is never.
+
 ### s22. Windows first, and the spec must not learn the word "pipe"
 
 [21] lists platform scope among the ten decisions that had to be frozen before the design could be called ready, [23] froze it, and the re-audit of 7 Oct found it in no row.
@@ -1120,6 +1145,27 @@ If `~/.shimp/caps/<id>/work` holds a tool's real working data, it is **not** dis
 Both rules stay true only if the directory is declared SCRATCH and targets are forbidden from keeping anything there that matters.
 The alternative is that uninstall refuses it and says why.
 Either is fine. Having neither written down is how a cleanup becomes a data loss, so it belongs in this row before anything is built.
+
+#### DECIDED 11 Oct 2026: derived, and the directory is declared SCRATCH
+
+**cwd is derived from the identity hash and is not in the URI at all.**
+
+```
+cwd = ~/.shimp/run/<session>/<identity-hex>/work
+```
+
+Under the session scope of s30, because the working directory of a live instance is live state.
+
+So the grammar has no cwd segment, `base` dies with it, and identity is what code, at what commit, with what arguments. Nothing about where.
+
+#### And the contradiction this row raised is answered
+
+This row set s20's "runtime state is disposable and self-healing" against s17's "uninstall removes only what shimp installed", and observed that one of them becomes a data loss if that directory holds a tool's real data.
+
+⚠️ **The directory is declared SCRATCH.** A target must not keep anything there that matters, uninstall may remove it without asking, and a crash may leave it to be recreated.
+Both frozen rules stay true, and the cost is pushed where it can be seen: a target needing durable state must be told where to put it, in argv, which is s45's symbolic tokens.
+
+That is the "relocates the path problem into argv" catch this row predicted, now with somewhere to go.
 
 ### s30. Local or Global: the singleton's scope, and the two halves disagree
 
@@ -1516,6 +1562,28 @@ s31 and s32 are superseded and marked as such.
 ⚠️ **The GRAMMAR is not frozen**, and these are the open details: s37's SHA length, whether an action may carry a query (s40), and whether `policy` dies with the store (s21).
 s39 is the subset that is stable across all of them, and it is what another repo may validate against today.
 
+#### GRAMMAR FROZEN 11 Oct 2026, except one architectural question
+
+The five items this row left open are decided:
+
+| was open | decided as |
+|---|---|
+| runner segmentation | s43, a closed table, `go/run` consumes two segments |
+| cwd derived or declared | s29, derived, and the directory is scratch |
+| `policy` in or out | s21, dropped |
+| the identity bytes | s44, with a test vector |
+| argv encoding and refusals | s45 |
+
+So the grammar is:
+
+```
+shimp://v1/go/run/<module>@<40 hex>[/<arg>...][#<action>]
+```
+
+⚠️ **One thing still blocks building, and it is not grammar**: s46, the target-side IPC client, which s20 requires and s11 declined to provide, and which lands on s13's unanswered question about where a shared package lives.
+
+s37's SHA length stays RAISED and does NOT block: build with 40, because permitting a shorter form later ADDS a legal spelling and breaks nothing, while starting short is unrecoverable.
+
 ### s36. The URI length budget, measured, and what actually eats it
 
 Measured 7 Oct 2026 in a scratch workbook in this session's Excel, by binary search on the longest URI that round-trips.
@@ -1832,3 +1900,148 @@ Not a better `--thread`, and not a way to clear an obligation. Both of those wer
 
 ⚠️ **A withdrawal, or any other non-delivery, must be visible to the SENDER.**
 A channel that can silently fail to deliver a STOP is worse than no channel at all.
+
+### s43. The runner is a TABLE, not a parse: `go/run` consumes two segments
+
+Decided 11 Oct 2026. It was in no row, and it is why a `run` segment went missing from s35's example without anybody noticing.
+
+#### The problem
+
+```
+shimp://v1/go/run/github.com/davidnoz123/...@<sha>/...
+            ^^^^^^ ^^^^^^^^^^
+            runner  module
+```
+
+⚠️ **A left-to-right parser cannot tell where the runner ends**, because a module path has slashes too. Nothing in the text marks the boundary.
+
+#### The decision: a closed table, keyed on the first segment after the version
+
+| runner | segments it consumes | argv it contributes |
+|---|---|---|
+| `go/run` | 2 | `go`, `run` |
+
+Exactly one entry today.
+⚠️ **An unrecognised runner FAILS CLOSED**, which is the rule already chosen for `version` in s19 and the reason s3 insisted the field exist before the first link.
+
+So the parse is: take the version, look up the next segment in the table, consume that runner's segment count, and everything from there to the segment containing `@` is the module.
+
+#### Why a table rather than one segment
+
+The alternative was `go+run` as a single segment, which parses with no table at all.
+Rejected because the table is needed regardless: s33's launch rule has to map a runner onto literal argv, and that mapping IS the table. A `+` separator would buy a simpler parser and still leave the table to be written, so it saves nothing and reads worse.
+
+#### And this is the positive form of s33
+
+s33 said `runner: "go"` means "prepend `go run`". With the runner in the URI the rule collapses into the table above: **the runner's segments ARE the leading argv**, literally, in order. No implied verb, no prepend rule, nothing to get wrong.
+
+### s44. The identity bytes, exactly, with a test vector
+
+Decided 11 Oct 2026.
+Every row said identity is "the hash of the identity-bearing bytes" and none said which bytes.
+
+⚠️ **This is the one decision with no migration path at all.** A version segment lets the grammar change; nothing lets the hashing rule change, because every id that ever existed was computed under it.
+
+#### The rule
+
+```
+identity_bytes = the URI from the first byte of "shimp://" up to and
+                 including the byte before the first "#", verbatim,
+                 as received, with no transformation whatsoever
+identity       = sha256(identity_bytes)
+```
+
+Spelled out, because each clause was a real alternative:
+
+* **the scheme IS included.** `shimp://` is part of the bytes. A future scheme would be a different protocol, not a different spelling of this one.
+* **the version IS included.** `v1` is in the hash, so a v2 link can never collide with a v1 link even if every other segment matches.
+* **up to the byte before the first `#`**, so the `#` itself is excluded and the fragment is excluded. s41 is what makes this safe: the action is not hashed, so a query there cannot fork an identity.
+* **no `#` at all means the whole URI is the identity bytes.** That is the "ensure it is running, send nothing" form.
+* ⚠️ **verbatim, as received.** No case folding, no percent-decoding, no NFC pass, no trailing-slash removal. s35's refuse-never-normalise rule is what makes this correct: anything non-canonical was already REFUSED by the validator, so by the time bytes are hashed there is exactly one legal spelling and nothing left to normalise.
+
+#### The test vector, so an implementation can prove itself
+
+```
+identity_bytes (126 bytes):
+shimp://v1/go/run/github.com/davidnoz123/nielsoln_connectors/editor_open@1173327f58213898a33698949e49c5aa6d9a83e2/-editor/code
+
+sha256:
+7564ba535f3a1d65f96c219b29112e5195b4cd7c3c4f9c007e3b84fc5e34d9bc
+```
+
+That is a real sha256 of those exact bytes, computed 10 Oct 2026.
+A first implementation that does not reproduce it has the rule wrong, and this is the cheapest possible way to find that out.
+
+#### What the hash names
+
+The lock, the IPC endpoint and the derived working directory of s29. All internal, so the full 64 hex characters are used there and length costs nothing. Only a LINK is ever abbreviated, which is s37.
+
+### s45. Argv encoding, and the arguments that are REFUSED
+
+Decided 11 Oct 2026. Each argv item is one path segment, in order, between the target segment and the `#`.
+
+#### What must be encoded
+
+| in an argument | becomes | why |
+|---|---|---|
+| `/` | `%2F` | it would otherwise start a new segment, so a new argument |
+| `#` | `%23` | it would otherwise start the fragment |
+| `?` | `%3F` | s41 bans a query before the `#` |
+| a space | `%20` | |
+| `%` | `%25` | or a literal `%2F` in an argument could not be distinguished from an encoded `/` |
+| anything outside unreserved `A-Za-z0-9-._~` | its `%XX` form | |
+
+Uppercase hex always, and **only what must be encoded**: an unnecessary escape is refused rather than accepted, per s35.
+
+⚠️ **And `..` must be `%2E%2E`.** Not for length: a literal `..` in a URI path is subject to RFC 3986 dot-segment removal by any parser or intermediary that touches it, so an un-encoded relative path can arrive **silently different from the one written**. s36 measured the length cost; this is the correctness cost and it is the larger one.
+
+#### What is REFUSED
+
+* ⚠️ **an empty-string argument.** A path segment cannot be empty, because s39 check 8 bans empty segments so that `//` is never ambiguous.
+So a capability needing `-flag ""` cannot be expressed, and that is a refusal rather than a gap: it is stated here so the first person who needs one gets an error naming the reason instead of a link that silently drops an argument.
+* an argument that is only dot-segments, for the same RFC 3986 reason.
+* a lowercase or unnecessary escape anywhere, per s35.
+
+#### Symbolic expansion, which is s29's relocated problem
+
+s29 moves paths out of cwd and into argv, so argv needs the symbolic tokens [25] proposed.
+
+A **closed set**, with unknown symbols failing closed: `$HOME` and `$CAPDIR` today.
+
+⚠️ **Hashed literally, expanded at LAUNCH.**
+The identity bytes contain `$HOME`, never the expansion, which is what keeps one capability one identity across machines. s44's verbatim rule and this are the same rule seen twice.
+
+And the honest cost, which belongs in s24's report rather than in a promise: **an auditor reading the link cannot say which directory will be touched**, only which symbol was named. That is a genuine loss against an absolute path, traded for portability and for not publishing a filesystem layout in every link.
+
+### s46. The TARGET-side IPC client, which s20 requires and s11 declined to provide
+
+Raised 11 Oct 2026.
+⚠️ **I dismissed s13 twice as "chrome_sessions, not shimp". That was wrong, and this row is why.**
+
+#### Two rows that do not meet
+
+* **s20 requires every target to speak the protocol.** The keeper "launches the target with the endpoint in its environment, and waits for a `READY` message before forwarding any action". So a target must read `SHIMP_ENDPOINT`, connect, send `READY`, then read length-prefixed UTF-8 JSON and reply `{"ok":true}` or `{"ok":false,"error":"..."}`.
+* **s11 decided "no Go API for now"** and that decision was about the CALLER side, one capability ensuring another without a human. It never addressed the target side at all.
+
+So as specified, **every target hand-rolls READY and the framing.**
+
+#### Why that is not survivable past the first one
+
+For one target it is fine. For three it is precisely s13's hazard, which is measured rather than feared: two implementations of subtle machinery in one repo cost three separate incidents in one evening on 5 Oct, all in the one area where two tools both reasoned about the same thing.
+
+And framing is exactly that kind of machinery. A length prefix read one byte short fails intermittently and under load.
+
+#### Which lands it on s13's open question
+
+A shared package needs somewhere to live, and every connector is its own module today, so a target importing `shimp/ipc` takes a cross-module dependency inside one repo. That is s13's question, unanswered, and it now blocks the FIRST capability rather than the second consumer of a CDP client.
+
+The options, none chosen:
+
+* a `shimp/ipc` package in the shimp module, imported by targets. One implementation, and every target gains a dependency on the handler's own module, which is the trust root.
+* a separate tiny module, `nielsoln_connectors/shimpipc`, depended on by both. More modules, cleanest dependency direction.
+* ⚠️ **no library, and the keeper adapts instead.** [25]'s consequence, recorded on s11: with keeper-owned IPC the keeper could translate an action into whatever mechanism a target already speaks, so a target needs no SHIMP code at all. That is the only option that keeps targets dependency-free, and it moves the complexity into the keeper where there is exactly one copy of it.
+* hand-roll the first one deliberately, with the duplication recorded as a debt rather than discovered later.
+
+#### Why this is the only architectural question left
+
+Items 1 to 5 of the pre-build list are decided as s43, s29, s21, s44 and s45. This one is not a grammar detail; it decides whether a shimp capability is a normal program or a program that links shimp.

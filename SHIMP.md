@@ -38,8 +38,10 @@
 | s36 | The URI length budget, measured, and what actually eats it | PART MEASURED 7 Oct 2026, and it corrects s17 | the handler, which is the only way to measure the number that decides it |
 | s37 | The SHA in the URI: exactly one legal length, and it should be 40 | RAISED 7 Oct 2026, recommending 40 | one measurement: what Go does with an AMBIGUOUS abbreviation |
 | s38 | The Excel surface, measured twice: the object refuses, the formula corrupts | **DECIDED** 10 Oct 2026, measured in two repos | nothing. Length is not a constraint on this design. |
-| s39 | The minimum SHAPE another tool may refuse a shimp URI on | **DECIDED** 10 Oct 2026, answered to slate_tools | nothing, except that check 4's length follows s37 |
+| s39 | The minimum SHAPE another tool may refuse a shimp URI on | **DECIDED** 10 Oct 2026, check 6 corrected 11 Oct | nothing, except that check 4's length follows s37 |
 | s40 | FIRST CAPABILITY: open an editor at a line of a file | ACCEPTED 10 Oct 2026 as the first capability, not built | the grammar freeze, then the handler |
+| s41 | A query is legal AFTER the `#` and banned before it | **DECIDED** 11 Oct 2026 | nothing. It closes one of the four grammar blockers. |
+| s42 | Two outbound messages were silently never delivered | RECORDED 11 Oct 2026 | nothing from this repo |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -1712,6 +1714,14 @@ True on 7 Oct, false now: s35 dropped the store, so **there is no capability id 
 A tool implementing a capability-id shape would refuse every valid link.
 Marked on s32 so the next reader of that row cannot repeat it.
 
+#### ⚠️ Check 6 was WRONG and has been corrected, 11 Oct 2026
+
+As shipped, check 6 said "no `?` anywhere". It would have refused s40's first capability, whose action is `#open?file=...&line=123`.
+
+**Corrected: no `?` BEFORE the `#`, permitted after it.** s41 carries the reasoning, which is that the fragment is not hashed so a query there cannot fork an identity.
+
+⚠️ And the correction travelled through a channel that had been withdrawn, so neither the original nor the fix arrived by that route. See s42. Both are now files in this repo.
+
 ### s40. FIRST CAPABILITY: open an editor at a line of a file
 
 Proposed by slate_tools and accepted 10 Oct 2026.
@@ -1744,3 +1754,81 @@ Written to `dataannotation_tools` on 10 Oct, needs-action, as `617bc6d2fdc5-034e
 Including the part that matters most: **shimp is designed and NOT built.** There is no `shimp/` folder, no handler and no registered scheme.
 So they were told not to block on it, and given slate_tools' own interim answer: a `hyperlink=True` column opens the file today and loses the line number.
 Promising a date here would have been the one thing worse than the VBA route.
+
+#### The action's shape is settled, 11 Oct 2026
+
+This row said "the shape of the action is not settled" because `#open?file=...&line=123` carries a query in the fragment.
+s41 settles it: a query is legal after the `#` and banned before it, because the fragment is not part of the hashed identity.
+
+So this capability's link needs no exception and the grammar needs no special case.
+
+### s41. A query is legal AFTER the `#` and banned before it
+
+Decided 11 Oct 2026, resolving a contradiction between two rows written a day apart.
+
+#### ⚠️ The contradiction, and it had already been sent to another repo
+
+s39 check 6, given to slate_tools as a shape rule: **"no `?` anywhere"**.
+s40's first capability, the editor opener: `#open?file=...&line=123`.
+
+So the check this repo asked slate_tools to implement would have refused the first capability's own links.
+s40 noted the tension in its own text; the message did not.
+
+#### The rule, and why the ban was never about `?`
+
+s35 bans a query in the identity part for a precise reason: a query is reorderable and its repeated-key order is parser-dependent, so **it cannot appear in the bytes that are hashed**, or two spellings of one capability become two singletons.
+
+⚠️ **The fragment is not hashed.** s19 and s35 put the action outside identity, and s35 made that syntactic by using the fragment for it.
+So reordering an action's query cannot fork an identity, and the objection simply does not reach past the `#`.
+
+That makes this a positive argument rather than a concession: the fragment is the one place in the URI where a query is safe, *because* of what the fragment is.
+
+```
+no `?` before the `#`      the identity part, hashed, must have one spelling
+`?` permitted after it     the action, not hashed, forwarded as an opaque string
+```
+
+RFC 3986 is content with it: the fragment is everything after the first `#`, and `?` is a legal fragment character, so `#open?file=x&line=1735` parses without special handling.
+
+#### What follows
+
+* **the target owns action spelling.** Two spellings of one action both reach the running instance, and what it makes of them is its business, per s20's rule that an action is an opaque message.
+* s39's check 6 is corrected to "no `?` before the `#`" and re-sent.
+* this closes one of the four decisions s35 left open.
+
+### s42. Two outbound messages were silently never delivered
+
+Recorded 11 Oct 2026, because it is the exact failure shape this repo keeps naming and this time this repo was the victim rather than the finder.
+
+On 10 Oct two messages were sent through `inter_repo_minutes`:
+
+| id | to | what |
+|---|---|---|
+| `617bc6d2fdc5-034e87e9f030` | dataannotation_tools | needs-action **STOP**: you are mid-build on a route that cannot work |
+| `617bc6d2fdc5-7778661e9352` | slate_tools | the URI shape they were blocked on |
+
+Both were marked **`withdrawn` at 2026-10-10T23:45** when the IRM deployment was withdrawn, and **neither carries a `seen` mark.**
+
+⚠️ **Nothing reported the non-delivery, at either end.**
+The sending command said "sent". The withdrawal said nothing to the sender. It was found a day later only by querying `irm.db` directly, because somebody thought to check.
+
+#### Why this is a row and not a grumble
+
+The STOP was the urgent one. A session was building an Excel right-click VBA handler that cannot work for three measured reasons, and the message telling them so was retracted without telling anybody. The cost of a silent non-delivery is not the message; it is that **the sender stops looking for another way to reach them.**
+
+That is `chrome_sessions`' lesson in a different costume, s12: a browser answering on a port is not a browser that is signed in, and the failure that matters is the one that looks like success.
+
+#### What was done instead
+
+`TO_DATAANNOTATION_TOOLS.md` and `TO_SLATE_TOOLS.md`, in this repo, re-delivering both.
+That is the convention `slate_tools` itself used to reach this repo: a committed file in the sender's repo, named for the recipient, with a human carrying the pointer.
+
+⚠️ **Deliberately NOT written into `AGENTS.project.md`.**
+That file now says the IRM check is gone and says not to re-add a convention by copying a paragraph, because five repos once held four versions of the same one. Writing a `TO_<REPO>.md` protocol in there would be that mistake with a new name. A file is a file until the generated replacement exists.
+
+#### The requirement this hands to whatever replaces it
+
+Not a better `--thread`, and not a way to clear an obligation. Both of those were already fixed.
+
+⚠️ **A withdrawal, or any other non-delivery, must be visible to the SENDER.**
+A channel that can silently fail to deliver a STOP is worse than no channel at all.

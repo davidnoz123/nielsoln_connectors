@@ -172,7 +172,28 @@ type response struct {
 type opError struct {
 	Code    string `json:"code"`    // the closed set in PROTOCOL.md
 	Message string `json:"message"` // written for a participant, not a developer
+	// Only on not_here: WHICH bridge this token belongs to. A NAME, never a
+	// URL. A URL would let the server send this connector anywhere, which is
+	// an open redirect in a program holding somebody's files, so the name is
+	// appended to /bridge on the host already dialled and checked against
+	// seatName first.
+	Seat string `json:"seat,omitempty"`
 }
+
+// redirected is an answer, not a failure: the resolver has said which bridge
+// holds this token. The next attempt must be immediate, because the 4, 8,
+// 16, 32 second ladder would make a correct answer look like a network
+// fault.
+type redirected struct{ seat string }
+
+func (r redirected) Error() string { return "this session is on " + r.seat }
+
+// refused means stop, and the message belongs to the participant rather than
+// to a log. hello() used to call fatal() for every refusal, which exits, so
+// none of those paths could be tested. The loop decides now.
+type refused struct{ why string }
+
+func (r refused) Error() string { return r.why }
 
 type pathArgs struct {
 	Path string `json:"path"`
@@ -2091,6 +2112,39 @@ func (c *connector) dial() (transport, error) {
 	return &wsTransport{conn: conn, r: r, d: deflate}, nil
 }
 
+// redirect decides what a not_here answer means. See PROTOCOL.md.
+//
+// Returns redirected when there is a bridge to go to, and refused when there
+// is not or when following would be wrong. Never fatal: the caller owns the
+// decision to stop, which is what makes every branch here testable.
+func (c *connector) redirect(e *opError, why string) error {
+	if e.Seat == "" {
+		// Nothing holds this code. The session ended or its seat was
+		// re-provisioned, so this copy is finished and the message says so.
+		return refused{why}
+	}
+	if !seatName.MatchString(e.Seat) {
+		// A NAME, NEVER A URL. Anything that could carry a slash, a dot
+		// segment or a scheme would be asking this to dial somewhere else
+		// entirely.
+		return refused{fmt.Sprintf(
+			"the server offered a bridge name this connector will not use "+
+				"(%q). Nothing is wrong with your files.", e.Seat)}
+	}
+	if c.seat != "" {
+		// ONE REDIRECT, EVER. A second means the server is pointing in a
+		// circle, and following it would hide that behind a retry.
+		return refused{fmt.Sprintf(
+			"the server sent this connector from %s to %s, which is a loop. "+
+				"This is a fault on the server, not on your machine.",
+			c.seat, e.Seat)}
+	}
+	// REMEMBERED FOR THE LIFE OF THE PROCESS, so every later reconnect goes
+	// straight to its own bridge and never asks again.
+	c.seat = e.Seat
+	return redirected{e.Seat}
+}
+
 func (c *connector) hello(t transport) error {
 	err := c.send(t, map[string]any{
 		"id": 0, "op": "hello",
@@ -2133,13 +2187,23 @@ func (c *connector) hello(t transport) error {
 			continue
 		}
 		if msg.OK != nil && !*msg.OK {
-			// A refused hello is permanent: the code is wrong, and retrying it
-			// every two seconds forever would look like a network problem and
-			// hide the one thing the participant can actually fix.
 			why := "The session refused this connection."
 			if msg.Error != nil && msg.Error.Message != "" {
 				why = msg.Error.Message
 			}
+			if msg.Error != nil && msg.Error.Code == "not_here" {
+				return c.redirect(msg.Error, why)
+			}
+			if msg.Error != nil && msg.Error.Code == "internal" && c.seat == "" {
+				// The server could not check the code just now. Worth
+				// retrying, unlike a refusal, and telling those apart is why
+				// the resolver answers with two different codes rather than
+				// one.
+				return errors.New(why)
+			}
+			// A refused hello is permanent: the code is wrong, and retrying it
+			// every two seconds forever would look like a network problem and
+			// hide the one thing the participant can actually fix.
 			fatal("%s", why)
 		}
 		if !msg.Result.Resumed {
@@ -2718,6 +2782,18 @@ func main() {
 	backoff := time.Second
 	for {
 		if err := c.runOnce(); err != nil {
+			var rd redirected
+			if errors.As(err, &rd) {
+				// IMMEDIATELY, and without touching the backoff. This is a
+				// correct answer to the first question this connector asks,
+				// and sleeping on it would read as a network fault.
+				logf("this session is on bridge %s; connecting there", rd.seat)
+				continue
+			}
+			var rf refused
+			if errors.As(err, &rf) {
+				fatal("%s", rf.why)
+			}
 			// NAMES THE DESTINATION. "not connected (502 Bad Gateway)"
 			// tells a participant nothing about where it tried to go, and
 			// the commonest cause of a failure is dialling the wrong place:

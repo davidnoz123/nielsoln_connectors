@@ -34,7 +34,7 @@
 | s32 | A link carries a SHORT capability id, because s5's threat model does not transfer | SUPERSEDED by s35, kept for its argument | a decision on how many hex characters |
 | s33 | The launch rule: what `runner: "go"` actually constructs | **DECIDED** in the source (s18), NOT implemented, and it was in no row | nothing |
 | s34 | The descriptor is BYTES, not an object, so nothing is ever canonicalised | RAISED 7 Oct 2026, and it is the strongest recommendation on this slate | a decision, and it changes what s3 and s19 mean |
-| s35 | Drop the descriptor store: the URI IS the canonical form | **GRAMMAR FROZEN** 11 Oct 2026; s46 is the last blocker | s46, which is not a grammar question |
+| s35 | Drop the descriptor store: the URI IS the canonical form | **BUILDABLE** 12 Oct 2026; grammar frozen and no blockers | nothing |
 | s36 | The URI length budget, measured, and what actually eats it | PART MEASURED 7 Oct 2026, and it corrects s17 | the handler, which is the only way to measure the number that decides it |
 | s37 | The SHA in the URI: exactly one legal length, and it should be 40 | RAISED 7 Oct 2026, recommending 40 | one measurement: what Go does with an AMBIGUOUS abbreviation |
 | s38 | The Excel surface, measured twice: the object refuses, the formula corrupts | **DECIDED** 10 Oct 2026, measured in two repos | nothing. Length is not a constraint on this design. |
@@ -45,7 +45,8 @@
 | s43 | The runner is a TABLE, not a parse: `go/run` consumes two segments | **DECIDED** 11 Oct 2026 | nothing |
 | s44 | The identity bytes, exactly, with a test vector | **DECIDED** 11 Oct 2026, and it can never be revised | nothing |
 | s45 | Argv encoding, and the arguments that are REFUSED | **DECIDED** 11 Oct 2026 | nothing |
-| s46 | The TARGET-side IPC client, which s20 requires and s11 declined to provide | **OPEN**, the last blocker, with a recommendation: the keeper adapts | s13: where a shared package lives, given every connector is its own module |
+| s46 | The TARGET-side IPC client, which s20 requires and s11 declined to provide | **DECIDED** 12 Oct 2026: copied files, synced, with two tests | nothing. The last blocker is closed. |
+| s47 | A hashed shimpipc makes the audit cheaper, but only if it is HASHED | **DECIDED** 12 Oct 2026 | nothing |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -458,6 +459,12 @@ authority probe will make it.
 That was wrong, and I repeated it twice while listing what blocks building.
 s20 requires every target to speak READY and length-prefixed JSON, s11 never provided a target-side library, so the first capability already needs a shared package or a deliberate hand-rolled copy. s46 carries it.
 
+#### A precedent now exists, 12 Oct 2026
+
+s46 faced this same question for the shimp IPC client and chose **copy with a tripwire** over a shared module: one canonical in `shimp/`, byte-identical copies, a per-connector hash test for tampering and a test in `shimp/` that walks siblings for staleness.
+
+That does not decide this row, because a CDP client is 42KB rather than 120 lines and the copy cost scales with size. But it answers the objection this row rests on: copying is only "two implementations" when nothing detects divergence.
+
 ### s14. patchbucket: transport and ordering, never merging
 
 **patchbucket owns:** the rclone wrapper and its timeout, which exists for a
@@ -795,6 +802,14 @@ s6's cold fallback makes the readiness race survivable: if the singleton is not
 there yet, the clicking process does the work itself. So a slow `READY` costs
 latency rather than correctness, which is a weaker requirement than the source
 design assumed.
+
+#### The framing was under-specified, and s46 pins it
+
+12 Oct 2026. The table above says "length-prefixed UTF-8 JSON" with no prefix width and no byte order.
+That is invisible with one implementation and an interop bug under load with several, which is exactly what s46's copied file would have produced.
+
+Pinned in s46: `uint32` big-endian length, then that many bytes of UTF-8 JSON, 1 MiB maximum, and a declared length above it is REFUSED rather than allocated.
+⚠️ Big-endian with a test pinning a known header, for the measured reason in `AGENTS.project.md`: a port read as a plain `uint32` turned 9222 into 30987, which looks like a real port number and so does not announce itself as a bug.
 
 ### s21. Two more descriptor fields the source froze, and s19's list is short
 
@@ -1584,6 +1599,12 @@ shimp://v1/go/run/<module>@<40 hex>[/<arg>...][#<action>]
 
 s37's SHA length stays RAISED and does NOT block: build with 40, because permitting a shorter form later ADDS a legal spelling and breaks nothing, while starting short is unrecoverable.
 
+#### BUILDABLE, 12 Oct 2026
+
+s46 decided, so the last blocker is closed. Grammar frozen, identity bytes pinned with a test vector in s44, the launch rule in s43, the target-side IPC in s46, and the framing width pinned there too.
+
+What remains is not specification: two measurements that the install half produces or that stand alone, being the handler's `os.Args[1]` limit in s36 and the ambiguous-abbreviation question in s37, and s37 does not block because building with 40 is the recoverable direction.
+
 ### s36. The URI length budget, measured, and what actually eats it
 
 Measured 7 Oct 2026 in a scratch workbook in this session's Excel, by binary search on the longest URI that round-trips.
@@ -2101,3 +2122,130 @@ The residual cost, stated: the keeper carries an adapter per mechanism and that 
 
 ⚠️ s20's framing row says only **"length-prefixed UTF-8 JSON"**, with no prefix width and no byte order.
 With one implementation that is invisible. With several hand-rolled ones it is an interop bug that appears under load. So the framing needs pinning whichever option wins, and that is a one-line decision nobody has taken.
+
+#### DECIDED 12 Oct 2026: the canonical lives in `shimp/` and is COPIED
+
+Not a shared module, and not the keeper adapting for everyone. Copies, synced, with tests.
+
+#### ⚠️ The enabler, checked rather than assumed
+
+**Every connector in this repo is `package main`.** Verified 12 Oct across `chrome_sessions`, `pdf_view_server`, `remote_ai` and `remote_chrome_cdp`.
+
+So a copy is **byte-identical** with no edit, which is what lets a test be a plain hash equality rather than a fuzzy comparison. Had any connector used a different package name, this option would not work at all.
+
+#### Three files, not one, and the house rule is why
+
+`net.Dial` cannot open a Windows named pipe, and this repo forbids third-party packages. So the platform split that `owner_windows.go` / `owner_other.go` and `raise_windows.go` / `raise_other.go` already use:
+
+| file | what |
+|---|---|
+| `shimpipc.go` | generic: read `SHIMP_ENDPOINT`, send `READY`, the read and reply loop. No build tag |
+| `shimpipc_windows.go` | `CreateFileW` on `\\.\pipe\...`. A pipe client is a file open, and `owner_windows.go` is the precedent for syscall rather than shelling out |
+| `shimpipc_other.go` | `net.Dial("unix", ...)`. ⚠️ The catch-all is NOT optional, and under s22's Windows-first it may legitimately say what it cannot do, as `owner_other.go` returns a REASON rather than an empty list |
+
+Around 120 lines in total, and connectors keep **empty `require` blocks**, which is the whole advantage over a module.
+
+#### And the framing is pinned here, closing s20's gap
+
+s20 said only "length-prefixed UTF-8 JSON", with no width and no byte order. Invisible with one implementation, an interop bug under load with several. So:
+
+```
+frame = uint32 big-endian length, then that many bytes of UTF-8 JSON
+max   = 1 MiB; a larger declared length is REFUSED, not allocated
+```
+
+⚠️ **Big-endian, and a test pins a known header.** `AGENTS.project.md` records the measured reason: a port read as a plain `uint32` from `MIB_TCPROW_OWNER_PID` turned 9222 into 30987, which looks like a real port number and so does not announce itself as a bug. The rule there is that any new syscall struct gets a test pinning a known value, and a frame header is the same hazard.
+
+#### ⚠️ Two tests, because they catch different failures
+
+| test | catches | runs |
+|---|---|---|
+| `shimpipc_test.go`, copied into each connector | **this copy was tampered with** | anywhere. It travels with the module |
+| a test in `shimp/` that walks the sibling folders | **this copy is STALE** | only in a checkout, and it skips gracefully when siblings are absent |
+
+The distinction matters and is easy to miss: if the canonical changes and connector A is synced while B is not, **B's own test still passes**, because B's copy matches B's recorded hash. It is internally consistent and out of date. Only a check that knows the canonical can see that.
+
+Putting the staleness check in `shimp/`'s own suite means it runs under the `go test ./...` that `AGENTS.project.md` already mandates, so nobody has to remember a command.
+
+#### ⚠️ The circularity trap, avoided deliberately
+
+An expected hash stored INSIDE `shimpipc.go` can never match, because hashing the file includes the constant.
+
+So the expected hashes live in the copied `shimpipc_test.go`, which hashes the three sources. `sync` rewrites all four files together.
+
+#### `shimpIPCFrom`, which s47 needs
+
+```go
+const shimpIPCFrom = "<the handler commit this copy was synced from>"
+```
+
+Written by `sync`, covered by the hash test, and not circular because the expected hashes are in the test file. s47 is why it exists: without it, an auditor comparing a target's copy against the canonical cannot tell **stale** from **tampered**.
+
+#### `sync`
+
+```
+go run github.com/davidnoz123/nielsoln_connectors/shimp@<sha> sync
+```
+
+from the repo root, rewriting all four files in each connector that declares it wants them. Development-time only by design: a connector fetched standalone has no `shimp/` to copy from, and does not need one, because the TEST is what travels.
+
+#### What was NOT chosen, and what survives of it
+
+* a `shimp/ipc` package imported by targets: rejected, it couples every target's audit to the trust root's module graph, which s9 keeps as a separate line on purpose
+* a separate `shimpipc` module: rejected for now, it ends the empty-`require` property for a benefit this buys more cheaply
+* **the keeper adapting survives and is still right where it applies.** A target that already has a channel needs none of this, and `pdf_view_server` has two, `POST /select` at `main.go:132` and a watched nav file at `main.go:656`. The declared port is in argv and argv is in the link, per s4, so the keeper knows where to send without asking anybody. This decision serves the third class only: resident, with no channel of its own.
+
+#### The cost, stated
+
+N copies to update, and a drift window between editing the canonical and running `sync`. The sibling test closes that window the moment anyone runs shimp's own suite, which is the smallest safeguard that does not depend on memory.
+
+### s47. A hashed shimpipc makes the audit cheaper, but only if it is HASHED
+
+Decided 12 Oct 2026, out of s46.
+
+#### The property, and it is cheaper than it looks
+
+**s9's line 1 pins the handler's commit, and `shimp/` is where the canonical `shimpipc.go` lives.**
+
+So an auditor doing the handler half of the audit, which they must do anyway because the handler is the trust root, reads the canonical **as part of that**. Every target's copy then verifies for free: hash the file in the tree already fetched at the target's SHA, and compare.
+
+One read, N recognitions. The handler audit and the target audit share a component, and line 1 is what makes that verifiable rather than assumed.
+
+#### ⚠️ And copies are MORE auditable than a shared module, which inverts the intuition
+
+A module dependency is resolved at build time, so verifying it means reading `go.mod`, reading `go.sum` and resolving the graph.
+A copied file is sitting in the tree the auditor already pulled. Nothing to resolve.
+
+It also gives a tamper signal that a module would not give as directly: a target shipping a MODIFIED IPC layer stands out immediately, because its hash does not match.
+
+#### ⚠️ THE TRAP, and it is the one that matters
+
+An auditor who learns to skip "the known IPC file" **by filename** rather than by hash has been handed an attack. A hostile `shimpipc.go` under the right name passes a careless audit and looks exactly like a careful one.
+
+That is the permissive-fake failure from the house rules in a new costume: something that resembles verification and is not. `AGENTS.md` puts it as a bare `Mock` that answers any attribute staying green while the code reaches for surface nobody modelled.
+
+**So the published audit text must say HASH IT, never "this is the standard file".** The efficiency is strictly conditional on the hash, and a shimp document that phrases it as recognition rather than computation has created the hole.
+
+#### ⚠️ Stale against tampered, which is what `shimpIPCFrom` is for
+
+The handler SHA and the target SHA are **independent**. s9's line 1 pins handler@X; the URI pins target@Y. Y's copy was synced from some handler commit, not necessarily X.
+
+So a bare mismatch means **stale or tampered**, and an auditor cannot tell which. That turns a crisp signal into a shrug, and a shrug gets ignored, which is worse than having no signal.
+
+s46 therefore puts the provenance in the copy:
+
+```go
+const shimpIPCFrom = "<handler commit this copy came from>"
+```
+
+The auditor fetches THAT commit for the canonical and gets a clean verdict: the copy matches its stated origin, or it does not.
+
+⚠️ And deliberately NOT a published list of known-good hashes. That would be state that has to be maintained and that goes stale, which is the objection that killed the descriptor store in s35. The copy carries its own provenance instead.
+
+#### How much this actually saves, honestly
+
+Modest per target, and it compounds across targets.
+
+`shimpipc.go` is the **boring** part. What an auditor genuinely has to assess is what a target does with its arguments: files read and written, network, subprocesses. Skipping 120 lines of framing is a real saving and not the bulk of the work.
+
+And it does not touch either of the audit's standing unverifiables, which stay in s24's UNVERIFIED: `module@sha` does not pin the Go **toolchain**, per s34, and the dependency graph needs separate work, per s26.

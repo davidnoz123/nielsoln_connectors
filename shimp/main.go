@@ -43,10 +43,24 @@ import (
 
 // scheme is the URI scheme, and the single place its name is written.
 //
+// A VARIABLE rather than a constant, and that is what makes an isolated test
+// installation possible at all. There is exactly one HKCU\Software\Classes\shimp
+// per user, so without this a test install IS the production install.
+//
+// ⚠️ And s44 makes a second scheme CORRECT rather than a convenience: the
+// identity bytes include the scheme deliberately, so a shimp-test:// link
+// hashes differently and addresses a different singleton. A test click can
+// never be answered by a production instance. That decision was taken for
+// another reason and happens to buy exactly this.
+//
+// Set by `install -scheme`, recorded in the stamp, and recovered by a running
+// handler from the stamp beside its OWN binary (resolveSchemeFromSelf), which
+// is why nothing has to go in the registry command.
+//
 // ⚠️ The TRAILING COLON in Office's trusted-protocol key is a separate
 // constant below, because a key named "shimp" looks right in regedit and does
 // nothing. See s8.
-const scheme = "shimp"
+var scheme = "shimp"
 
 // logName is under the shimp home, and it is not optional.
 //
@@ -63,16 +77,48 @@ const logName = "shimp.log"
 // I think it is", cannot be answered without it.
 const stampName = "installed.json"
 
-var logTo io.Writer // set by main; tests replace it
+// logTo, when set, captures the log instead of writing it. Tests only.
+var logTo io.Writer
 
+// logSuppressed stops _log recreating a home directory that has just been
+// purged. Set by `uninstall -purge` immediately before the removal.
+var logSuppressed bool
+
+// _log appends one line, OPENING AND CLOSING THE FILE EACH TIME.
+//
+// ⚠️ Deliberately not a held handle, and this is a correctness choice rather
+// than a style one. Two reasons, the second measured:
+//
+// A handler can die abruptly, and a buffered line that never reached disk is
+// the silent failure this log exists to prevent.
+//
+// And on Windows an open handle cannot be deleted, so `uninstall -purge`
+// failed with "The process cannot access the file because it is being used by
+// another process" -- the process being itself. Found by the live test. The
+// fix is not to close the handle at the right moment; it is not to hold one.
+//
+// The cost is a syscall per line, for a program that writes a handful.
 func _log(format string, a ...any) {
-	line := fmt.Sprintf("%s  %s\n", time.Now().Format(time.RFC3339), fmt.Sprintf(format, a...))
+	line := fmt.Sprintf("%s  %s\n", time.Now().Format(time.RFC3339),
+		fmt.Sprintf(format, a...))
 	if logTo != nil {
 		_, _ = io.WriteString(logTo, line)
 		return
 	}
-	// Before the home exists there is nowhere to append, so stderr is better
-	// than nothing even though a click cannot see it.
+	dir, err := home()
+	if err == nil && !logSuppressed {
+		if err = os.MkdirAll(dir, 0o755); err == nil {
+			f, ferr := os.OpenFile(filepath.Join(dir, logName),
+				os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+			if ferr == nil {
+				_, _ = io.WriteString(f, line)
+				_ = f.Close()
+				return
+			}
+		}
+	}
+	// Nowhere to append. stderr is better than nothing, even though a click
+	// cannot see it.
 	_, _ = io.WriteString(os.Stderr, line)
 }
 
@@ -91,19 +137,6 @@ func home() (string, error) {
 	return filepath.Join(dir, "."+scheme), nil
 }
 
-// openLog appends to the log, creating the home if needed.
-func openLog() (*os.File, error) {
-	dir, err := home()
-	if err != nil {
-		return nil, err
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("cannot create %s: %w", dir, err)
-	}
-	return os.OpenFile(filepath.Join(dir, logName),
-		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-}
-
 // stamp is what install records about itself.
 //
 // Version is the module pseudo-version from the build info, NOT a bare 40-hex
@@ -115,6 +148,9 @@ func openLog() (*os.File, error) {
 // toolchain actually resolved and go.sum pinned, so it is the honest answer
 // and arguably a better one than a bare SHA.
 type stamp struct {
+	// Scheme is what this installation claimed, so a handler invoked by the
+	// registry can recover it without being told on the command line.
+	Scheme    string `json:"scheme"`
 	Path      string `json:"path"`
 	Module    string `json:"module"`
 	Version   string `json:"version"`
@@ -158,13 +194,74 @@ func fileSha256(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// resolveSchemeFromSelf recovers the scheme this binary was installed as.
+//
+// ⚠️ It reads the stamp beside the EXECUTABLE, never the one under home(),
+// because home() is derived from the scheme and that would be circular.
+// Failure is silent and leaves the default in place, which is correct: an
+// uninstalled binary run from a checkout is the production scheme by
+// definition, and there is nothing to recover.
+func resolveSchemeFromSelf() {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(exe), stampName))
+	if err != nil {
+		return
+	}
+	var s stamp
+	if json.Unmarshal(raw, &s) == nil && s.Scheme != "" {
+		scheme = s.Scheme
+	}
+}
+
+// schemePattern is what a scheme name may contain.
+//
+// ⚠️ Validated rather than trusted, because this string becomes a REGISTRY
+// KEY PATH. A scheme containing a backslash would claim a key somewhere
+// nobody intended, and one containing a dot or a space would produce a class
+// Windows will not dispatch. RFC 3986 allows letters, digits, "+", "-" and
+// "." after a leading letter; the dot is excluded here because a dotted
+// class name is indistinguishable from a file association.
+func validScheme(s string) bool {
+	if s == "" || !(s[0] >= 'a' && s[0] <= 'z') {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		ok := (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// useScheme switches every derived path to a different scheme.
+func useScheme(s string) error {
+	if !validScheme(s) {
+		return fmt.Errorf("%q is not a usable scheme name. Lower-case "+
+			"letters, digits and hyphens, starting with a letter: the name "+
+			"becomes a registry key path, so anything else claims a key "+
+			"nobody intended", s)
+	}
+	scheme = s
+	return nil
+}
+
 func usage() {
 	fmt.Fprintf(os.Stderr, `shimp -- SHIMP/1 handler (install half only)
 
-  shimp install [-replace]   place the binary and claim %[1]s:
-  shimp uninstall            withdraw only what install created
-  shimp verify               report what is true of this machine
-  shimp version [-audit]     this handler's own provenance
+  shimp install [-replace] [-scheme NAME]
+  shimp uninstall [-purge] [-scheme NAME]
+  shimp verify [-scheme NAME]
+  shimp version [-audit]
+
+-scheme installs under a DIFFERENT scheme, which is how a test installation
+is kept away from a working one: separate registry class, separate home,
+separate Office key, and a different identity hash per s44. Default %[1]s.
+-purge also removes the log and the home directory, for a test cycle.
 
 Clicking a %[1]s:// link works only once the DISPATCH half exists. Today a
 click is logged and refused, and the log says so.
@@ -172,10 +269,8 @@ click is logged and refused, and the log says so.
 }
 
 func main() {
-	if f, err := openLog(); err == nil {
-		defer f.Close()
-		logTo = f
-	}
+	// The scheme this binary was installed as, which is what a click needs.
+	resolveSchemeFromSelf()
 
 	args := os.Args[1:]
 	if len(args) == 0 {
@@ -183,26 +278,68 @@ func main() {
 		os.Exit(2)
 	}
 
+	// ⚠️ THE LOG IS OPENED AFTER THE SCHEME IS KNOWN, never before. An
+	// earlier version opened it first, which created the PRODUCTION home
+	// directory on every invocation including `-scheme shimp-selftest`, so
+	// a test command touched production's directory and no -purge could
+	// ever clean up after it. Caught by looking at the machine after a test
+	// run rather than by any assertion, which is why the live test now
+	// checks for it.
 	// ⚠️ A URI argument comes FIRST, before any flag parsing, because the
 	// registry invokes us as `shimp.exe "%1"` and that argument starts with
 	// the scheme rather than a verb. Letting flag.Parse see it would produce
 	// "flag provided but not defined" into a console nobody is looking at.
-	if strings.HasPrefix(strings.ToLower(args[0]), scheme+":") {
+	//
+	// Detected by "://" rather than by OUR scheme, so a link for a DIFFERENT
+	// installation is recognised as a URI and refused with a reason.
+	if strings.Contains(args[0], "://") {
 		os.Exit(onClick(args[0]))
 	}
 
 	verb, rest := args[0], args[1:]
+
+	// schemeFlag is added to every verb that touches an installation, so a
+	// test cycle can name its own and never has to be trusted to remember.
+	withScheme := func(fs *flag.FlagSet) *string {
+		return fs.String("scheme", scheme,
+			"the URI scheme to act on. A different one gives a wholly "+
+				"separate installation: its own registry class, home and "+
+				"Office key, and a different identity hash (s44)")
+	}
+
 	switch verb {
 	case "install":
 		fs := flag.NewFlagSet("install", flag.ExitOnError)
 		replace := fs.Bool("replace", false,
 			"replace an installation from a different version. Refused "+
 				"without this, because the handler is the trust root (s20)")
+		s := withScheme(fs)
 		_ = fs.Parse(rest)
+		if err := useScheme(*s); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
 		os.Exit(cmdInstall(*replace))
 	case "uninstall":
-		os.Exit(cmdUninstall())
+		fs := flag.NewFlagSet("uninstall", flag.ExitOnError)
+		purge := fs.Bool("purge", false,
+			"also remove the log and the home directory. For a test cycle, "+
+				"which has to leave the machine as it found it")
+		s := withScheme(fs)
+		_ = fs.Parse(rest)
+		if err := useScheme(*s); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		os.Exit(cmdUninstall(*purge))
 	case "verify":
+		fs := flag.NewFlagSet("verify", flag.ExitOnError)
+		s := withScheme(fs)
+		_ = fs.Parse(rest)
+		if err := useScheme(*s); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
 		os.Exit(cmdVerify())
 	case "version":
 		fs := flag.NewFlagSet("version", flag.ExitOnError)
@@ -224,6 +361,17 @@ func onClick(uri string) int {
 	// os.Args[1] is unmeasurable without a registered handler. Every click
 	// logs it, so the answer accumulates from real use rather than from a
 	// guess about Windows.
+	// ⚠️ A link belonging to another installation. Worth its own refusal:
+	// under s44 the scheme is part of the identity bytes, so this is not a
+	// near-miss to be tolerated, it is a different protocol.
+	if !strings.HasPrefix(strings.ToLower(uri), scheme+"://") {
+		_log("click REFUSED: this handler is installed as %q and the link is "+
+			"for another scheme. The scheme is part of the identity bytes "+
+			"(s44), so this is a different protocol rather than a typo: %s",
+			scheme, uri)
+		return 1
+	}
+
 	_log("click: os.Args[1] is %d bytes", len(uri))
 	_log("click: %s", uri)
 	_log("click REFUSED: the dispatch half is not built. The grammar is " +

@@ -17,17 +17,16 @@ import (
 	"strings"
 )
 
-// classKey is where a URL scheme is declared for the current user.
-//
-// HKCU rather than HKLM deliberately: per-user needs no elevation, and s30
-// settled that a capability is a thing a person installed rather than a thing
-// a machine has.
-const classKey = `Software\Classes\` + scheme
+// The keys install claims. FUNCTIONS rather than constants, because the
+// scheme is now a variable: that is what gives a test installation its own
+// registry class, its own home and its own Office key, so it cannot disturb a
+// working one.
+func classKey() string { return `Software\Classes\` + scheme }
 
-// commandKey is the subkey Windows reads to find the program.
-const commandKey = classKey + `\shell\open\command`
+// commandKey() is the subkey Windows reads to find the program.
+func commandKey() string { return classKey() + `\shell\open\command` }
 
-// trustedProtocolKey suppresses Office's own security prompt.
+// trustedProtocolKey() suppresses Office's own security prompt.
 //
 // ⚠️ THE TRAILING COLON IS PART OF THE KEY NAME. Microsoft's own example is
 // "to disable the display of a security warning for the Notes: protocol,
@@ -36,8 +35,10 @@ const commandKey = classKey + `\shell\open\command`
 // visible error: on 5 Oct an Excel instance held a workbook for two and a
 // half hours behind one such modal, and the only symptom was a read-only
 // refusal naming no pid.
-const trustedProtocolKey = `Software\Policies\Microsoft\Office\16.0\Common\` +
-	`Security\Trusted Protocols\All Applications\` + scheme + `:`
+func trustedProtocolKey() string {
+	return `Software\Policies\Microsoft\Office\16.0\Common\Security\` +
+		`Trusted Protocols\All Applications\` + scheme + `:`
+}
 
 // claims is every durable thing install creates outside its own directory.
 //
@@ -151,15 +152,15 @@ func cmdInstall(replace bool) int {
 	// what caught it.
 	command := `"` + target + `" "%1"`
 	for _, claim := range []struct{ subkey, name, value string }{
-		{classKey, "", "URL:SHIMP Protocol"},
+		{classKey(), "", "URL:SHIMP Protocol"},
 		// An empty "URL Protocol" value is what marks a class as a URL
 		// scheme. The VALUE being empty is the convention; the NAME existing
 		// is the signal.
-		{classKey, "URL Protocol", ""},
-		{commandKey, "", command},
+		{classKey(), "URL Protocol", ""},
+		{commandKey(), "", command},
 		// The key itself is the claim here; Office reads its presence, not a
 		// value. s8.
-		{trustedProtocolKey, "", ""},
+		{trustedProtocolKey(), "", ""},
 	} {
 		if err := c.set(claim.subkey, claim.name, claim.value); err != nil {
 			_log("FATAL install: cannot claim %s\\%s: %v",
@@ -171,6 +172,16 @@ func cmdInstall(replace bool) int {
 	}
 
 	// Written LAST, so a stamp's existence means every claim above succeeded.
+	//
+	// ⚠️ Scheme is set HERE and not in provenance(), because provenance()
+	// describes the running binary while this describes the INSTALLATION.
+	// Omitting it was a real defect the live test caught: the stamp recorded
+	// an empty scheme, so resolveSchemeFromSelf kept the default and a
+	// handler installed as shimp-selftest believed it was production. It
+	// would then have refused its own links as belonging to another scheme,
+	// and on a machine with a real install the two would have fought over
+	// one home directory.
+	me.Scheme = scheme
 	me.Path, me.Sha256 = target, sum
 	if err := writeStamp(me); err != nil {
 		_log("FATAL install: cannot record the stamp: %v", err)
@@ -265,7 +276,7 @@ func cmdVerify() int {
 		}
 	}
 
-	cmd, present, err := c.get(commandKey, "")
+	cmd, present, err := c.get(commandKey(), "")
 	switch {
 	case err != nil:
 		note(false, "scheme registration", fmt.Sprintf("cannot read: %v", err))
@@ -282,7 +293,7 @@ func cmdVerify() int {
 
 	// hasKey rather than get, because Office reads the key's EXISTENCE and
 	// no value under it. See the interface comment.
-	if present, err := c.hasKey(trustedProtocolKey); err != nil {
+	if present, err := c.hasKey(trustedProtocolKey()); err != nil {
 		note(false, "Office trusted protocol", fmt.Sprintf("cannot read: %v", err))
 	} else if present {
 		note(true, "Office trusted protocol",
@@ -310,7 +321,7 @@ func cmdVerify() int {
 }
 
 // cmdUninstall withdraws exactly what install created and nothing else.
-func cmdUninstall() int {
+func cmdUninstall(purge bool) int {
 	c, err := claimsFor()
 	if err != nil {
 		_log("FATAL uninstall: %v", err)
@@ -324,8 +335,8 @@ func cmdUninstall() int {
 	// s8 records that the parent is shared, and deleting it would withdraw
 	// every other application's trusted protocol.
 	failed := 0
-	for _, k := range []string{trustedProtocolKey, commandKey,
-		classKey + `\shell\open`, classKey + `\shell`, classKey} {
+	for _, k := range []string{trustedProtocolKey(), commandKey(),
+		classKey() + `\shell\open`, classKey() + `\shell`, classKey()} {
 		if err := c.removeKey(k); err != nil {
 			// Not fatal and not silent: a key that was never there is the
 			// normal case when uninstall runs twice.
@@ -346,16 +357,44 @@ func cmdUninstall() int {
 			}
 			_log("uninstall: removed %s", p)
 		}
-		// ⚠️ The LOG is deliberately kept. s20 has uninstall remove its
-		// runtime state, and a log is not runtime state, it is the record of
-		// what happened. Deleting the evidence of an install at the moment
-		// somebody is most likely to be diagnosing it would be the wrong
-		// kind of tidy.
-		fmt.Printf("kept %s, which is the record of what happened\n",
-			filepath.Join(dir, logName))
+		// ⚠️ The LOG is deliberately kept BY DEFAULT. s20 has uninstall
+		// remove its runtime state, and a log is not runtime state, it is the
+		// record of what happened. Deleting the evidence of an install at the
+		// moment somebody is most likely to be diagnosing it would be the
+		// wrong kind of tidy.
+		//
+		// -purge removes it, and the home directory with it. That exists for
+		// a TEST cycle, which has to leave the machine exactly as it found
+		// it or it is not a test, it is an accumulation.
+		if !purge {
+			fmt.Printf("kept %s, which is the record of what happened\n",
+				filepath.Join(dir, logName))
+		}
 	}
 
 	_log("uninstall complete, %d claim(s) were already absent", failed)
 	fmt.Printf("uninstalled %s:\n", scheme)
+
+	// ⚠️ THE PURGE IS LAST, AND IT SILENCES THE LOG FIRST. Both halves are
+	// needed and the live test found out why twice:
+	//
+	// Purging before the final _log meant that line RECREATED the directory,
+	// because _log makes the home if it is missing. The removal succeeded and
+	// the directory was back a millisecond later.
+	//
+	// So logToFile is turned off before the removal, and anything logged
+	// afterwards goes to stderr instead of resurrecting what was just
+	// deleted. Ordering alone would work today and would break the moment
+	// somebody adds a log line below this one.
+	if purge {
+		if dir, err := home(); err == nil {
+			logSuppressed = true
+			if err := os.RemoveAll(dir); err != nil {
+				fmt.Fprintf(os.Stderr, "could not purge %s: %v\n", dir, err)
+				return 1
+			}
+			fmt.Printf("purged %s\n", dir)
+		}
+	}
 	return 0
 }

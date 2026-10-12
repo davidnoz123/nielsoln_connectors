@@ -35,7 +35,7 @@
 | s33 | The launch rule: what `runner: "go"` actually constructs | **DECIDED** in the source (s18), NOT implemented, and it was in no row | nothing |
 | s34 | The descriptor is BYTES, not an object, so nothing is ever canonicalised | SUPERSEDED by s35, kept for the principle it established | nothing |
 | s35 | Drop the descriptor store: the URI IS the canonical form | **BUILDABLE** 12 Oct 2026; grammar frozen and no blockers | nothing |
-| s36 | The URI length budget, measured, and what actually eats it | PART MEASURED 7 Oct 2026, and it corrects s17 | the handler, which is the only way to measure the number that decides it |
+| s36 | The URI length budget, measured, and what actually eats it | **MEASURED** 12 Oct 2026: at least 8000 bytes survive the OS hop, so length is not a constraint | nothing from the OS hop. The APPLICATION hop still needs a human to click something. |
 | s37 | The SHA in the URI: exactly one legal length, and it should be 40 | RAISED 7 Oct 2026, recommending 40 | one measurement: what Go does with an AMBIGUOUS abbreviation |
 | s38 | The Excel surface, measured twice: the object refuses, the formula corrupts | **DECIDED** 10 Oct 2026, measured in two repos | nothing. Length is not a constraint on this design. |
 | s39 | The minimum SHAPE another tool may refuse a shimp URI on | **DECIDED** 10 Oct 2026, check 6 corrected 11 Oct | nothing, except that check 4's length follows s37 |
@@ -47,6 +47,7 @@
 | s45 | Argv encoding, and the arguments that are REFUSED | **DECIDED** 11 Oct 2026 | nothing |
 | s46 | The TARGET-side IPC client, which s20 requires and s11 declined to provide | **DECIDED** 12 Oct 2026: copied files, synced, with two tests | nothing. The last blocker is closed. |
 | s47 | A hashed shimpipc makes the audit cheaper, but only if it is HASHED | **DECIDED** 12 Oct 2026 | nothing |
+| s48 | A test installation is a different SCHEME, and that is why it is safe | **DECIDED** and BUILT 12 Oct 2026 | nothing |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -241,6 +242,12 @@ install, immutable source, and 68ms clicks.
 ⚠️ The binary is copied from `os.Executable()`, which under `go run` is the
 toolchain's temporary build output. It is self-contained, so copying it is
 enough, and that is why none of this needs a repo layout change.
+
+#### Built 12 Oct 2026, and the `os.Executable()` note held up
+
+`install` copies the running binary and registers the copy, exactly as this row describes, and the live cycle confirms Windows routes a click to it.
+
+⚠️ One limit found while building, worth recording beside the measurement above: a binary built by `go run module@sha` can learn its own **pseudo-version** from `debug.ReadBuildInfo`, carrying a 12-hex abbreviation and a timestamp, and **cannot learn its full 40-hex commit**. So `version --audit` reports the pseudo-version. That is what the toolchain actually resolved and what `go.sum` pinned, so it is the honest answer rather than a gap, and s37's 40-hex requirement is about what a LINK carries, where a tool supplies it.
 
 ### s8. The Office trusted-protocol key, per scheme
 
@@ -1686,6 +1693,24 @@ Two corrections to this row:
 
 Which means **length is not a constraint on this design**, and the arithmetic here stands as arithmetic rather than as a limit. The handler-argv measurement this row asks for is still unmeasured and still the only number that could reintroduce one.
 
+#### MEASURED 12 Oct 2026, and length is not a constraint by a wide margin
+
+The handler now exists, so the number this row said was unobtainable has been taken, through `ShellExecuteW` so that Windows does the routing.
+
+| sent | received as `os.Args[1]` |
+|---|---|
+| 160 | 160, exact |
+| 200, 500, 1000, 2000, 2040, 2060 | exact |
+| 4000 | 4000, exact |
+| 8000 | **8000, exact** |
+| 16000 | not delivered |
+
+⚠️ **AND THE 16000 FAILURE IS NOT WINDOWS'.** That probe dispatched through PowerShell's `Start-Process`, which refused with "The command line is too long". That is PowerShell's limit, not the URI dispatch limit, and reporting it as the latter would be attributing one tool's constraint to another. The honest statement is **at least 8000 bytes survive the OS hop exactly, with no truncation**.
+
+Against s38's measured ceilings that settles it: the Excel Hyperlink object refuses at 2084, and a realistic shimp link is under 200 characters. So the OS hop has roughly forty times the headroom of the tightest surface, and **length is not a constraint on this design** by any margin that matters. The remaining ceiling is academic.
+
+⚠️ **What is still UNANSWERED**, and a passing test must not be read as covering it: what Excel or a browser does to a URI BEFORE handing it to the OS. This measured the registry hop. The application hop still needs a human to click something.
+
 ### s37. The SHA in the URI: exactly one legal length, and it should be 40
 
 Raised 7 Oct 2026, and it is a different question from s5 because the ground moved.
@@ -2265,3 +2290,45 @@ Modest per target, and it compounds across targets.
 `shimpipc.go` is the **boring** part. What an auditor genuinely has to assess is what a target does with its arguments: files read and written, network, subprocesses. Skipping 120 lines of framing is a real saving and not the bulk of the work.
 
 And it does not touch either of the audit's standing unverifiables, which stay in s24's UNVERIFIED: `module@sha` does not pin the Go **toolchain**, per s34, and the dependency graph needs separate work, per s26.
+
+### s48. A test installation is a different SCHEME, and that is why it is safe
+
+Decided and built 12 Oct 2026, because `install` could not be exercised at all without it.
+
+⚠️ **There is exactly one `HKCU\Software\Classes\shimp` per user.** So before this, a test install WAS the production install: one home, one registry class, one Office key. There was no way to run an installer test without putting a real handler on the machine.
+
+#### The mechanism, and s44 already made it correct
+
+The scheme becomes a variable, set by `install -scheme`, recorded in the stamp, and recovered by a running handler from the stamp beside its OWN binary.
+
+| | production | test |
+|---|---|---|
+| home | `~/.shimp` | `~/.shimp-selftest` |
+| class | `...\Classes\shimp` | `...\Classes\shimp-selftest` |
+| Office | `...\All Applications\shimp:` | `...\All Applications\shimp-selftest:` |
+
+⚠️ **And s44 makes a second scheme a correctness property rather than a convenience.** The identity bytes include the scheme deliberately, so a `shimp-selftest://` link hashes differently and addresses a different singleton. A test click can never be answered by a production instance. That decision was taken for an unrelated reason and happens to buy exactly this.
+
+The scheme name is VALIDATED rather than trusted, because it becomes a registry key path: lower-case letters, digits and hyphens only. A scheme containing a backslash would claim a key nobody intended.
+
+#### REFUSES rather than defaults
+
+The self-test names the production scheme and **refuses** it, before touching anything.
+A default can be overridden by a careless invocation, and on the other side of a careless invocation is somebody's working handler.
+It also refuses to run if the test scheme's keys or home ALREADY exist, rather than adopting state it did not create.
+
+#### `uninstall -purge`
+
+Plain `uninstall` keeps the log, which is right for production: a log is the record of what happened, not runtime state, and deleting it at the moment somebody is diagnosing an install is the wrong kind of tidy.
+`-purge` removes the home entirely, because a test cycle that leaves anything behind is not a test, it is an accumulation.
+
+#### What the live cycle proves, and it is driven as a user drives it
+
+```
+go build  ->  install -scheme  ->  verify  ->  ShellExecuteW(uri)
+          ->  read the log     ->  uninstall -purge  ->  assert nothing remains
+```
+
+⚠️ **It builds a real binary rather than installing itself.** The first version called `cmdInstall` in process, which copies `os.Executable()`, and under `go test` that is the TEST binary. Windows would then have invoked a test binary as the handler, the click would never have reached `onClick`, and the test would have reported on something it never exercised.
+
+And the click goes through **`ShellExecuteW`**, so WINDOWS does the routing, through the registry, exactly as a click does. Not a simulation.

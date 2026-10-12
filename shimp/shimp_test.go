@@ -57,9 +57,9 @@ func (f *fakeClaims) where() string { return "a strict in-memory fake" }
 // is a bug in the code or a gap in the model, and the fake refuses to guess
 // which.
 func (f *fakeClaims) allow(subkey string) {
-	ok := subkey == classKey ||
-		strings.HasPrefix(subkey, classKey+`\`) ||
-		subkey == trustedProtocolKey
+	ok := subkey == classKey() ||
+		strings.HasPrefix(subkey, classKey()+`\`) ||
+		subkey == trustedProtocolKey()
 	if !ok {
 		f.t.Fatalf("fake: the registry surface does not model %q. Model it "+
 			"deliberately and add a contract check pinning what the real "+
@@ -122,10 +122,10 @@ func contract(t *testing.T, c claims, label string) {
 	// here: "URL Protocol" is marked by its NAME existing and its value being
 	// empty.
 	for _, v := range []string{"URL:SHIMP Protocol", "", `"C:\x\shimp.exe" "%1"`} {
-		if err := c.set(classKey, "probe", v); err != nil {
+		if err := c.set(classKey(), "probe", v); err != nil {
 			t.Fatalf("%s: set %q: %v", label, v, err)
 		}
-		got, present, err := c.get(classKey, "probe")
+		got, present, err := c.get(classKey(), "probe")
 		if err != nil || !present || got != v {
 			t.Fatalf("%s: set %q then got %q present=%v err=%v",
 				label, v, got, present, err)
@@ -135,39 +135,39 @@ func contract(t *testing.T, c claims, label string) {
 	// An absent value is reported as absent, not as empty. ⚠️ Returning the
 	// same answer for both is what let a publish proceed over a sheet it had
 	// declined to protect, in slate_tools, and it is the same confusion here.
-	if _, present, err := c.get(classKey, "nothing-wrote-this"); err != nil || present {
+	if _, present, err := c.get(classKey(), "nothing-wrote-this"); err != nil || present {
 		t.Fatalf("%s: an absent value reported present=%v err=%v", label, present, err)
 	}
 
 	// A key this program never created is absent rather than an error.
-	if present, err := c.hasKey(classKey + `\never-created`); err != nil || present {
+	if present, err := c.hasKey(classKey() + `\never-created`); err != nil || present {
 		t.Fatalf("%s: hasKey on an absent key gave %v, %v", label, present, err)
 	}
 
 	// hasKey is TRUE for a key that exists with no default value, which is
 	// the whole reason it is a separate method. s8's trusted-protocol key is
 	// read by Office for its existence alone.
-	if err := c.set(classKey+`\shell`, "x", "y"); err != nil {
+	if err := c.set(classKey()+`\shell`, "x", "y"); err != nil {
 		t.Fatalf("%s: %v", label, err)
 	}
-	if present, err := c.hasKey(classKey + `\shell`); err != nil || !present {
+	if present, err := c.hasKey(classKey() + `\shell`); err != nil || !present {
 		t.Fatalf("%s: hasKey on a created key gave %v, %v", label, present, err)
 	}
 
 	// Removing a key that is not there FAILS. Asserting only that it fails,
 	// per the rule above.
-	if err := c.removeKey(classKey + `\never-created`); err == nil {
+	if err := c.removeKey(classKey() + `\never-created`); err == nil {
 		t.Fatalf("%s: removing an absent key reported success", label)
 	}
 
 	// And removal actually removes.
-	if err := c.removeKey(classKey + `\shell`); err != nil {
+	if err := c.removeKey(classKey() + `\shell`); err != nil {
 		t.Fatalf("%s: removeKey: %v", label, err)
 	}
-	if present, _ := c.hasKey(classKey + `\shell`); present {
+	if present, _ := c.hasKey(classKey() + `\shell`); present {
 		t.Fatalf("%s: key still present after removeKey", label)
 	}
-	_ = c.removeKey(classKey)
+	_ = c.removeKey(classKey())
 }
 
 func TestContractAgainstFake(t *testing.T) {
@@ -244,22 +244,22 @@ func TestInstallClaimsEverythingItShould(t *testing.T) {
 	// ⚠️ THE TRAILING COLON, which is s8 and the one claim that looks right
 	// when it is wrong. A key named "shimp" passes a glance in regedit and
 	// does nothing.
-	if !strings.HasSuffix(trustedProtocolKey, `\shimp:`) {
+	if !strings.HasSuffix(trustedProtocolKey(), `\shimp:`) {
 		t.Fatalf("the trusted protocol key does not end in a colon: %s",
-			trustedProtocolKey)
+			trustedProtocolKey())
 	}
-	if present, _ := f.hasKey(trustedProtocolKey); !present {
+	if present, _ := f.hasKey(trustedProtocolKey()); !present {
 		t.Fatal("install did not claim the Office trusted protocol key")
 	}
 
 	// The class is marked as a URL scheme by the NAME existing.
-	if _, present, _ := f.get(classKey, "URL Protocol"); !present {
+	if _, present, _ := f.get(classKey(), "URL Protocol"); !present {
 		t.Fatal(`install did not create the "URL Protocol" value, so Windows ` +
 			`would not treat this as a URL scheme`)
 	}
 
 	// The command points at the placed binary and passes the URI.
-	cmd, present, _ := f.get(commandKey, "")
+	cmd, present, _ := f.get(commandKey(), "")
 	if !present {
 		t.Fatal("install did not register a shell open command")
 	}
@@ -350,11 +350,11 @@ func TestUninstallWithdrawsOnlyItsOwnAndKeepsTheLog(t *testing.T) {
 		`Trusted Protocols\All Applications\notes:`
 	f.keys[other] = true
 
-	if rc := cmdUninstall(); rc != 0 {
+	if rc := cmdUninstall(false); rc != 0 {
 		t.Fatalf("uninstall returned %d", rc)
 	}
 
-	for _, k := range []string{classKey, commandKey, trustedProtocolKey} {
+	for _, k := range []string{classKey(), commandKey(), trustedProtocolKey()} {
 		if present, _ := f.hasKey(k); present {
 			t.Fatalf("uninstall left %s behind", k)
 		}

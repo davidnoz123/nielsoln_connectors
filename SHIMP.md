@@ -5,7 +5,7 @@
 | s3 | `runner` must be in the FIRST descriptor ever written | **DECIDED** 7 Oct 2026 | nothing, and it blocks the first descriptor |
 | s4 | Declared ports, never allocated | **DECIDED** | nothing |
 | s5 | Accept an abbreviated SHA, store the full one | **DECIDED** | nothing |
-| s6 | The cold fallback, which SHIMP/1 does not specify | **DECIDED**, and it is a contribution back to the design | nothing |
+| s6 | The cold fallback, which SHIMP/1 does not specify | **DECIDED**, and RESTATED 12 Oct 2026 by s51 | nothing |
 | s7 | install places a permanent binary, never registers `go run` | **DECIDED** 7 Oct 2026 | nothing |
 | s8 | The Office trusted-protocol key, per scheme | **DECIDED** | nothing |
 | s9 | The audit is three lines, not two | **DECIDED** 7 Oct 2026, three lines | nothing, and the first descriptor is no longer blocked on this |
@@ -49,6 +49,10 @@
 | s47 | A hashed shimpipc makes the audit cheaper, but only if it is HASHED | **DECIDED** 12 Oct 2026 | nothing |
 | s48 | A test installation is a different SCHEME, and that is why it is safe | **DECIDED** and BUILT 12 Oct 2026 | nothing |
 | s49 | The one-line install, PROVEN for shimp itself from a bare SHA | **PROVEN** 12 Oct 2026, end to end on a real machine | nothing |
+| s50 | NO console field in the descriptor: the console belongs to the keeper | **DECIDED** 12 Oct 2026 | nothing, and it was the last thing that could not be deferred |
+| s51 | s6 and s10 contradicted each other: the handler never does the work | **DECIDED** 12 Oct 2026, and s6 is restated | nothing |
+| s52 | The startup timeout is 120s, and our own measurement rules out any short value | **DECIDED** 12 Oct 2026 | nothing |
+| s53 | The named pipe IS the lock, and on Unix it is not | **DECIDED** 12 Oct 2026, with the platform asymmetry reported | nothing |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -228,6 +232,16 @@ Measured in the Python original: a click is 828ms cold and 526ms warm, so the
 singleton saves 301ms or 36%. Of the warm figure about 100ms is imports and the
 rest is interpreter start, which no daemon can remove.
 
+#### ⚠️ RESTATED 12 Oct 2026, because it contradicted s10
+
+The sentence above, "the clicking process does the work itself", was inherited from the Python original where that is literally what happened, and the 828ms figure measured exactly that.
+
+It cannot survive s10, which decided the click must never be the thing that waits. s51 resolves it: **the handler never does the work.** It starts a keeper and exits.
+
+What survives of this row is the property rather than the mechanism: **a click never FAILS for want of a live instance, it is only slower.** The singleton is still an optimisation and never a dependency.
+
+⚠️ And what is LOST: this row's claim that the readiness race is "mostly moot". It is not, and s51 records the behaviour that now has to exist, which is the keeper holding an action that arrives before READY.
+
 ### s7. install places a permanent binary, never registers `go run`
 
 Measured 7 Oct 2026, same program, module already cached:
@@ -382,6 +396,11 @@ s20 keeps actions request/response so that "delivered" is distinguishable from "
 A minutes-long job whose reply arrives at the end is a hyperlink that hangs, which is the irritation this row exists to remove.
 
 So the three candidates collapse into one answer rather than competing: the console is where it reports, the reply is the log or console handle, and `pdf_view_server/raise_windows.go` is how the finished console gets the user's attention without stealing it mid-job.
+
+#### Two decisions that followed from this row, 12 Oct 2026
+
+* **s50**: the console is the KEEPER's and never a descriptor field. The question had to be settled before the first link, because a per-capability console preference would have been a hashed field, and the worry that raised it dissolves once the singleton means one console per INSTANCE rather than one per click.
+* **s51**: this row's "the click must never wait" contradicted s6's "the clicking process does the work itself", and the contradiction stood unnamed for five days. The handler now never does the work.
 
 ### s11. shimp as a library, not only a URI
 
@@ -823,6 +842,17 @@ That is invisible with one implementation and an interop bug under load with sev
 Pinned in s46: `uint32` big-endian length, then that many bytes of UTF-8 JSON, 1 MiB maximum, and a declared length above it is REFUSED rather than allocated.
 ⚠️ Big-endian with a test pinning a known header, for the measured reason in `AGENTS.project.md`: a port read as a plain `uint32` turned 9222 into 30987, which looks like a real port number and so does not announce itself as a bug.
 
+#### Four things this row left unstated, decided 12 Oct 2026
+
+Building the keeper would have hit each of these, and none was on any row:
+
+| | |
+|---|---|
+| **s52** | the "fixed startup timeout" is **120s**, with progress logged at 5s. s49's 27.4s cold `go run` rules out the 5s default anybody would have reached for, because that breaks the FIRST click of every capability and works thereafter |
+| **s53** | the "instance lock" and the named pipe are **the same object** on Windows, which makes this row's lock-lifetime, stale-state and re-check-after-lock properties free rather than implemented. On Unix a socket path persists, so none of it is free there |
+| **s51** | the keeper must ACCEPT a connection before READY and HOLD the action, or a cold first click starts the target and silently drops the action it carried |
+| **s50** | nothing about a console is ever declared by a capability |
+
 ### s21. Two more descriptor fields the source froze, and s19's list is short
 
 s19 freezes `descriptor = { version, runner, target, argv, cwd }`.
@@ -983,6 +1013,25 @@ Under s35 every link pays for it in length, and under s44 it would be in the has
 What the field was FOR survives and lands better: s24's audit report states what a target can actually reach, having read the source, rather than repeating what the target claimed about itself. A verified observation beats an unenforced declaration, which was s17's point all along.
 
 ⚠️ And s26's conclusion is now the general rule: a descriptor field cannot be "added later", so there are only two honest positions, in the first version or never. `policy` is never.
+
+#### And s50 reached the same answer by the same three objections
+
+12 Oct 2026. s50 asked whether a capability may declare that it wants a
+console, and refused for the three reasons written above for `policy`:
+unenforced by SHIMP, paid for in the length of every link, and forking
+identity.
+
+⚠️ So this row's reasoning is the general rule, and it is broader than
+`policy`: **a preference about how a target behaves is never a descriptor
+field.** Two capabilities differing only in a claim about themselves, or in a
+preference about their own output, would be different capabilities with
+separate instances. That is absurd on its face, and it is exactly what a
+hashed field means.
+
+(This paragraph was skipped once, on 12 Oct, because the script that wrote it
+tested for the phrase "the general rule" and the paragraph above already
+contained it. A marker that matches text the row already has is not an
+idempotence check, it is a silent no-op.)
 
 ### s22. Windows first, and the spec must not learn the word "pipe"
 
@@ -2392,3 +2441,131 @@ s7 measured a local module: `go run` 650ms warm against a built binary at 68ms. 
 The live test could never catch it, because that test drives an externally built binary and so purges a file it is not running from. **A harness hides exactly the case it does not model**, which is the house rule about fakes arriving from an unexpected direction.
 
 Not fixed by a reboot flag or a detached helper. It is REPORTED precisely, naming the file and the reason, every registry claim is withdrawn regardless, and the next `install` overwrites the binary. `TestPurgeCannotDeleteItselfAndSaysSo` now models the case.
+
+### s50. NO console field in the descriptor: the console belongs to the keeper
+
+Decided 12 Oct 2026, and it was the only remaining decision that could never be taken later.
+
+#### Why it had to be decided now
+
+s10 decided that a long action reports to a VISIBLE console, and `AGENTS.md` forbids hidden windows for a measured reason. But a console is right for a three-minute sweep and looks wrong for a 75ms editor-open.
+
+⚠️ **If that is a per-capability property then it is a DESCRIPTOR FIELD**, and s34 and s44 leave only two honest positions for one: in the first version, or never. "Optional, added later" is not available, because adding a field changes every identity. So this was s3's problem with a new name, and it was on no row.
+
+#### The decision: no field
+
+**A capability does not declare anything about a console.** The console is the keeper's, and the three classes of s46 settle what each case gets:
+
+| class | console |
+|---|---|
+| **one-shot** | none. It runs, prints nothing anybody is waiting for, and exits |
+| **resident** | the keeper creates one, the target inherits it, and it lives as long as the instance |
+| **keeper-adapts** | none. The target already has its own output, as `pdf_view_server` logs to its own file |
+
+#### ⚠️ And the worry that forced the question dissolves
+
+"A console flashing on every click" is wrong, and noticing why is what makes the field unnecessary: **the singleton means the console is created ONCE per live instance.** The first click of a resident capability opens a window. The second click, at 75ms, writes into the window that is already there.
+
+So the cost is one window per instance per session, which is exactly what s10 asked for, and it is not per click at all.
+
+#### And the three objections that killed `policy` apply unchanged
+
+s21 dropped `policy` for being unenforced, for costing link length in every link, and for forking identity. A console bit fails all three in the same way:
+
+* ⚠️ **it would fork identity.** Two capabilities differing only in a preference about their own output would be different capabilities, with different ids and separate instances. That is absurd on its face and it is what a hashed field means.
+* every link would pay for it in length, per s36's budget.
+* and SHIMP would be carrying a declaration it does not need to interpret, which is s17's whole boundary.
+
+s21's reasoning was written for `policy` and turns out to be the general rule: **a preference about how a target behaves is never a field.**
+
+### s51. s6 and s10 contradicted each other: the handler never does the work
+
+Decided 12 Oct 2026.
+
+#### The contradiction, which was on no row
+
+* **s6**: "If the singleton cannot be reached, **the clicking process does the work itself**."
+* **s10**: "**the click must never be the thing that waits.** The action returns on ACCEPTANCE, carrying where it reports, never on completion."
+
+⚠️ **Those cannot both hold literally**, and both rows existed for five days without either naming it.
+
+s6's mechanism was inherited from the Python original, `slate_tools/slate_open.py`, where the clicking process genuinely did the work and the 828ms cold figure measured exactly that. Under shimp the handler is a 36ms binary and the keeper is a separate process, so the premise changed and the sentence did not.
+
+#### The decision: the handler NEVER does the work
+
+A handler resolves the link, computes the identity, finds no live keeper, **starts one, and exits.** It never runs a target, never waits for one and never holds a console.
+
+So s6 is restated. What it claimed:
+
+> the clicking process does the work itself
+
+What survives, and it is the part that mattered:
+
+> **a click never FAILS for want of a live instance. It is only slower.**
+
+The singleton remains an optimisation rather than a dependency, which is s6's real content. The cold path is slow because the TARGET has to start, which s49 measured at 650ms to 27.4s for a `go run`, and not because anything waits in the click.
+
+#### ⚠️ And one thing s6 claimed is genuinely LOST
+
+s6 said the startup-handshake race is "mostly moot" because not being ready is survivable. Under this decision it is not moot: an action can arrive while a keeper is starting and READY has not come.
+
+So the keeper owes one behaviour s20 never stated: **it accepts a connection before READY and HOLDS the action until READY arrives or the timeout expires.** Without that, the first click of a cold capability starts the target and silently drops the action it was carrying, which is the failure shape of this whole repo.
+
+That is the real cost of resolving the contradiction, and it is an addition to s20 rather than a detail.
+
+### s52. The startup timeout is 120s, and our own measurement rules out any short value
+
+Decided 12 Oct 2026.
+
+s20 says "a fixed startup timeout, with a clear failure when readiness never arrives" and names no number. The number was on no row, and the two facts that decide it sat in two rows that never met.
+
+#### ⚠️ The measurement that rules out the obvious choice
+
+s49 measured the target side of a cold launch:
+
+| | |
+|---|---|
+| `go run module@sha`, cold, first ever | **27.4 s** (download, then build) |
+| `go run module@sha`, warm | 1.1 s to 4.8 s |
+
+⚠️ **So any timeout under about 30 seconds fails the FIRST click of every new capability and succeeds on every click after.**
+
+That is the worst failure shape available: a link that is broken once and then works, which teaches a user that clicking twice is the fix and teaches nobody that anything is wrong. And 5 seconds is what anybody writing this would reach for.
+
+#### The decision
+
+**120 seconds**, with progress LOGGED at 5 seconds and every 15 after.
+
+The headroom is deliberate. 27.4s was one small module on a warm network; a larger target, a cold module cache or a slow proxy can be multiples of it, and the cost of a generous timeout is a slow failure while the cost of a tight one is a broken first click.
+
+⚠️ **And the progress logging is not decoration.** A click that takes 30 seconds with nothing reported is indistinguishable from a click that did nothing, which is the exact failure `AGENTS.md` is organised against. The keeper logs what it is waiting for, so a slow first click is visible rather than mysterious.
+
+#### What this is NOT
+
+Not a timeout on the action, and not a timeout on the target's lifetime. Only on READY. A target that takes three minutes to do its job is s10's case and reports to a console; this is about a target that never becomes reachable at all.
+
+### s53. The named pipe IS the lock, and on Unix it is not
+
+Decided 12 Oct 2026.
+
+s20 says "the keeper owns the instance lock" and, separately, that the transport is a named pipe on Windows. It never asks whether those are the same object. [5] had suggested a named mutex, and s30 quoted that only to settle `Local\` against `Global\`.
+
+#### The decision: one primitive, not two
+
+**On Windows the named pipe's existence IS the instance lock.** `CreateNamedPipeW` with `FILE_FLAG_FIRST_PIPE_INSTANCE` fails for a second creator of the same name, so creating the endpoint and taking the lock are one indivisible act.
+
+Three of s20's own properties stop needing an implementation:
+
+* **"the lock's lifetime IS the instance's lifetime"** becomes true by construction. The handle dies with the process, so there is no pid-and-start-time dance and no pid reuse to avoid.
+* **"stale state is detected and recreated"** becomes free. There is no stale pipe to detect: a dead keeper's pipe does not exist.
+* **"concurrent clicks serialise around the identity, and re-check after taking the lock"** becomes one atomic operation rather than a check, a lock and a re-check. The loser of the race gets a failure from `CreateNamedPipeW` and then simply connects as a client.
+
+⚠️ **And two primitives can disagree, which is the real argument.** A mutex held while the pipe is gone, or a pipe alive while the mutex was released, are both states that a mutex-plus-pipe design can reach and neither has an obvious correct response. One object cannot contradict itself.
+
+#### ⚠️ THE ASYMMETRY, reported rather than hidden
+
+**A Unix domain socket's path PERSISTS after the process dies.** So none of the three properties above is free there: a stale socket file is left behind, and the keeper must try to connect, treat a refusal as proof the owner is gone, unlink and recreate.
+
+That is a real difference in the amount of code per platform, and it is the shape s30 already recorded for session scoping: Windows gives something free that Unix must implement, and the honest move is to say so rather than to pretend the design is symmetric.
+
+s22's rule still holds and is what keeps this out of the spec: the protocol says **the keeper owns the endpoint and only one keeper per identity can exist**. That the Windows implementation gets the second half for free is an implementation note, and `scheme_other.go`'s pattern is where the Unix version says what it has to do instead.

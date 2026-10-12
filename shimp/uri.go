@@ -350,6 +350,26 @@ func checkEncoding(seg string) error {
 				"identity (s35, s45)", seg[i:i+3], i)
 		}
 		v := unhex(hi)<<4 | unhex(lo)
+		// ⚠️ A CONTROL BYTE SMUGGLED IN BY ITS ESCAPE. Raw control characters
+		// are refused a few lines below, and %0A was not, which is an
+		// inconsistency with teeth:
+		//
+		//   %00 put a NUL in an argument. On Windows CreateProcess takes a
+		//   wide string, so a NUL TRUNCATES the command line: everything
+		//   after it is silently dropped while the link still reads whole.
+		//
+		//   %0A put a newline in an argument, invisible to anybody reading
+		//   the link and able to confuse anything that parses argv by line.
+		//
+		// Space is 0x20 and stays legal, because %20 is how a legitimate
+		// argument containing a space is written. Bytes above 0x7F stay legal
+		// too: an accented filename is an ordinary argument.
+		if v < 0x20 || v == 0x7F {
+			return fmt.Errorf("the escape %q at %d encodes a control "+
+				"character (0x%02X), which cannot appear in an argument. A "+
+				"NUL truncates a Windows command line and a newline is "+
+				"invisible to anybody reading the link", seg[i:i+3], i, v)
+		}
 		if legalRaw(v) {
 			return fmt.Errorf("the escape %q at %d encodes %q, which is legal "+
 				"unencoded in a path segment. An unnecessary escape is a "+

@@ -48,3 +48,29 @@ func TestOneSpellingOnlyForSubDelims(t *testing.T) {
 		}
 	}
 }
+
+// TestControlBytesCannotBeSmuggledInByTheirEscapes pins the inconsistency a
+// probe of the argument format found.
+//
+// Raw control characters were already refused and their ESCAPES were not, so
+// %0A put a newline in an argument and %00 put a NUL. ⚠️ A NUL truncates a
+// Windows CreateProcess command line, so everything after it is silently
+// dropped while the link still reads whole; a newline is simply invisible to
+// whoever audits the link.
+func TestControlBytesCannotBeSmuggledInByTheirEscapes(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	base := "shimp://v1/go/run/example.com/x@" + sha + "/-token/"
+
+	for _, esc := range []string{"%00", "%01", "%09", "%0A", "%0D", "%1F", "%7F"} {
+		if _, err := ParseURI(base+esc, "shimp"); err == nil {
+			t.Errorf("%s was accepted, so a control byte reaches argv", esc)
+		}
+	}
+	// And the two that must stay legal, for opposite reasons.
+	for _, ok := range []string{"%20", "%C3%A9"} {
+		if _, err := ParseURI(base+"a"+ok+"b", "shimp"); err != nil {
+			t.Errorf("%s was refused, and it is an ordinary argument "+
+				"character: %v", ok, err)
+		}
+	}
+}

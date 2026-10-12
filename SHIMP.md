@@ -48,6 +48,7 @@
 | s46 | The TARGET-side IPC client, which s20 requires and s11 declined to provide | **DECIDED** 12 Oct 2026: copied files, synced, with two tests | nothing. The last blocker is closed. |
 | s47 | A hashed shimpipc makes the audit cheaper, but only if it is HASHED | **DECIDED** 12 Oct 2026 | nothing |
 | s48 | A test installation is a different SCHEME, and that is why it is safe | **DECIDED** and BUILT 12 Oct 2026 | nothing |
+| s49 | The one-line install, PROVEN for shimp itself from a bare SHA | **PROVEN** 12 Oct 2026, end to end on a real machine | nothing |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -81,6 +82,10 @@ compromise would change both what `shimp:` means and what it runs.
 and replacement is refused without `--replace`; capabilities pin target SHAs
 too. A hostile commit landing in the repo changes NO installed handler and NO
 existing link. The real trust boundary is `--replace`, not the folder layout.
+
+#### Proven for the HANDLER too, 12 Oct 2026
+
+This row proved the mechanism with `chrome_sessions`. s49 proves it for `shimp` itself at `e6b4053`, including the `os.Executable()`-under-`go run` path that s7 rests on and that a local `go build` never exercises.
 
 ### s2. Go only: Go does not use Python, Python uses Go
 
@@ -2332,3 +2337,58 @@ go build  ->  install -scheme  ->  verify  ->  ShellExecuteW(uri)
 ⚠️ **It builds a real binary rather than installing itself.** The first version called `cmdInstall` in process, which copies `os.Executable()`, and under `go test` that is the TEST binary. Windows would then have invoked a test binary as the handler, the click would never have reached `onClick`, and the test would have reported on something it never exercised.
 
 And the click goes through **`ShellExecuteW`**, so WINDOWS does the routing, through the registry, exactly as a click does. Not a simulation.
+
+### s49. The one-line install, PROVEN for shimp itself from a bare SHA
+
+Measured 12 Oct 2026, from `/tmp` with no checkout, after pushing `e6b4053`:
+
+```
+go run github.com/davidnoz123/nielsoln_connectors/shimp@e6b4053 install -scheme shimp-selftest
+
+  go: downloading .../shimp v0.0.0-20261012011532-e6b4053c698e
+  go: downloading .../nielsoln_connectors v0.0.0-20261012011532-e6b4053c698e
+  installed shimp-selftest:
+    binary  <home>\shimp-selftest.exe
+    version v0.0.0-20261012011532-e6b4053c698e
+    sha256  162b97f5a438c0831cc30cf04b47852987bb5b9cfb3dabd7b5f3a4cbe92372ee
+```
+
+Then `verify` passed against the live registry, a real click routed through the OS to the installed handler, and `uninstall` withdrew every claim.
+
+#### What this proves that s1 did not
+
+s1 proved `go run module@sha` works for a SUBDIRECTORY module, using `chrome_sessions`. This proves it for the handler, and three things s1 could not:
+
+* **the `os.Executable()` path s7 rests on.** Under `go run` that is the toolchain's temporary build output, and s7 asserts it is self-contained so copying it is enough. A local `go build` does NOT exercise this: its output is an ordinary binary in an ordinary place. Now measured: the copy runs, and the OS invokes it successfully.
+* **`version --audit` with a real version.** Every previous run reported `(devel)`. The real block is:
+
+```
+SHIMP/1
+module=github.com/davidnoz123/nielsoln_connectors/shimp
+version=v0.0.0-20261012011532-e6b4053c698e
+binary_sha256=162b97f5a438c0831cc30cf04b47852987bb5b9cfb3dabd7b5f3a4cbe92372ee
+go=go1.27.0
+```
+
+That answers s23's second question, "is what is installed the thing I think it is", with real values for the first time. The version carries the 12-hex `e6b4053c698e` and a timestamp, which is the limit s7 records: a go-run binary can learn its pseudo-version and never its full 40-hex commit.
+* **the 7-hex abbreviation on input**, which is s5, expanded by the toolchain itself.
+
+#### ⚠️ And the timings make s7's case STRONGER than s7 does
+
+s7 measured a local module: `go run` 650ms warm against a built binary at 68ms. Measured here for a REMOTE `module@sha`:
+
+| | |
+|---|---|
+| `go run module@sha`, cold, first ever | **27.4 s** (download and build) |
+| `go run module@sha`, warm | **1152 ms, 1628 ms, 4843 ms** |
+| the installed binary | **36 ms, 37 ms, 91 ms** |
+
+⚠️ **A remote `module@sha` is far slower warm than s7's local figure**, because resolution still happens on every run. So the gap is roughly 30x rather than 10x, and s7's conclusion that install must place a permanent binary is not merely right, it is understated.
+
+#### ⚠️ One defect this found that the live test structurally could not
+
+`uninstall -purge` invoked as the INSTALLED binary cannot delete itself: Windows refuses to remove a running executable. Measured, "Access is denied".
+
+The live test could never catch it, because that test drives an externally built binary and so purges a file it is not running from. **A harness hides exactly the case it does not model**, which is the house rule about fakes arriving from an unexpected direction.
+
+Not fixed by a reboot flag or a detached helper. It is REPORTED precisely, naming the file and the reason, every registry claim is withdrawn regardless, and the next `install` overwrites the binary. `TestPurgeCannotDeleteItselfAndSaysSo` now models the case.

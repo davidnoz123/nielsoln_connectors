@@ -221,3 +221,80 @@ func TestLiveInstallCycle(t *testing.T) {
 		"installed handler, and uninstall -purge leaves the machine as it " +
 		"was found.")
 }
+
+// TestPurgeCannotDeleteItselfAndSaysSo pins the one case the cycle above
+// structurally cannot reach.
+//
+// ⚠️ TestLiveInstallCycle drives an EXTERNALLY built binary, so its purge
+// deletes a file it is not running from and always succeeds. Invoked as the
+// INSTALLED binary, purge cannot remove itself: Windows refuses to delete a
+// running executable. Measured 12 Oct 2026 after a real one-line install.
+//
+// A harness hides exactly the case it does not model, so this is the case,
+// modelled.
+func TestPurgeCannotDeleteItselfAndSaysSo(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skipf("UNANSWERED on %s: a running executable is deletable here, so "+
+			"this failure does not arise", runtime.GOOS)
+	}
+	if os.Getenv("SHIMP_LIVE_INSTALL") != "1" {
+		t.Skip("UNANSWERED: needs SHIMP_LIVE_INSTALL=1, because it installs " +
+			"for real in order to then run the installed binary.")
+	}
+	const sch = "shimp-selfpurge"
+	if err := useScheme(sch); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { scheme = "shimp" })
+
+	c, err := claimsFor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := home()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		for _, k := range []string{trustedProtocolKey(), commandKey(),
+			classKey() + `\shell\open`, classKey() + `\shell`, classKey()} {
+			_ = c.removeKey(k)
+		}
+		_ = os.RemoveAll(dir)
+	})
+
+	exe := filepath.Join(t.TempDir(), "shimp.exe")
+	if out, err := exec.Command("go", "build", "-o", exe, ".").CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	if _, err := run(t, exe, "install", "-scheme", sch); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	// Now purge using the INSTALLED binary, which is the case that cannot
+	// succeed.
+	installed := filepath.Join(dir, sch+".exe")
+	out, err := run(t, installed, "uninstall", "-purge", "-scheme", sch)
+	if err == nil {
+		t.Fatal("purge reported success while deleting its own running " +
+			"executable, which Windows does not permit. A success here means " +
+			"the failure is being swallowed.")
+	}
+	if !strings.Contains(out, "could not fully purge") {
+		t.Fatalf("the failure was not reported in terms a user could act "+
+			"on:\n%s", out)
+	}
+	if !strings.Contains(out, "running executable") {
+		t.Fatalf("the report does not say WHY, so it reads as a mystery:\n%s", out)
+	}
+	// And the claims must still be gone: the binary surviving is acceptable,
+	// a registered scheme surviving is not.
+	for _, k := range []string{classKey(), commandKey(), trustedProtocolKey()} {
+		if present, _ := c.hasKey(k); present {
+			t.Fatalf("the registry claim %s survived a failed purge, so a "+
+				"click would still reach a handler the user uninstalled", k)
+		}
+	}
+	t.Log("ANSWERED: purge cannot delete its own running binary, says so " +
+		"precisely, and withdraws every registry claim regardless.")
+}

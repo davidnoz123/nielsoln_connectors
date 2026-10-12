@@ -390,7 +390,32 @@ func cmdUninstall(purge bool) int {
 		if dir, err := home(); err == nil {
 			logSuppressed = true
 			if err := os.RemoveAll(dir); err != nil {
-				fmt.Fprintf(os.Stderr, "could not purge %s: %v\n", dir, err)
+				// ⚠️ THE CASE THAT CANNOT SUCCEED, and it is not a bug to
+				// fix: Windows refuses to delete a RUNNING executable, so
+				// `uninstall -purge` invoked as the INSTALLED binary cannot
+				// remove itself. Measured 12 Oct 2026 after a real one-line
+				// install: "Access is denied" on shimp-selftest.exe.
+				//
+				// The live test could not catch it, because that test drives
+				// an externally built binary and so purges a file it is not
+				// running from. A harness hides exactly the case it does not
+				// model, which is the house rule about fakes arriving from a
+				// different direction.
+				//
+				// So it is REPORTED precisely rather than fixed by a reboot
+				// flag or a detached helper. Everything else is already gone,
+				// and the next `install` overwrites the binary, so the
+				// leftover is self-healing in the sense s20 means.
+				fmt.Fprintf(os.Stderr,
+					"could not fully purge %s: %v\n", dir, err)
+				if self, e := os.Executable(); e == nil &&
+					strings.HasPrefix(self, dir) {
+					fmt.Fprintf(os.Stderr,
+						"  this command IS %s, and Windows will not delete a "+
+							"running executable.\n  Everything else is "+
+							"withdrawn. Remove the directory yourself, or run "+
+							"uninstall from a copy outside it.\n", self)
+				}
 				return 1
 			}
 			fmt.Printf("purged %s\n", dir)

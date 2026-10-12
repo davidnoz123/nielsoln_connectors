@@ -361,21 +361,32 @@ func onClick(uri string) int {
 	// os.Args[1] is unmeasurable without a registered handler. Every click
 	// logs it, so the answer accumulates from real use rather than from a
 	// guess about Windows.
-	// ⚠️ A link belonging to another installation. Worth its own refusal:
-	// under s44 the scheme is part of the identity bytes, so this is not a
-	// near-miss to be tolerated, it is a different protocol.
-	if !strings.HasPrefix(strings.ToLower(uri), scheme+"://") {
-		_log("click REFUSED: this handler is installed as %q and the link is "+
-			"for another scheme. The scheme is part of the identity bytes "+
-			"(s44), so this is a different protocol rather than a typo: %s",
-			scheme, uri)
+	_log("click: os.Args[1] is %d bytes", len(uri))
+	_log("click: %s", uri)
+
+	// The parser is built, so a click now gets a real answer about its own
+	// link. ⚠️ A refusal here is the GOOD case: under s35 every
+	// non-canonical spelling is rejected rather than repaired, so a link
+	// that parses is a link with exactly one identity.
+	u, err := ParseURI(uri, scheme)
+	if err != nil {
+		_log("click REFUSED: %v", err)
 		return 1
 	}
 
-	_log("click: os.Args[1] is %d bytes", len(uri))
-	_log("click: %s", uri)
-	_log("click REFUSED: the dispatch half is not built. The grammar is " +
-		"frozen (s43, s44, s45, s41) and no parser exists yet.")
+	// Everything the dispatch half will need, recorded now so that the
+	// pieces can be checked against a real click before the keeper exists.
+	_log("click: identity %s over %d bytes", u.Identity(), len(u.Raw))
+	_log("click: would run %q", u.Argv())
+	if u.HasAction {
+		_log("click: action %q, which is NOT part of identity", u.Action)
+	} else {
+		_log("click: no action, so this is ensure-running only")
+	}
+
+	_log("click REFUSED: the KEEPER is not built. The link is valid and its " +
+		"identity is above; s20's lock, IPC and handshake and s46's " +
+		"target-side client are what remain.")
 	return 1
 }
 

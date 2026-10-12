@@ -421,4 +421,14 @@ func TestClickLogsTheLengthS36CannotOtherwiseMeasure(t *testing.T) {
 		t.Fatalf("the click did not record a refusal, so a user would see "+
 			"nothing at all:\n%s", logged.String())
 	}
+	// ⚠️ And now that the parser exists, a click must record the IDENTITY it
+	// computed and the argv it would run. Those are what the keeper will act
+	// on, so having them in the log before the keeper exists is how the two
+	// halves get checked against each other.
+	for _, want := range []string{"identity ", "would run "} {
+		if !strings.Contains(logged.String(), want) {
+			t.Fatalf("the click did not log %q, so a real click says nothing "+
+				"about what it resolved to:\n%s", want, logged.String())
+		}
+	}
 }

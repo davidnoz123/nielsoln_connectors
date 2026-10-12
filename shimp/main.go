@@ -64,12 +64,21 @@ var scheme = "shimp"
 
 // logName is under the shimp home, and it is not optional.
 //
-// ⚠️ A handler invoked from a URI click has NO CONSOLE. Anything written to
-// stderr goes nowhere, the process exits, and the only symptom is that
-// clicking the link did nothing. That is the exact failure mode the house
-// rules are organised against, so every run appends here, including the runs
-// that succeed, because "it logged starting and never finished" is what tells
-// the next person where it died.
+// ⚠️ CORRECTED 12 Oct 2026, having been measured. This comment used to assert
+// that a handler invoked from a URI click has NO CONSOLE. That is FALSE:
+// Windows gives a clicked handler a console, and the click now records it
+// (`has a console: true`). The claim was never checked.
+//
+// The log's justification survives the correction intact, because the console
+// Windows provides is useless for this purpose: the handler exits in about
+// 36ms, taking the window with it, so anything written there is gone before
+// it can be read. The only symptom a user gets is that clicking the link did
+// nothing.
+//
+// So every run appends here, including the runs that succeed, because "logged
+// starting and never finished" is what tells the next person where it died.
+// s50 is where the console itself is decided, and that window flashing on
+// every click is a defect in its own right.
 const logName = "shimp.log"
 
 // stampName records what install knew at install time and nothing else does
@@ -361,6 +370,12 @@ func onClick(uri string) int {
 	// os.Args[1] is unmeasurable without a registered handler. Every click
 	// logs it, so the answer accumulates from real use rather than from a
 	// guess about Windows.
+	// ⚠️ MEASURING "who creates the command prompt". A Go binary is a
+	// console-subsystem executable, so Windows may give it a console when
+	// the registry launches it from a GUI context, and that would be a
+	// window flashing on every click before shimp has decided anything.
+	// Nobody knew, so every click records it.
+	_log("click: this handler has a console: %v", hasConsole())
 	_log("click: os.Args[1] is %d bytes", len(uri))
 	_log("click: %s", uri)
 

@@ -49,7 +49,7 @@
 | s47 | A hashed shimpipc makes the audit cheaper, but only if it is HASHED | **DECIDED** 12 Oct 2026 | nothing |
 | s48 | A test installation is a different SCHEME, and that is why it is safe | **DECIDED** and BUILT 12 Oct 2026 | nothing |
 | s49 | The one-line install, PROVEN for shimp itself from a bare SHA | **PROVEN** 12 Oct 2026, end to end on a real machine | nothing |
-| s50 | NO console field in the descriptor: the console belongs to the keeper | **DECIDED** 12 Oct 2026 | nothing, and it was the last thing that could not be deferred |
+| s50 | NO console field in the descriptor: the console belongs to the keeper | **DECIDED** 12 Oct 2026: no field, and the console is LAZY | a decision on the handler's own 36ms flash: GUI subsystem, which lengthens the install line, or FreeConsole |
 | s51 | s6 and s10 contradicted each other: the handler never does the work | **DECIDED** 12 Oct 2026, and s6 is restated | nothing |
 | s52 | The startup timeout is 120s, and our own measurement rules out any short value | **DECIDED** 12 Oct 2026 | nothing |
 | s53 | The named pipe IS the lock, and on Unix it is not | **DECIDED** 12 Oct 2026, with the platform asymmetry reported | nothing |
@@ -2478,6 +2478,47 @@ s21 dropped `policy` for being unenforced, for costing link length in every link
 
 s21's reasoning was written for `policy` and turns out to be the general rule: **a preference about how a target behaves is never a field.**
 
+#### MEASURED 12 Oct 2026: Windows creates it, on every click
+
+Asked who currently creates the command prompt, and whether the keeper could start without one and allocate it later.
+
+The first half was unknown and is now measured, by having a click record it:
+
+| invoked by | `GetConsoleWindow() != 0` |
+|---|---|
+| **a click, through the OS** | **true** |
+| a Git Bash shell, which is a MinTTY pty rather than a Win32 console | false |
+
+⚠️ **So Windows gives the handler a console, and a window flashes on every click today.** `main.go` carried a comment asserting the opposite, that "a handler invoked from a URI click has NO CONSOLE", which was the reason the log exists at all. The log's justification survives, because a flashed console that closes in 36ms is no use to anybody, but the stated fact was wrong.
+
+#### And yes: a console can be allocated LATE
+
+`AllocConsole` gives a console to a process that has none, at any time. So the keeper can start silent and allocate only when it turns out to have something to show.
+
+⚠️ **One trap, and it is this repo's favourite shape:** `AllocConsole` does NOT redirect the existing `os.Stdout` and `os.Stderr`. A window appears, the program writes to its old handles, and the window stays empty. A console that looks like a working one. Opening `CONOUT$` and rebinding is what makes it show anything, and `console_windows.go` does that with the reason recorded.
+
+#### ⚠️ Which makes the NO-FIELD decision stronger, not weaker
+
+The original argument against a `console` field was that it would fork identity, cost link length and be unenforced, which is s21's rule.
+
+Lazy allocation removes the last reason anybody would want the field: **a capability does not need to predict whether it will have something to say, because the keeper can observe whether it did.** A declared preference is a prediction; output is a fact. Preferring the fact is what s24 does with UNVERIFIED and what s21 does with `policy`.
+
+#### The design that follows
+
+* the **keeper** is launched with no console and calls `AllocConsole` the first time the target produces output a human should see, or when s51's anomaly needs reporting
+* the **target** inherits the keeper's console once it exists
+* a **one-shot** capability never gets one, per s46's three classes
+
+#### ⚠️ And the one real complication, recorded rather than solved
+
+Removing the handler's own flash entirely means the binary must be a **GUI-subsystem** executable, so Windows never creates a console for it, with `AttachConsole(ATTACH_PARENT_PROCESS)` when it is run from a terminal instead of clicked.
+
+⚠️ **That is a BUILD-TIME property, and shimp's install copies whatever binary built it.** So the subsystem is decided by the flags on the documented install line, which would become `go run -ldflags "-H=windowsgui" <module>@<sha> install`. The one-line install story and the no-flash property are therefore coupled, which nothing had noticed.
+
+The cheaper option is to stay console-subsystem and call `FreeConsole` as the first act of a click, which hides the window immediately rather than never creating it. A sub-frame flash in most cases, and not guaranteed.
+
+Not decided here. The flash is 36ms today and the choice is between a short flash with a simple install line and no flash with a longer one.
+
 ### s51. s6 and s10 contradicted each other: the handler never does the work
 
 Decided 12 Oct 2026.
@@ -2513,6 +2554,30 @@ So the keeper owes one behaviour s20 never stated: **it accepts a connection bef
 
 That is the real cost of resolving the contradiction, and it is an addition to s20 rather than a detail.
 
+#### ⚠️ THREE outcomes, not two. Added 12 Oct 2026 from the sheet
+
+Put back: a click should not be silent when there is an ANOMALY in the configuration, and a singleton that cannot be accessed is an anomaly.
+
+That is right, and it names a distinction both this row and s6 had merged. "The singleton cannot be reached" was doing duty for two completely different situations:
+
+| | what it means | how it should behave |
+|---|---|---|
+| **no keeper exists** | the normal first click of a capability | slow, logged, progress shown. NOT an anomaly |
+| **a keeper exists and answers** | the normal warm click | fast, silent |
+| ⚠️ **a keeper exists and cannot be reached** | something is wrong | **loud and visible** |
+
+#### s53 is what makes them separable
+
+Under pipe-as-lock the three cases are distinguished by the kernel rather than inferred:
+
+* `CreateNamedPipeW` **succeeds** -> nobody held it -> I am the keeper -> cold start
+* it **fails** and connecting **succeeds** -> I lost the race or a keeper was already live -> forward the action
+* ⚠️ it **fails** and connecting **fails or times out** -> a keeper holds the endpoint and will not answer -> **anomaly**
+
+The third case cannot be recovered from by force: the pipe's owner cannot be evicted. So it is REPORTED, visibly, which is the first real use for s50's lazy console, because an anomaly is precisely the output a human needs to see. And it names what it can: the identity, the endpoint and the pid if the platform will say.
+
+This is the same rule the rest of the repo keeps restating. s12: a browser answering on a port is not a browser that is signed in. s8: `verify` says the key is present, not that clicks are silent. A click that quietly carries on after finding a wedged singleton would be the version of that failure that this design cannot afford, because the user's conclusion would be "the link does not work" with nothing to read.
+
 ### s52. The startup timeout is 120s, and our own measurement rules out any short value
 
 Decided 12 Oct 2026.
@@ -2544,6 +2609,35 @@ The headroom is deliberate. 27.4s was one small module on a warm network; a larg
 
 Not a timeout on the action, and not a timeout on the target's lifetime. Only on READY. A target that takes three minutes to do its job is s10's case and reports to a console; this is about a target that never becomes reachable at all.
 
+#### ⚠️ What the number is FOR changed, 12 Oct 2026
+
+Put back: this depends on whether anything VISIBLE is happening, a console showing a heartbeat for instance.
+
+That is right and it reframes the row. 120s was chosen because a silent 30-second wait is indistinguishable from a click that did nothing, so the timeout was carrying the whole burden of not being mysterious. With visible progress it stops being that and becomes a backstop.
+
+#### And the heartbeat does not have to be invented
+
+⚠️ **`go run` already says what it is doing.** s49 captured it:
+
+```
+go: downloading github.com/.../shimp v0.0.0-20261012011532-e6b4053c698e
+go: downloading github.com/.../nielsoln_connectors v0.0.0-...
+```
+
+The keeper launches the target and can capture its stderr, so the console can show the toolchain's own output. That is real progress, naming the module being fetched, rather than a spinner that proves only that a process is alive.
+
+#### So the rule, restated
+
+**Never wait silently.** Concretely:
+
+| at | what happens |
+|---|---|
+| ~2 s | the keeper allocates a console (s50) and starts echoing the target's output |
+| throughout | `go: downloading ...` and anything else the target says |
+| 120 s | the backstop. A clear failure naming what never arrived |
+
+The 120s stays, because the cost of a generous backstop is a slow failure while the cost of a tight one is s52's original finding: a link broken on its first click and working thereafter. But it is no longer the thing that keeps a slow click honest. The console is.
+
 ### s53. The named pipe IS the lock, and on Unix it is not
 
 Decided 12 Oct 2026.
@@ -2569,3 +2663,17 @@ Three of s20's own properties stop needing an implementation:
 That is a real difference in the amount of code per platform, and it is the shape s30 already recorded for session scoping: Windows gives something free that Unix must implement, and the honest move is to say so rather than to pretend the design is symmetric.
 
 s22's rule still holds and is what keeps this out of the spec: the protocol says **the keeper owns the endpoint and only one keeper per identity can exist**. That the Windows implementation gets the second half for free is an implementation note, and `scheme_other.go`'s pattern is where the Unix version says what it has to do instead.
+
+#### The requirement, which is a better way to put it. 12 Oct 2026
+
+Put back: the question was unclear, and surely the driving consideration is robust singleton creation with no racing.
+
+That is exactly it, and it is a better framing than the one this row opened with. The row posed a choice between primitives when the requirement decides it:
+
+⚠️ **`CreateNamedPipeW` with `FILE_FLAG_FIRST_PIPE_INSTANCE` is ATOMIC.** Either this process created the endpoint or somebody else holds it, decided by the kernel, with **no window between checking and acting**.
+
+A mutex plus a pipe has that window: take the mutex, then create the pipe, and a crash between them leaves a held lock with no endpoint. It also has two objects that can disagree, and neither disagreement has an obvious correct response.
+
+So there was nothing to weigh. One atomic primitive satisfies "no racing" by construction; two primitives cannot, however carefully they are ordered. The rest of this row follows from that rather than arguing towards it.
+
+And s51 now rests on the same atomicity: it is the pipe result, succeed or fail, plus the connect result that separates a normal cold start from a lost race from a wedged keeper.

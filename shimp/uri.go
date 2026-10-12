@@ -286,6 +286,36 @@ func unreserved(c byte) bool {
 		(c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_' || c == '~'
 }
 
+// legalRaw reports whether a byte may appear UNENCODED in a path segment.
+//
+// RFC 3986: segment = *pchar, and pchar = unreserved / pct-encoded /
+// sub-delims / ":" / "@". So the bytes that MUST be escaped are only these:
+// "/" "?" "#" "[" "]" "%", space, the control range, and anything >= 0x80.
+//
+// ⚠️ THIS IS WIDER THAN `unreserved` AND THAT WAS A REAL DEFECT. The escape
+// check originally refused an escape only when it encoded an UNRESERVED
+// character, so `%3A` was accepted alongside a raw ":" -- and twelve
+// characters had two legal spellings each: : @ $ & + , ; = ! ( * '
+//
+// Two spellings is two identities for one capability, which is the single
+// thing s35 exists to prevent, and it was found by trying to write a real
+// link: `-listen 127.0.0.1:8080` is an ordinary argument and it hit it
+// immediately. A test now pins every one of the twelve.
+func legalRaw(c byte) bool {
+	if unreserved(c) {
+		return true
+	}
+	switch c {
+	// sub-delims
+	case '!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=':
+		return true
+	// explicitly permitted in a segment
+	case ':', '@':
+		return true
+	}
+	return false
+}
+
 // checkEncoding enforces s45's canonical percent-encoding on one segment.
 //
 // ⚠️ Two rules, and the second is the one that matters for identity:
@@ -320,11 +350,11 @@ func checkEncoding(seg string) error {
 				"identity (s35, s45)", seg[i:i+3], i)
 		}
 		v := unhex(hi)<<4 | unhex(lo)
-		if unreserved(v) {
-			return fmt.Errorf("the escape %q at %d encodes %q, which never "+
-				"needs encoding. An unnecessary escape is a second spelling "+
-				"of the same value, so it is refused rather than accepted "+
-				"(s45)", seg[i:i+3], i, string(v))
+		if legalRaw(v) {
+			return fmt.Errorf("the escape %q at %d encodes %q, which is legal "+
+				"unencoded in a path segment. An unnecessary escape is a "+
+				"second spelling of the same value, so it is refused rather "+
+				"than accepted (s45)", seg[i:i+3], i, string(v))
 		}
 		i += 2
 	}

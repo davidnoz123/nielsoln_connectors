@@ -380,11 +380,27 @@ func TestVerifyFailsWhenTheBinaryChangedUnderneathIt(t *testing.T) {
 	logTo = &bytes.Buffer{}
 	t.Cleanup(func() { logTo = nil })
 
+	// ⚠️ Asserting on the CHECK rather than on the exit code, which is what
+	// the `out` seam exists for. The aggregate is not this test's subject and
+	// is legitimately non-zero here for an unrelated reason: a `go test`
+	// binary is console-subsystem, so s50's subsystem check correctly fails.
+	// A test that read the exit code would have broken the moment an
+	// unrelated check was added, and did.
+	report := func() string {
+		var buf bytes.Buffer
+		out = &buf
+		defer func() { out = os.Stdout }()
+		cmdVerify()
+		return buf.String()
+	}
+
 	if rc := cmdInstall(false); rc != 0 {
 		t.Fatalf("install returned %d", rc)
 	}
-	if rc := cmdVerify(); rc != 0 {
-		t.Fatalf("verify failed straight after a successful install (rc %d)", rc)
+	before := report()
+	if !strings.Contains(before, "[ ok ] binary sha256") {
+		t.Fatalf("straight after install, the binary hash did not verify:\n%s",
+			before)
 	}
 
 	// ⚠️ This is s23's second audit question made operational: "is what is
@@ -393,9 +409,15 @@ func TestVerifyFailsWhenTheBinaryChangedUnderneathIt(t *testing.T) {
 	if err := os.WriteFile(bin, []byte("not the handler"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if rc := cmdVerify(); rc == 0 {
-		t.Fatal("verify passed with a replaced binary, so it reports a path " +
-			"existing rather than the binary being the installed one")
+	after := report()
+	if !strings.Contains(after, "[FAIL] binary sha256") ||
+		!strings.Contains(after, "CHANGED since install") {
+		t.Fatalf("verify did not report the replaced binary, so it checks "+
+			"that a path exists rather than that the binary is the installed "+
+			"one:\n%s", after)
+	}
+	if cmdVerify() == 0 {
+		t.Fatal("verify exited 0 with a replaced binary")
 	}
 }
 

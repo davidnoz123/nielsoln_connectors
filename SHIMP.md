@@ -49,7 +49,7 @@
 | s47 | A hashed shimpipc makes the audit cheaper, but only if it is HASHED | **DECIDED** 12 Oct 2026 | nothing |
 | s48 | A test installation is a different SCHEME, and that is why it is safe | **DECIDED** and BUILT 12 Oct 2026 | nothing |
 | s49 | The one-line install, PROVEN for shimp itself from a bare SHA | **PROVEN** 12 Oct 2026, end to end on a real machine | nothing |
-| s50 | NO console field in the descriptor: the console belongs to the keeper | **DECIDED** 12 Oct 2026: no field, and the console is LAZY | a decision on the handler's own 36ms flash: GUI subsystem, which lengthens the install line, or FreeConsole |
+| s50 | NO console field in the descriptor: the console belongs to the keeper | **DECIDED and BUILT** 12 Oct 2026: no field, lazy console, GUI subsystem | nothing |
 | s51 | s6 and s10 contradicted each other: the handler never does the work | **DECIDED** 12 Oct 2026, and s6 is restated | nothing |
 | s52 | The startup timeout is 120s, and our own measurement rules out any short value | **DECIDED** 12 Oct 2026 | nothing |
 | s53 | The named pipe IS the lock, and on Unix it is not | **DECIDED** 12 Oct 2026, with the platform asymmetry reported | nothing |
@@ -2518,6 +2518,45 @@ Removing the handler's own flash entirely means the binary must be a **GUI-subsy
 The cheaper option is to stay console-subsystem and call `FreeConsole` as the first act of a click, which hides the window immediately rather than never creating it. A sub-frame flash in most cases, and not guaranteed.
 
 Not decided here. The flash is 36ms today and the choice is between a short flash with a simple install line and no flash with a longer one.
+
+#### CLOSED 12 Oct 2026: GUI subsystem, measured both ways
+
+The row had three possible outcomes and said which decision each would imply. Measured, three clicks, consistently:
+
+| build | console on a click | CLI output |
+|---|---|---|
+| console-subsystem, the default | **present, VISIBLE, and in the FOREGROUND** | works |
+| GUI-subsystem, `-ldflags "-H=windowsgui"` | **absent entirely** | **still works, including through `cmd.exe`** |
+
+⚠️ **So it was the worst of the three outcomes: the window takes FOREGROUND.** Not a flicker. Every click interrupts whatever was being typed, which is precisely the category s10 exists for and the reason that row was raised at all.
+
+And the GUI build has no cost on the other side. The worry was that a GUI-subsystem binary loses its CLI output and would need `AttachConsole(ATTACH_PARENT_PROCESS)`. Measured: output appears from both Git Bash and `cmd.exe`, because inherited handles work regardless of subsystem. ⚠️ One caveat not tested: `cmd.exe` does not WAIT for a GUI-subsystem process, so an exit code in a batch file is unreliable. Output ordering looked correct here; scripting around it is unverified.
+
+#### So the documented install line carries the flag
+
+```
+go run -ldflags "-H=windowsgui" \
+    github.com/davidnoz123/nielsoln_connectors/shimp@<sha> install
+```
+
+#### ⚠️ And the condition this row set for accepting that is now met
+
+The objection to the flag was never its length. It was that **forgetting it degrades silently**: the install succeeds, the scheme works, and focus is stolen on every click for ever, with nothing to read.
+
+So the binary reads its own PE header, and the omission is made loud twice:
+
+* **`install` WARNS** at the moment it matters, naming the flag, because somebody who omitted it has no reason to run `verify`. A warning rather than a refusal, so the plain line still works for somebody who does not care.
+* **`verify` reports FAIL**, not a note, because the install did succeed and this is the only thing that would ever tell them.
+
+`subsystem.go` reads Subsystem at PE + 24 + 68. ⚠️ Worth stating because it looks like it should differ: that offset is the same for PE32 and PE32+, since PE32+ drops `BaseOfData` and widens `ImageBase`, and the two changes cancel exactly.
+
+⚠️ **And the offset is pinned by a test that builds a binary BOTH ways**, per the house rule about syscall structs. The values being read are 2 and 3, and small integers are everywhere in a PE header, so a wrong offset could return a plausible answer indefinitely. Nothing but building both ways distinguishes right from lucky.
+
+#### One defect the new check exposed in an existing test
+
+`TestVerifyFailsWhenTheBinaryChangedUnderneathIt` asserted `verify`'s EXIT CODE, so it broke the moment an unrelated check was added, which it duly did: a `go test` binary is console-subsystem, so the subsystem check correctly fails and the aggregate is non-zero.
+
+⚠️ The real defect was that `verify`'s output could not be captured, so a test could only ever assert the aggregate and never which check failed. `AGENTS.md` names that exactly: where there is no seam, the absence is usually the design problem the test was about to find. `verify` now writes through an `out` seam and the test asserts on the `binary sha256` line, which is its actual subject.
 
 ### s51. s6 and s10 contradicted each other: the handler never does the work
 

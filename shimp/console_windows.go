@@ -28,7 +28,33 @@ var (
 	kernel32             = syscall.NewLazyDLL("kernel32.dll")
 	procGetConsoleWindow = kernel32.NewProc("GetConsoleWindow")
 	procAllocConsole     = kernel32.NewProc("AllocConsole")
+
+	user32                  = syscall.NewLazyDLL("user32.dll")
+	procIsWindowVisible     = user32.NewProc("IsWindowVisible")
+	procGetForegroundWindow = user32.NewProc("GetForegroundWindow")
 )
+
+// consoleState describes the console this process was GIVEN, if any.
+//
+// ⚠️ Measuring before deciding. s50 has to choose between a GUI-subsystem
+// binary, which removes the window and lengthens the documented install line,
+// and FreeConsole, which keeps the line and leaves a brief flash. Both assume
+// the window is VISIBLE and that assumption was never checked: a URI
+// activation is not a shell launch, so Windows may well create the console
+// hidden, in which case there is nothing to fix and the row closes for free.
+//
+// Visible is the first question. Foreground is the sharper one, because a
+// window stealing focus interrupts typing, which is worse than a flicker and
+// is the category s10 exists for.
+func consoleState() (present, visible, foreground bool) {
+	h, _, _ := procGetConsoleWindow.Call()
+	if h == 0 {
+		return false, false, false
+	}
+	v, _, _ := procIsWindowVisible.Call(h)
+	fg, _, _ := procGetForegroundWindow.Call()
+	return true, v != 0, fg == h
+}
 
 // hasConsole reports whether this process is attached to one.
 //

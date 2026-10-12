@@ -23,7 +23,13 @@
 // measurement s36 cannot get any other way, which is how much of a URI
 // survives the registry hop into os.Args[1].
 //
-//	go run github.com/davidnoz123/nielsoln_connectors/shimp@<sha> install
+//	go run -ldflags "-H=windowsgui" \n//	    github.com/davidnoz123/nielsoln_connectors/shimp@<sha> install
+//
+// ⚠️ THE LDFLAGS ARE PART OF THE LINE, and s50 is why. A
+// console-subsystem handler is given a console window by Windows on EVERY
+// click, visible and in the FOREGROUND, which is measured rather than
+// supposed. Omitting the flag still installs, still works, and steals
+// focus for ever, so `install` warns and `verify` reports FAIL.
 package main
 
 import (
@@ -85,6 +91,16 @@ const logName = "shimp.log"
 // afterwards. s23: the second audit question, "is what is installed the thing
 // I think it is", cannot be answered without it.
 const stampName = "installed.json"
+
+// out is where the human-facing report goes.
+//
+// A seam rather than a bare os.Stdout, and AGENTS names the reason: where no
+// seam exists, the absence is usually the design problem the test was about
+// to find. A `verify` whose output cannot be captured can only be asserted on
+// by its EXIT CODE, so a test could say "verify failed" and never which check
+// failed. That is how TestVerifyFailsWhenTheBinaryChangedUnderneathIt came to
+// be asserting the aggregate rather than its own subject.
+var out io.Writer = os.Stdout
 
 // logTo, when set, captures the log instead of writing it. Tests only.
 var logTo io.Writer
@@ -375,7 +391,9 @@ func onClick(uri string) int {
 	// the registry launches it from a GUI context, and that would be a
 	// window flashing on every click before shimp has decided anything.
 	// Nobody knew, so every click records it.
-	_log("click: this handler has a console: %v", hasConsole())
+	present, visible, fg := consoleState()
+	_log("click: console present=%v visible=%v foreground=%v",
+		present, visible, fg)
 	_log("click: os.Args[1] is %d bytes", len(uri))
 	_log("click: %s", uri)
 

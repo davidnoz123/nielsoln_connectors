@@ -29,6 +29,12 @@ func hasConsole() bool {
 	return fi.Mode()&os.ModeCharDevice != 0
 }
 
+// consoleState reports what it can: there are no window properties to ask
+// about, so visibility and foreground are unanswerable rather than false.
+func consoleState() (present, visible, foreground bool) {
+	return hasConsole(), false, false
+}
+
 // allocConsole refuses, and says what would have to be built.
 func allocConsole() error {
 	if hasConsole() {

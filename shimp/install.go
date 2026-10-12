@@ -188,6 +188,21 @@ func cmdInstall(replace bool) int {
 		return 1
 	}
 
+	// ⚠️ WARNED AT THE MOMENT IT MATTERS, not only in verify. Somebody who
+	// omits the ldflags gets a working install and a focus-stealing click for
+	// ever, and would have no reason to run verify. Not a refusal: the plain
+	// install line must keep working for somebody who does not care.
+	if runtime.GOOS == "windows" {
+		if sub, err := subsystemOf(target); err == nil && sub != subsystemGUI {
+			msg := "this handler is " + subsystemName(sub) + "-subsystem, so " +
+				"Windows will raise a console window on EVERY click, in the " +
+				"foreground. To avoid it, reinstall with:\n  go run " +
+				"-ldflags \"-H=windowsgui\" <module>@<sha> install"
+			_log("install WARNING: %s", msg)
+			fmt.Fprintf(os.Stderr, "\nWARNING: %s\n", msg)
+		}
+	}
+
 	_log("install complete: %s %s", me.Version, sum)
 	fmt.Printf("installed %s\n  binary  %s\n  version %s\n  sha256  %s\n",
 		scheme+":", target, me.Version, sum)
@@ -242,7 +257,7 @@ func cmdVerify() int {
 		fmt.Fprintf(os.Stderr, "verify failed: %v\n", err)
 		return 1
 	}
-	fmt.Printf("claims store: %s\n", c.where())
+	fmt.Fprintf(out, "claims store: %s\n", c.where())
 
 	ok := true
 	note := func(good bool, label, detail string) {
@@ -252,7 +267,7 @@ func cmdVerify() int {
 		} else {
 			ok = false
 		}
-		fmt.Printf("[%s] %-28s %s\n", mark, label, detail)
+		fmt.Fprintf(out, "[%s] %-28s %s\n", mark, label, detail)
 	}
 
 	st, stErr := readStamp()
@@ -291,6 +306,26 @@ func cmdVerify() int {
 		note(true, "scheme registration", cmd)
 	}
 
+	// ⚠️ The subsystem, which decides whether every click steals focus.
+	// Measured 12 Oct 2026: a console-subsystem handler is given a console by
+	// Windows on each click, visible and in the FOREGROUND. s50. This is a
+	// FAIL rather than a note, because the install succeeded, the scheme
+	// works, and the only symptom is an irritation on every click for ever,
+	// which nothing else would ever report.
+	if stErr == nil && runtime.GOOS == "windows" {
+		if sub, err := subsystemOf(st.Path); err != nil {
+			note(false, "subsystem", fmt.Sprintf("cannot read: %v", err))
+		} else if sub == subsystemGUI {
+			note(true, "subsystem", "GUI, so a click raises no console window")
+		} else {
+			note(false, "subsystem", fmt.Sprintf(
+				"%s. Windows gives a %s-subsystem handler a console on EVERY "+
+					"click, visible and in the foreground. Reinstall with: "+
+					"go run -ldflags \"-H=windowsgui\" <module>@<sha> install",
+				subsystemName(sub), subsystemName(sub)))
+		}
+	}
+
 	// hasKey rather than get, because Office reads the key's EXISTENCE and
 	// no value under it. See the interface comment.
 	if present, err := c.hasKey(trustedProtocolKey()); err != nil {
@@ -308,10 +343,10 @@ func cmdVerify() int {
 	// command. Microsoft's own account is that a second dialog comes from
 	// HLINK.dll and the key above does not suppress it. So verify says the
 	// key is present. It does NOT say clicks are silent.
-	fmt.Printf("\nverify reports what is present. It does NOT promise silent " +
-		"clicks:\n  a second dialog comes from HLINK.dll and the trusted " +
+	fmt.Fprintf(out, "\nverify reports what is present. It does NOT promise silent "+
+		"clicks:\n  a second dialog comes from HLINK.dll and the trusted "+
 		"protocol key\n  does not suppress it, by Microsoft's own account.\n")
-	fmt.Printf("  and the DISPATCH half is not built, so a click is logged " +
+	fmt.Fprintf(out, "  and the DISPATCH half is not built, so a click is logged "+
 		"and refused.\n")
 
 	if !ok {

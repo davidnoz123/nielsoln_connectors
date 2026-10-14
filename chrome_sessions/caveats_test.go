@@ -18,12 +18,59 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 // reachesIn returns every call expression in the package that matches one of
 // the named surfaces, as "surface at file:line".
+// repoPrefix is what maxim 1 of s55 calls provenance: every module in the
+// closure must come from here.
+const repoPrefix = "github.com/davidnoz123/nielsoln_connectors/"
+
+// importsIn returns the in-repo modules this package imports.
+//
+// ⚠️ THE HOLE THIS CLOSES. reachesIn parses only this directory, so an
+// imported module's reaches are INVISIBLE to it: `chatgptwrite.Post(...)`
+// is a selector that matches nothing in CaveatSurfaces. A package could
+// declare "reaches no non-loopback address", import something that posts to
+// a third-party service as the signed-in user, and be COMPLETE by the
+// checker's standard.
+//
+// That could not bite while every require block was empty. It becomes
+// reachable the moment the first import lands, which is exactly when s13
+// decided there would be one.
+//
+// So caveats COMPOSE over the closure: a package must declare what it
+// imports, and s55's go.sum gives the closure's stopping condition.
+func importsIn(t *testing.T, dir string) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, dir, func(fi fs.FileInfo) bool {
+		n := fi.Name()
+		return strings.HasSuffix(n, ".go") && !strings.HasSuffix(n, "_test.go")
+	}, parser.ImportsOnly)
+	if err != nil {
+		t.Fatalf("cannot parse %s: %v", dir, err)
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, pkg := range pkgs {
+		for _, file := range pkg.Files {
+			for _, imp := range file.Imports {
+				path := strings.Trim(imp.Path.Value, `"`)
+				if strings.HasPrefix(path, repoPrefix) && !seen[path] {
+					seen[path] = true
+					out = append(out, path)
+				}
+			}
+		}
+	}
+	return out
+}
+
 func reachesIn(t *testing.T, surfaces []string) map[string][]string {
 	t.Helper()
 	want := map[string]bool{}
@@ -183,4 +230,52 @@ func TestWhatTheCheckerCannotSee(t *testing.T) {
 	}
 	t.Log("UNVERIFIED by construction: raw syscalls, reflection, and any " +
 		"helper outside CaveatSurfaces. Declared by hand or not at all.")
+}
+
+// TestInRepoImportsAreDeclared closes the composition hole.
+//
+// ⚠️ reachesIn parses only THIS directory, so an imported module's
+// reaches are invisible to it. A package could declare "reaches no
+// non-loopback address", import something that posts to a third-party service
+// as the signed-in user, and be COMPLETE by the checker's standard.
+//
+// So caveats compose over the closure: every in-repo import must be declared,
+// and s55's go.sum is what says when the closure has been exhausted.
+func TestInRepoImportsAreDeclared(t *testing.T) {
+	declared := strings.ToLower(strings.Join(Caveats, "\n"))
+	imports := importsIn(t, ".")
+	if len(imports) == 0 {
+		t.Log("no in-repo imports, so nothing to compose. This passes " +
+			"trivially today, which is why TestTheImportCheckCanFail exists.")
+		return
+	}
+	for _, path := range imports {
+		tag := "[imports " + strings.ToLower(path) + "]"
+		if !strings.Contains(declared, tag) {
+			t.Errorf("UNDECLARED IMPORT: %s.\n  No line in Caveats "+
+				"opens with %s, so this package says nothing about what that "+
+				"module reaches for, and the AST walk cannot see inside it.",
+				path, tag)
+		}
+	}
+}
+
+// TestTheImportCheckCanFail proves the check above can object, because today
+// it has nothing to object to.
+//
+// ⚠️ Same discipline as TestTheCheckerCanActuallyFail: a check that
+// passes because it found nothing, for ever, is the permissive-fake failure
+// applied to a test rather than to a dependency.
+func TestTheImportCheckCanFail(t *testing.T) {
+	dir := t.TempDir()
+	src := "package main\n\nimport \"" + repoPrefix +
+		"chatgpt_write\"\n\nvar _ = chatgpt_write.Post\n"
+	if err := os.WriteFile(filepath.Join(dir, "x.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := importsIn(t, dir)
+	if len(got) != 1 || got[0] != repoPrefix+"chatgpt_write" {
+		t.Fatalf("the import walk did not see an in-repo import: %v", got)
+	}
+	t.Logf("the check can see %v, so a green result above means something", got)
 }

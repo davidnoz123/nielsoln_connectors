@@ -58,6 +58,7 @@
 | s56 | NOTHING in the audit payload may be an assertion | **DECIDED** 14 Oct 2026, and four earlier decisions already follow from it | nothing |
 | s57 | remote_chrome_cdp is a hand-rolled shimp, and three of its four invented pieces become unnecessary | OBSERVED 14 Oct 2026, no change proposed yet | shimp's dispatch half, before any conversion |
 | s58 | `vscode:` is already registered, so s40's first capability already exists | MEASURED 14 Oct 2026 | a decision on what shimp's first capability should be instead |
+| s59 | Cached attestations per module@sha: capabilities verified, exposure attributed | **DECIDED** and the first one WRITTEN, 14 Oct 2026 | one per module, as each is written or changed |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -2414,6 +2415,14 @@ Modest per target, and it compounds across targets.
 
 And it does not touch either of the audit's standing unverifiables, which stay in s24's UNVERIFIED: `module@sha` does not pin the Go **toolchain**, per s34, and the dependency graph needs separate work, per s26.
 
+#### Refined 14 Oct 2026: this objection does not reach a per-version attestation
+
+This row refused a published list of known-good hashes, as state that has to be maintained and goes stale.
+
+⚠️ The objection is to a **latest-good** list. s59 caches a statement about an **immutable subject**, `module@sha`, and a statement about a fixed thing cannot go stale. What goes stale is "which version is current", which an attestation does not record.
+
+So the distinction worth keeping is not "no lists" but **"no list of what is current"**. s59 also notes what this row's `sum.golang.org` comparison implies: a published hash list DOES work when it is append-only and maintained by somebody else, which is what that checksum database is.
+
 ### s48. A test installation is a different SCHEME, and that is why it is safe
 
 Decided and built 12 Oct 2026, because `install` could not be exercised at all without it.
@@ -2833,6 +2842,12 @@ UNDECLARED REACH: exec.Command at [sessions.go:323]
 
 It belongs in the HANDLER's source, at the SHA in s9's line 1, which an auditor reads anyway: "read `Caveats` in the target, verify it against the source, and **if there is no `Caveats`, report UNVERIFIED rather than SAFE**." Living there rather than in the paste means it cannot be softened for a particular link.
 
+#### The capability half of s59, 14 Oct 2026
+
+What this row verifies is exactly the **facts** half of an attestation. s59 adds the exposure judgement, which is the part that needs a human and is therefore the part worth caching per `module@sha`.
+
+⚠️ And it is the division that makes a self-issued attestation worth anything: the capabilities are mechanically checked, so only the judgement is a claim.
+
 ### s55. Sharing code across SHAs: the mechanism, the invariant, and what 100% means
 
 Decided 14 Oct 2026.
@@ -3050,3 +3065,75 @@ The pattern shimp generalises is already in production from Microsoft, and from 
 ⚠️ So shimp's novelty is NOT the scheme, and never was. [32] reached the same conclusion from a precedents search on 7 Oct: every ingredient is established and only the composition is not, with the two-line audit "the most original and valuable part".
 
 This is that conclusion arriving from the other direction, by measurement rather than by search, and it sharpens what the first capability has to demonstrate: **immutable pinning and a two-line audit of code a stranger can fetch.** `vscode:` has neither. It runs whatever VS Code happens to be installed, with no way to say which.
+
+### s59. Cached attestations per module@sha: capabilities verified, exposure attributed
+
+Decided 14 Oct 2026, from the question of whether certifications could be cached by hash the way VirusTotal caches scan results.
+
+#### ⚠️ Not a scanner verdict, and that ruling-out matters
+
+Antivirus detects known-bad signatures in binaries and answers a different question from "what can this reach". A clean result on a 400-line Go connector is an **absence of evidence** that would be read as a certification, which is s56's failure exactly. Go binaries also false-positive routinely, being unsigned, statically linked and novel on every build, so the noise runs the harmful way too.
+
+And uploading is a **publication**: hash lookup is safe, upload is not, and nothing carrying a descriptor, a URI with a home directory in it, or a token may go anywhere.
+
+#### What is actually cached
+
+| part | source |
+|---|---|
+| **subject** | `module@<full sha>`, plus the `go.sum` content hash once a consumer pins it |
+| **capabilities** | that module's `Caveats`, which s54 verifies against the source mechanically. Facts |
+| **exposure** | what those mean in practice, each line CITING the code that constrains or enables it. Judgement |
+| **verdict** | s24's four |
+| **attribution** | who, and when |
+
+The expensive half is the exposure judgement, it is stable for a fixed version, and it is what a reader actually wants. That is what makes caching worth anything.
+
+#### ⚠️ THE STRUCTURAL RESULT: a leaf can only ever be CONDITIONAL
+
+Writing one for `cdpcore` makes it obvious. It opens a websocket to a caller-supplied host and sends caller-supplied methods, so **its safety is determined entirely by its caller**. You cannot certify a mechanism safe or unsafe in isolation; all you can certify is the conditions.
+
+That is the mechanism-versus-stance split arriving from the audit side, and it sharpens it: **a leaf has no stance, therefore no safety property. A program has a stance, therefore can be certified outright.**
+
+#### Which makes the audit COMPOSE rather than repeat
+
+```
+audit of a program = read its own code
+                   + for each leaf in its closure, check the program
+                     DISCHARGES each condition that leaf's attestation states
+```
+
+Auditing `remote_chrome_cdp` becomes: does it constrain `cdpcore`'s host? Yes, a constant. Its method? Yes, "THE OP VOCABULARY IS CLOSED". Both discharged, and that is evidence `cdp.go`'s header already volunteers. Close to in-toto's layout, where a step declares what it requires of its materials.
+
+#### ⚠️ An attestation cannot live inside what it attests
+
+The subject is a content hash, so a file inside the module becomes part of that hash: the attestation either names a version not including it, or names itself and cannot be computed.
+
+Same circularity as s54's, where an expected hash could not live in the file it hashed. There the fix was a separate test file; here it is `attestations/`, outside every module, so adding one changes no module's content hash.
+
+#### Why this is NOT what s47 refused
+
+s47 rejected a published list of known-good hashes, as state to maintain that goes stale. ⚠️ **A statement about an immutable subject cannot go stale.** What goes stale is "which version is current", and that is not what these record. s47's objection stands for a latest-good list and does not reach a per-version attestation.
+
+#### And it is a new argument for s13
+
+Because a pinned version is immutable, its audit is **cacheable**: audit `cdpcore@4b91c7e` once and every link whose closure contains it inherits that work for ever. **Copies get none of this**, since each is bytes in a different module at a different version and needs its own look every time.
+
+So over many links the leaf route gets cheaper to certify while the copy route stays flat. That argument only appears when you think about caching rather than about one audit.
+
+#### ⚠️ The guard against becoming P3P
+
+The failure mode is a reader trusting the attestation INSTEAD of looking. So every exposure line must carry **the input to its own judgement**: not "this cannot leave loopback" but "because `host` is a `const` at `sessions.go:51`, not a flag". Spot-checkable rather than believed.
+
+#### What the first one found, which is why it was worth writing
+
+`attestations/chrome_sessions@5c46b13.md`. Verdict **CONDITIONAL**, and three findings the exercise produced rather than confirmed:
+
+* ⚠️ **it reads the whole machine's socket table on EVERY run, with no flag.** `ownerOfPort(port)` is unconditional at `sessions.go:114`, and `owner_windows.go` fetches the entire table to answer for one port.
+* ⚠️ **but by default only one pid per probed port is DISCLOSED.** The rest is read into the process and never emitted. The distinction between reading machine-wide state and disclosing it is the one an auditor needs, and I had the framing wrong in both directions before checking the code.
+* ⚠️ **`-discover` turns the capability into a disclosure**, because `discoverPorts()` enumerates listening ports from that same table, so the output then IS a machine inventory.
+
+A first attestation returning SAFE would have demonstrated nothing about the format. This one disagrees with the tool's own description of itself, which is the point.
+
+#### Where it goes next
+
+Shaped to move to a signed transparency log, Sigstore or Rekor, unchanged, when there is a second party to sign. Until then self-issued, which is weaker than third-party review and stronger than nothing: the capability half is verified, so only the judgement is a claim, and it is attributed and append-only through git.

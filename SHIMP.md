@@ -61,6 +61,7 @@
 | s59 | Cached attestations per module@sha: capabilities verified, exposure attributed | **DECIDED** and the first one WRITTEN, 14 Oct 2026 | one per module, as each is written or changed |
 | s60 | The leaf candidates, MEASURED, and the divergence nobody was looking for | **MEASURED** and the divergence CLOSED 14 Oct 2026 | nothing |
 | s61 | editor_open: the first capability, because NO editor but VS Code has a scheme | DESIGNED 14 Oct 2026, deliberately NOT built | a decision to build it, plus two measurements |
+| s62 | linkprobe: fourteen ways in, MEASURED, and two of them cannot carry a shimp link | **BUILT and MEASURED** 15 Oct 2026 | four human routes, which are unanswered rather than passed |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -1748,6 +1749,19 @@ s46 decided, so the last blocker is closed. Grammar frozen, identity bytes pinne
 
 What remains is not specification: two measurements that the install half produces or that stand alone, being the handler's `os.Args[1]` limit in s36 and the ambiguous-abbreviation question in s37, and s37 does not block because building with 40 is the recoverable direction.
 
+#### ⚠️ A route caught normalising, 15 Oct 2026
+
+s62 measured `explorer.exe` inserting a byte:
+
+```
+sent     shimp-linkprobe://x#y
+received shimp-linkprobe://x/#y
+```
+
+The `/` lands before the `#`, inside the identity-bearing part, so the hash changes. This row's argument was that a wrong normaliser maps two spellings to one id silently. Here an intermediary did the normalising, unasked, on the way in.
+
+It does not bite today because a real link always has a non-empty path. It is worth recording as the first OBSERVED instance of the hazard rather than a reasoned one.
+
 ### s36. The URI length budget, measured, and what actually eats it
 
 Measured 7 Oct 2026 in a scratch workbook in this session's Excel, by binary search on the longest URI that round-trips.
@@ -1830,6 +1844,16 @@ The handler now exists, so the number this row said was unobtainable has been ta
 Against s38's measured ceilings that settles it: the Excel Hyperlink object refuses at 2084, and a realistic shimp link is under 200 characters. So the OS hop has roughly forty times the headroom of the tightest surface, and **length is not a constraint on this design** by any margin that matters. The remaining ceiling is academic.
 
 ⚠️ **What is still UNANSWERED**, and a passing test must not be read as covering it: what Excel or a browser does to a URI BEFORE handing it to the OS. This measured the registry hop. The application hop still needs a human to click something.
+
+#### ⚠️ The open half is now MEASURED, 15 Oct 2026
+
+s62 built `linkprobe` and ran one link down every entry point. This row asked what Excel or a browser does to a URI BEFORE handing it over, and for Excel the answer is now in:
+
+* **the Hyperlink OBJECT route delivers VERBATIM**, which is the route a slate cell uses
+* **the FORMULA route cannot be driven at all**: `Hyperlinks.Count` is 0, so there is nothing to follow and only a human click can complete it
+* ⚠️ **and the 255-byte truncation did not reproduce**: 326 bytes stored unaltered in the formula. The limit is real somewhere and is not where this row recorded it
+
+The browser half remains open, and is now open BY NAME rather than by omission: `chrome-address-bar` and `chrome-link-click` are separate rows in the table because the href is resolved against the page's base URL first, which the address bar does not do.
 
 ### s37. The SHA in the URI: exactly one legal length, and it should be 40
 
@@ -3288,3 +3312,88 @@ Nothing fixes it for this capability, since naming the file is the whole point. 
 * s54: a caveats file, which will read `[exec.Command] launches an editor binary found by searching known locations`
 * s59: an attestation, whose verdict will be CONDITIONAL at best, because it execs a program the audit cannot see
 * s45: the file path percent-encoded, and `%2E%2E` rather than a literal `..`
+
+### s62. linkprobe: fourteen ways in, MEASURED, and two of them cannot carry a shimp link
+
+Built and run 15 Oct 2026. `linkprobe` is a seventh module: one link, every way a human or a script can trigger it, and a report of what each route did to it.
+
+#### ⚠️ Why this is not about coverage
+
+s44 makes a link's identity the sha256 of its bytes, verbatim. s35 then says refuse, never normalise. Together those mean a route that alters ONE byte does not fail cleanly: it either refuses a link the user can see is correct, or runs a different pin from the one named in the text they pasted.
+
+So every entry point is a potential mangler. Before this, exactly ONE had ever been run: `ShellExecuteW`, by the live install test. The spreadsheet cell, the address bar, the email, the command line were all reasoned about and never measured.
+
+#### The matrix
+
+| route | result | |
+|---|---|---|
+| `shellexecute` | **VERBATIM** | the baseline, shell32 direct |
+| `cmd-start` | **VERBATIM** | |
+| `powershell-start-process` | **VERBATIM** | ⚠️ but imposes its own length ceiling |
+| `explorer` | ⚠️ **ABSENT** | see below |
+| `python-startfile` | **VERBATIM** | |
+| `python-webbrowser` | **VERBATIM** | and it goes via the shell, not a browser |
+| `curl` | REFUSED | correct: `Protocol "shimp-linkprobe" not supported` |
+| `wget` | UNRUNNABLE | absent from this machine, which is a different fact |
+| `excel-hyperlink-object` | **VERBATIM** | ⚠️ **the row that matters most** |
+| `excel-hyperlink-formula` | UNRUNNABLE | see below |
+| four human routes | UNANSWERED | named, not skipped |
+
+#### ⚠️ FINDING 1: explorer.exe silently drops any URI containing `?`
+
+Deterministic over repeated passes:
+
+| sent | arrived |
+|---|---|
+| `...@<sha>/-route/x#open` | VERBATIM |
+| `...@<sha>/-route/x#open?route=x` | **nothing** |
+| `shimp-linkprobe://x?q=1` | **nothing** |
+
+Exit code 1 and no message, in the path or the fragment alike.
+
+**shimp's action syntax is `#open?file=...&line=...`**, so explorer cannot deliver any link that carries action arguments. s61's `editor_open` link is exactly that shape.
+
+And it is not our registration: `ms-settings:` and `vscode:` both dispatched through explorer, `vscode` being HKCU-registered exactly as shimp is.
+
+#### ⚠️ FINDING 2: explorer also normalises, which is the s35 hazard in the wild
+
+```
+sent     shimp-linkprobe://x#y
+received shimp-linkprobe://x/#y
+```
+
+An inserted `/`, before the `#`, so **inside the identity-bearing part**. The hash changes. Real links always have a non-empty path so this one does not bite today, but it is the first observed case of a route rewriting a URI rather than an argument that one might.
+
+#### ⚠️ FINDING 3: the 255-byte truncation is not where it was recorded
+
+A 326-byte URI written into `=HYPERLINK()` came back from `cell.Formula` at **326 bytes, unaltered**.
+
+So whatever truncates at 255 is not what the formula STORES. It may be the `Hyperlink.Address` property, or what a click resolves, or the original number may have measured a different route. **Recorded as unlocated rather than quietly dropped**: the claim is not disproved, its subject is.
+
+#### ⚠️ FINDING 4: a formula hyperlink exposes no object to follow
+
+`Hyperlinks.Count` is **0** after writing `=HYPERLINK()`. There is no `.Follow()` to call, so the DELIVERY half of that route is answerable only by a human clicking the cell.
+
+That is now a third independent reason the formula route is unusable, alongside the pull/publish destruction and whatever the 255 limit turns out to be.
+
+#### And the Excel object route passes, which is the one that had to
+
+`Hyperlinks.Add` then `.Follow()` delivered **VERBATIM**. That is how a link reaches a human in this workspace, and it had never been run. No Office modal blocked it, though that is reported rather than concluded: a `.Follow()` from COM may not be the same path as a click.
+
+#### Three defects in the probe itself, which is the pattern by now
+
+1. **The classifier called explorer's silent drop a REFUSAL.** It keyed on the exit code, and explorer exits 1 whether it dispatched or dropped. The function's own comment warned against trusting exit codes and the code below it did exactly that. A refusal now requires a message.
+2. **The formula driver measured nothing.** It wrote the formula and then followed the URI *variable*, so it reported VERBATIM for a link the route had never touched.
+3. **The probe link was too short to cross the threshold it was testing.** 183 bytes against a 255-byte limit. Routes now declare a `Pad`.
+
+Each was caught by looking at what the handler's log actually held rather than at the verdict the probe printed. ⚠️ And the report now prints every non-delivering route's detail whether or not it matched expectation, because the first version hid the Excel measurement behind "UNRUNNABLE as expected".
+
+#### What makes it recur rather than be re-reasoned
+
+* the route table is DATA, so adding a way in is adding a row
+* each route declares its EXPECTED outcome next to itself, so a known-bad route passing is not news and a change is
+* a non-Verbatim expectation must carry WHY, enforced by a test, because "this one is supposed to fail" is the easiest claim to leave behind after its reason stops being true
+* the four human routes are reported BY NAME as unanswered, so the matrix has no invisible holes
+* it rests on s48: an isolated scheme, installed and purged per run, refusing the production scheme by name
+
+`repocheck` saw the new module on its first run and flagged `probe` as an undeclared overlap with `chrome_sessions`. Different signatures, different jobs, now declared.

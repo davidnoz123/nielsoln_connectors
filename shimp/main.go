@@ -371,6 +371,31 @@ func main() {
 		audit := fs.Bool("audit", false, "the full provenance block (s23)")
 		_ = fs.Parse(rest)
 		os.Exit(cmdVersion(*audit))
+	// dispatch exists for MEASUREMENT, and it is the one verb that sends
+	// rather than receives.
+	//
+	// ⚠️ It is here so that the OS-direct route is an argv template like
+	// every other route in linkprobe's table, rather than the one route
+	// that needs its own code path. ShellExecuteW is the baseline every
+	// other way in is compared against: `cmd /c start`, Start-Process,
+	// explorer and a browser all re-parse the URI on the way, and the
+	// whole point of the probe matrix is to find out what each of them
+	// changes before Windows ever sees it.
+	//
+	// It does NOT need an installation of its own, so it takes no -scheme:
+	// the scheme is whatever the URI says, and if nothing is registered
+	// for it ShellExecuteW says so.
+	case "dispatch":
+		if len(rest) != 1 {
+			fmt.Fprintln(os.Stderr,
+				"dispatch takes exactly one argument, the URI to open")
+			os.Exit(2)
+		}
+		if err := dispatchURI(rest[0]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
 	default:
 		usage()
 		os.Exit(2)

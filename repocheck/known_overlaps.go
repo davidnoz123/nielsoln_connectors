@@ -58,6 +58,18 @@ var acknowledged = map[string]string{
 	// pdf_view_server raises a specific window through user32 in 96 lines;
 	// remote_chrome_cdp's 14-line version does a different and smaller job.
 	"raiseWindow": "different jobs behind one name, measured at 96 lines against 14.",
+
+	// Added 15 Oct 2026, and the check found it on the first run after
+	// linkprobe existed, which is the evidence that it is live:
+	//
+	//	chrome_sessions  probe(port int, timeout time.Duration) Session
+	//	linkprobe        probe(r Route, ...) Result
+	//
+	// One asks a CDP port over HTTP what it is; the other triggers a link
+	// down one route and classifies what came back. Different signatures,
+	// different return types, no shared logic. The word is just the English
+	// for what both do.
+	"probe": "unrelated functions that happen to share a name: a CDP port query and a link-route runner.",
 }
 
 // Acknowledged reports whether an overlap has been written down.

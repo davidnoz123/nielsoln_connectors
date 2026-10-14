@@ -57,9 +57,10 @@
 | s55 | Sharing code across SHAs: the mechanism, the invariant, and what 100% means | **DECIDED** 14 Oct 2026: TWO maxims, provenance and no indirection. Mechanism not yet proven | one throwaway push to prove the three untested parts |
 | s56 | NOTHING in the audit payload may be an assertion | **DECIDED** 14 Oct 2026, and four earlier decisions already follow from it | nothing |
 | s57 | remote_chrome_cdp is a hand-rolled shimp, and three of its four invented pieces become unnecessary | OBSERVED 14 Oct 2026, no change proposed yet | shimp's dispatch half, before any conversion |
-| s58 | `vscode:` is already registered, so s40's first capability already exists | MEASURED 14 Oct 2026 | a decision on what shimp's first capability should be instead |
+| s58 | `vscode:` is already registered, so s40's first capability already exists | **ANSWERED** 14 Oct 2026 by s61 | nothing |
 | s59 | Cached attestations per module@sha: capabilities verified, exposure attributed | **DECIDED** and the first one WRITTEN, 14 Oct 2026 | one per module, as each is written or changed |
-| s60 | The leaf candidates, MEASURED, and the divergence nobody was looking for | **MEASURED** 14 Oct 2026, and `repocheck` now runs it | a decision on whether to propagate remote_ai's foldsCase lesson |
+| s60 | The leaf candidates, MEASURED, and the divergence nobody was looking for | **MEASURED** and the divergence CLOSED 14 Oct 2026 | nothing |
+| s61 | editor_open: the first capability, because NO editor but VS Code has a scheme | DESIGNED 14 Oct 2026, deliberately NOT built | a decision to build it, plus two measurements |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -3079,6 +3080,12 @@ The pattern shimp generalises is already in production from Microsoft, and from 
 
 This is that conclusion arriving from the other direction, by measurement rather than by search, and it sharpens what the first capability has to demonstrate: **immutable pinning and a two-line audit of code a stranger can fetch.** `vscode:` has neither. It runs whatever VS Code happens to be installed, with no way to say which.
 
+#### Answered 14 Oct 2026
+
+s61 is the answer: **open an editor you chose**, at a line. Measured, nothing but `vscode:` registers an editor scheme, so for every other editor there is no link-based route at all. A capability doing something that cannot currently be done is a better demonstration than one doing something better.
+
+And the configurability is the demonstration: the editor is in argv, so it is in the link, pinned and auditable, with no config file between the link and the behaviour.
+
 ### s59. Cached attestations per module@sha: capabilities verified, exposure attributed
 
 Decided 14 Oct 2026, from the question of whether certifications could be cached by hash the way VirusTotal caches scan results.
@@ -3212,3 +3219,72 @@ The first `known_overlaps.go` listed seven names that were not overlaps at all -
 `TestBaselineHasNoStaleEntries` found all seven. That is the same discipline in the other direction: an allowlist must not claim duplication that does not exist, or the next reader cannot tell which entries are live.
 
 Every check in `repocheck` also has a companion proving it CAN fail, because three times in this repo a safety check has passed by being blind: s54's walk missed its package's primary reach, then matched per-file rather than per-reach, then could not see inside an import.
+
+#### CLOSED 14 Oct 2026: the lesson is propagated
+
+pdf_view_server was cleared for modification, so remote_ai's lesson went in rather than staying stranded.
+
+⚠️ **Only ONE of three early returns was guessing.** A failed stat of the directory itself, and a directory with no letters to flip, were both already uncached. The flipped-stat failure cached `false` unconditionally, so a permission error, a share hiccup or an antivirus lock would be remembered as "case-sensitive" for the life of the process. Now only `os.IsNotExist` caches, because that is the one failure that IS evidence.
+
+**The lesson is propagated, not the code.** remote_ai delegates to `probeFold` while pdf_view_server inlines the stat pair, so the bodies still differ and `repocheck` still reports DIVERGED. That is accurate rather than untidy: the behaviours agree and the implementations do not.
+
+⚠️ And `repocheck` SAW the change, the hash moving from `aa622d57ec75` to `a85800ddcab6`. That is the only evidence that the check is live rather than decorative.
+
+#### And writing the test found something about the code
+
+An assertion claimed the "nothing to flip" branch fires for a name like `123`. It does not: `flipCase` operates on the WHOLE PATH, and every absolute Windows path carries a drive letter, so `C:\123` flips to `c:\123` and **that branch is unreachable on Windows.** It is live only where a path can contain no letters at all, which means Unix.
+
+Said plainly in the test: the non-ENOENT branch is the new logic and is NOT directly testable, because a permission error is not something a test can portably arrange. The two reachable not-cached paths are covered and the third is argued rather than proved.
+
+### s61. editor_open: the first capability, because NO editor but VS Code has a scheme
+
+Designed 14 Oct 2026 and deliberately not built. This is what s58 asked for: a first capability demonstrating something `vscode:` cannot do.
+
+#### ⚠️ The measurement that makes it the right one
+
+| scheme | registered on this machine |
+|---|---|
+| `vscode` | **yes**, hardwired to `Code.exe --open-url -- "%1"` |
+| `notepad++`, `nppp`, `sublime`, `subl`, `idea`, `textmate` | **none of them** |
+
+Two facts follow, and the second is the stronger:
+
+* ⚠️ **`vscode:` cannot open anything but VS Code.** The scheme name IS the program, so there is no version of that link which opens another editor.
+* ⚠️ **There is no link-based route to Notepad++ at all.** Not a worse one. None. Nothing registers a handler, so no clickable thing can open it at a line.
+
+So this capability does something that currently **cannot be done**, rather than something done better. That is what a first capability has to show.
+
+#### The configurability, which comes for free
+
+The editor goes in the capability's **argv**, so it is in the link:
+
+```
+shimp://v1/go/run/.../editor_open@<sha>/-editor/notepad++#open?file=...&line=1735
+shimp://v1/go/run/.../editor_open@<sha>/-editor/code#open?file=...&line=1735
+```
+
+Different argv, different identity (s44), different singleton (s53). ⚠️ **So configuration becomes "which link you click"**, which is better than a config file for the same reason s35 deleted the descriptor store: there is no hidden state between the link and the behaviour that can drift from what the link says. It is pinned, and it is visible in s9's two-line paste.
+
+A column can hold whichever editor is wanted, per row.
+
+#### Finding the executable is already a solved pattern here
+
+`HKLM:\SOFTWARE\Notepad++` holds `C:\Program Files\Notepad++`, measured, so **no path need go in the link** for the editor itself. `remote_chrome_cdp`'s `chromeCandidates()` is the house pattern: search known locations and REPORT what cannot be found rather than guessing, which is `owner_other.go`'s rule applied to an exe.
+
+#### ⚠️ One honest cost, which is unavoidable here
+
+The **file path** must be in the link, because it is the payload. So s9's concern applies: pasting `...#open?file=C:/Users/.../x.py&line=1735` into a chat window publishes that path.
+
+Nothing fixes it for this capability, since naming the file is the whole point. It is an argument for relative paths against a declared base wherever the file sits inside a known root, and for stating the cost rather than discovering it.
+
+#### Still to measure before building
+
+* **the Notepad++ invocation.** `notepad++.exe -n<line> <file>` is believed to open at a line and has NOT been run. s1's lesson is that an install story resting on an untested assumption is a liability.
+* **whether an editor needs to be resident.** s46's three classes: a one-shot pays `go run`'s 650ms to 4.8s on every click (s49), which for opening a file is tolerable but noticeable. A resident pays it once. s40 argued resident; that argument stands and is worth re-measuring against a real editor launch, because the editor itself may dominate.
+
+#### What it inherits
+
+* s50: no console field. A one-shot editor launch prints nothing, so it gets no console
+* s54: a caveats file, which will read `[exec.Command] launches an editor binary found by searching known locations`
+* s59: an attestation, whose verdict will be CONDITIONAL at best, because it execs a program the audit cannot see
+* s45: the file path percent-encoded, and `%2E%2E` rather than a literal `..`

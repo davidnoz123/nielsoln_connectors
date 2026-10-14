@@ -39,11 +39,19 @@ var acknowledged = map[string]string{
 	// REJECTION, not admission. Both are conservative where it matters. So
 	// this is a divergence in safety-adjacent code rather than a hole.
 	//
-	// Acknowledged rather than fixed, pending a decision: propagating
-	// remote_ai's caching behaviour changes a working tool, and that is not
-	// a change to make silently. s60 is the row.
+	// ⚠️ THE LESSON IS NOW PROPAGATED, 14 Oct 2026, but the code still
+	// differs. pdf_view_server caches only `os.IsNotExist`, so a permission
+	// error or a share hiccup is no longer remembered as a determined
+	// answer. remote_ai still delegates to `probeFold` while this inlines
+	// the stat pair, so the bodies remain different and this check still
+	// says DIVERGED. That is accurate rather than a failure to tidy: the
+	// behaviours agree and the implementations do not.
+	//
+	// The check also SAW the change, the hash moving from aa622d57ec75 to
+	// a85800ddcab6, which is the one piece of evidence that it is live
+	// rather than decorative.
 	"contained": "identical copies of the traversal defence. See the note above and s60.",
-	"foldsCase": "DIVERGED, and remote_ai's copy carries the lesson. s60.",
+	"foldsCase": "different bodies, same behaviour since 14 Oct. s60.",
 	// Same name, genuinely different jobs. Measured: 12 lines against 92.
 	"resolve": "unrelated functions that happen to share a name.",
 

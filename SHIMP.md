@@ -11,8 +11,8 @@
 | s9 | The audit is three lines, not two | **DECIDED** 7 Oct 2026, three lines | nothing, and the first descriptor is no longer blocked on this |
 | s10 | A long action reports to a visible console, and the click never waits | **DECIDED** 7 Oct 2026 | nothing |
 | s11 | Two clicks, not a library, because s15's refusal carries the safety | **DECIDED** 7 Oct 2026, and the library is deferred rather than rejected | nothing |
-| s12 | chrome_sessions: liveness built, authority open | PART BUILT | the CDP extraction, s13 |
-| s13 | Extract the CDP client, do not copy it | RAISED | a decision on where a shared package lives |
+| s12 | chrome_sessions: liveness built, authority open | **DECIDED** 14 Oct 2026: liveness is the whole job | nothing |
+| s13 | Extract the CDP client, do not copy it | **DECIDED** 14 Oct 2026: a leaf module, and the trigger has fired | nothing |
 | s14 | patchbucket: transport and ordering, never merging | SPECIFIED | nothing, and it is unblocked |
 | s15 | chatgpt_capture needs a SIGNED-IN Chrome, and must refuse without one | SPECIFIED | s12's authority probe |
 | s16 | Excel is a session-protocol problem, not a prohibition | PARKED 7 Oct 2026 | a reason to drive Excel through a `shimp://` link |
@@ -53,6 +53,10 @@
 | s51 | s6 and s10 contradicted each other: the handler never does the work | **DECIDED** 12 Oct 2026, and s6 is restated | nothing |
 | s52 | The startup timeout is 120s, and our own measurement rules out any short value | **DECIDED** 12 Oct 2026 | nothing |
 | s53 | The named pipe IS the lock, and on Unix it is not | **DECIDED** 12 Oct 2026, with the platform asymmetry reported | nothing |
+| s54 | Caveats live in the SOURCE and are checked, because silence must not read as safety | **DECIDED** and BUILT for chrome_sessions, 14 Oct 2026 | rolling it to the other four connectors, and the AGENTS entry |
+| s55 | Sharing code across SHAs: the mechanism, the invariant, and what 100% means | **DECIDED** 14 Oct 2026, mechanism NOT yet proven | one throwaway push to prove the three untested parts |
+| s56 | NOTHING in the audit payload may be an assertion | **DECIDED** 14 Oct 2026, and four earlier decisions already follow from it | nothing |
+| s57 | remote_chrome_cdp is a hand-rolled shimp, and three of its four invented pieces become unnecessary | OBSERVED 14 Oct 2026, no change proposed yet | shimp's dispatch half, before any conversion |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -376,6 +380,10 @@ Two consequences, both recorded rather than assumed:
 * ⚠️ **a browser raises its own "Open shimp?" dialog**, which s8's Office key does nothing about, because that key is Office's.
 Reported rather than promised, exactly as s8 reports HLINK.dll: a customer clicking from a page sees one prompt, and SHIMP cannot suppress it.
 
+#### The rule behind this row's shape, named 14 Oct 2026
+
+s56 states what this row obeys without saying: **nothing in the audit payload may be an assertion.** Both lines here work because each resolves to public bytes, so the sender's honesty is irrelevant. That is also why s54's caveats live in the source rather than in the paste.
+
 ### s10. A long action reports to a visible console, and the click never waits
 
 The action model is request/response, which fits a navigation at half a second and is wrong for a job that takes minutes.
@@ -469,6 +477,21 @@ browser". Documentation claiming behaviour the code lacks, in the first hour.
 * titles came back HTML-escaped, `Edit &quot;Home&quot; with Elementor`.
 Decoded in the human view only; the JSON keeps Chrome's own string.
 
+#### DECIDED 14 Oct 2026: liveness is the whole job, and this row was right
+
+**`chrome_sessions` answers liveness and nothing else, permanently.** The authority probe is a SEPARATE program.
+
+⚠️ And the reason is this row's own objection, via an invariant neither it nor I had named. I argued on 13 Oct that "two opposite stances cannot live in one tool" covered LAUNCHING and not probing, because a read-only probe decides no policy. That was wrong. `cdp.go`'s header states two things a probe must violate:
+
+| the probe must | `remote_chrome_cdp` refuses |
+|---|---|
+| attach to an EXISTING tab, to see whether THAT session is signed in | "WE OPEN OUR OWN TAB, ALWAYS", after a measured incident on 2 Oct where attaching drove another program's tab off its page and reported a confident result from the wrong document |
+| run a caller-determined query | "THE OP VOCABULARY IS CLOSED, AND `Runtime.evaluate` IS NOT IN IT ... if the wire could carry JavaScript this would be `exec` with extra steps" |
+
+So putting a probe there would not merely enlarge an audit. It would break the invariant standing between that tool and being `exec` with extra steps, in its own words.
+
+The probe is therefore its own program, with its own closed vocabulary of exactly one op, its own JavaScript, and a caveats file (s54) declaring that it attaches to tabs it did not create.
+
 ### s13. Extract the CDP client, do not copy it
 
 The authority probe in s12 needs a websocket and `Runtime.evaluate`, which
@@ -495,6 +518,29 @@ s20 requires every target to speak READY and length-prefixed JSON, s11 never pro
 s46 faced this same question for the shimp IPC client and chose **copy with a tripwire** over a shared module: one canonical in `shimp/`, byte-identical copies, a per-connector hash test for tampering and a test in `shimp/` that walks siblings for staleness.
 
 That does not decide this row, because a CDP client is 42KB rather than 120 lines and the copy cost scales with size. But it answers the objection this row rests on: copying is only "two implementations" when nothing detects divergence.
+
+#### DECIDED 14 Oct 2026: a leaf module, scoped to transport only
+
+This row said "not urgent until the second consumer exists". ⚠️ **The second consumer now exists and is unavoidable**: s12 closes with the authority probe as a separate program, so there are two programs needing a CDP session.
+
+**`cdpcore`: transport and JSON-RPC only.** Connect, send a method, read a reply, attach to a target. It carries NO op vocabulary.
+
+Each consumer keeps its own closed vocabulary, which preserves the invariant per program rather than centralising it:
+
+* `remote_chrome_cdp`: navigate, show, close. Its own JavaScript. Opens its own tab.
+* the probe: one op. Its own JavaScript. Attaches to an existing tab and says so in its caveats.
+
+`cdpcore` being generic is not a weakening. It is a transport, like `net/http`, and nobody faults `net/http` for allowing any URL. The discipline lives in each program and each program's caveats file declares what it actually sends.
+
+s55 carries the mechanism and the three invariants that keep the audit whole.
+
+#### The finding that decided it, from looking at the audit rather than the duplication
+
+Asked to weigh duplication against how easily a model can certify the code, the two axes turned out to AGREE rather than trade off, and the reason is worth keeping:
+
+⚠️ **The cheapest audit is of code that does not exist.** A leaf module and a copy-with-tripwire have IDENTICAL byte counts for an auditor; they differ only in how identity is established, by version string or by hash comparison. What actually reduces audit cost is not arranging 395 lines better but not having them in a second place at all.
+
+That is what made "put the probe in `remote_chrome_cdp`" attractive, and what s12's invariants then ruled out. So: the leaf, because the alternative was foreclosed, not because sharing is free.
 
 ### s14. patchbucket: transport and ordering, never merging
 
@@ -2294,6 +2340,10 @@ from the repo root, rewriting all four files in each connector that declares it 
 
 N copies to update, and a drift window between editing the canonical and running `sync`. The sibling test closes that window the moment anyone runs shimp's own suite, which is the smallest safeguard that does not depend on memory.
 
+#### One consumer may leave the IPC question entirely, 14 Oct 2026
+
+s57 observes that if `remote_chrome_cdp` stops being a server and becomes a one-shot target, it is this row's FIRST class: no keeper, no IPC, no `shimpipc`. So the copied-file decision would have one fewer consumer than assumed.
+
 ### s47. A hashed shimpipc makes the audit cheaper, but only if it is HASHED
 
 Decided 12 Oct 2026, out of s46.
@@ -2716,3 +2766,166 @@ A mutex plus a pipe has that window: take the mutex, then create the pipe, and a
 So there was nothing to weigh. One atomic primitive satisfies "no racing" by construction; two primitives cannot, however carefully they are ordered. The rest of this row follows from that rather than arguing towards it.
 
 And s51 now rests on the same atomicity: it is the pipe result, succeed or fail, plus the connect result that separates a normal cold start from a lost race from a wedged keeper.
+
+### s54. Caveats live in the SOURCE and are checked, because silence must not read as safety
+
+Decided 14 Oct 2026, from the question of where an auditor's caveats should live.
+
+#### Why the source and not the paste
+
+s56 is the general rule, and this is its first application: **a caveat pasted alongside a link is an assertion** and so unverifiable. A caveat in the source at a pinned commit is self-verifying, because a sender cannot swap it and it cannot drift from the code it describes, being in the same commit.
+
+#### ⚠️ And a declaration nobody checks is worse than none
+
+An auditor finding no caveats cannot tell "this reaches for nothing" from "nobody wrote any", so silence reads as safety. That is the failure shape the whole repo is organised against.
+
+So `caveats.go` declares, and `caveats_test.go` walks the package with `go/ast` and asserts every outward reach of a known kind is declared. A new `exec.Command` nobody wrote down breaks the build.
+
+#### ⚠️ THE PROOF FOUND THREE DEFECTS, ALL IN THE CHECKER
+
+Worth recording in full, because each is a different way for a safety tool to be comfortable and useless.
+
+1. **It missed the program's PRIMARY reach.** The HTTP request is `client.Get(url)`, a method on a value, and an AST-only walk cannot resolve what `client` is. So `http.Get` sat in the surface list, the code never calls it, and the checker passed while blind to the thing the program exists to do. Fixed by matching TYPE references as well as calls: `&http.Client{...}` is a selector the walk can see.
+2. **The declaration asserted the checker was blind to the syscall.** It is not: `iphlpapi` is a package-level var, so `iphlpapi.NewProc` is an ordinary selector. Wrong claim, corrected in place rather than dropped.
+3. ⚠️ **FATAL: the check was per-FILE.** It asked whether the file was mentioned anywhere in the declaration, and `sessions.go` was already named for two other reaches, so a deliberately planted `exec.Command` in that file PASSED. Every file gets mentioned eventually, so the checker was on its way to always passing while staying green. Each caveat line now opens with its surface in brackets and the check matches on that.
+
+Proven by planting the reach and watching it fail, then reverting:
+
+```
+UNDECLARED REACH: exec.Command at [sessions.go:323]
+```
+
+#### What it turned up about chrome_sessions
+
+```
+[http.Client]      HTTP GET to 127.0.0.1:<port>/json/version and /json/list
+[net.DialTimeout]  a bare TCP dial, to tell a dead port from a wedged one
+[iphlpapi.NewProc] reads the WHOLE machine's TCP listener table, including the
+                   owning pid of every listening socket, not only the ports asked about
+```
+
+⚠️ The third is the point. A tool advertised as "which Chromes can be driven" reads system-wide information about every process holding a socket. No auditor would guess it from the description, and now none has to.
+
+#### The limit, stated in the file rather than implied
+
+`CaveatSurfaces` names exactly what the checker can see. A raw syscall, reflection, or any helper outside that list is **UNVERIFIED rather than absent**, and the iphlpapi line is declared because a human noticed.
+
+#### The signpost
+
+It belongs in the HANDLER's source, at the SHA in s9's line 1, which an auditor reads anyway: "read `Caveats` in the target, verify it against the source, and **if there is no `Caveats`, report UNVERIFIED rather than SAFE**." Living there rather than in the paste means it cannot be softened for a particular link.
+
+### s55. Sharing code across SHAs: the mechanism, the invariant, and what 100% means
+
+Decided 14 Oct 2026.
+
+#### It works natively, and the install line is untouched
+
+A connector's `go.mod` can require a sibling module at a specific commit, and `go run A@shaX` resolves and fetches `B@shaY`:
+
+```
+require github.com/davidnoz123/nielsoln_connectors/cdpcore v0.0.0-20261013084211-4b91c7e8f2a0
+```
+
+Nobody types the pseudo-version; `go get <mod>@<sha>` derives it. **The user still types one line and the toolchain resolves the graph**, which is the property that had to survive.
+
+#### ⚠️ THE INVARIANT THAT PRESERVES THE AUDIT, and it is three rules
+
+MVS is only ambiguous when there are two paths to one module. So:
+
+1. **every shared module is a LEAF**: empty `require`, depends on nothing
+2. **the graph is at most ONE level deep**: a connector requires leaves, never another connector
+3. **no `replace` and no `exclude`, ever.** A `replace` in the target's own `go.mod` DOES apply under `go run module@sha`, and one line pointing at a local path makes the build unauditable while looking ordinary
+
+Under those, the resolved version IS the required version, derivable by reading one `go.mod` with no tooling and no graph walk.
+
+⚠️ **This is the empty-require property RELOCATED, not abandoned**: it moves from every connector to every shared module. And the enforcement has to exist BEFORE the first dependency, which is s3's argument again.
+
+#### What "100%" actually means
+
+Setting the Go toolchain aside, the claim that holds is:
+
+> **Every line of Go that this link compiles and runs is identified and fetchable from public sources named in the two pasted lines.**
+
+What it does NOT cover, and this gap is larger than the toolchain one: **a target can exec other programs.** s40's `editor_open` runs `code --goto`. `remote_chrome_cdp` launches Chrome. An auditor sees THAT it execs something, because the `exec.Command` is in the fetched source, and cannot audit what it execs. s17 already concedes this and s24's UNVERIFIED is where it belongs.
+
+#### ⚠️ And the thing that degrades rather than breaks
+
+Today an auditor reads one folder and is PROVABLY done. With a dependency they must follow `go.mod`, and **stopping early is silent**. So the invariant must be enforced mechanically and the audit text must say "follow every require", or the property is true and nobody can tell.
+
+#### Still unproven, and s1 is why that matters
+
+Three parts are untested: a subdirectory module exposing an importable sub-package, a sibling required at a pseudo-version, and the whole thing resolving from a bare `go run` with no checkout. s1's lesson is that the install story rested on an untested assumption for weeks. One throwaway push settles it.
+
+### s56. NOTHING in the audit payload may be an assertion
+
+Decided 14 Oct 2026, prompted by the suggestion that per-link caveats be pasted alongside a link.
+
+> **Every element of the audit payload must be resolvable to public bytes, or it does not belong in the paste.**
+
+#### Why
+
+s9's two lines work because **nothing in them is claimed.** Line 1 is a SHA you fetch. Line 2 is a URI you resolve. Every assertion is checkable against public bytes, so the sender's honesty is irrelevant.
+
+⚠️ Add prose and you add something the auditor must either trust or ignore. A hostile sender writes reassuring caveats; a careless one writes stale ones; and **the auditor cannot distinguish either from the truth**, because the text is not derived from anything. Worse, a declared link "type" would itself be a claim, so a link could claim a type with mild caveats.
+
+#### Four decisions already follow from it, and none states it
+
+| row | what it refused | because |
+|---|---|---|
+| s21 | a `policy` field | an unenforced claim about a target's own behaviour |
+| s35 | the descriptor store | state beside a link, able to drift |
+| s47 | a published list of known-good hashes | state to maintain, and it goes stale |
+| s54 | caveats pasted with a link | an assertion the auditor cannot check |
+
+It also explains why s54's caveats work: they are not in the payload at all. They are in the **source at a pinned commit**, which resolves to public bytes like everything else.
+
+#### What replaces a caveat, when one is needed
+
+A **question list**, published once with SHIMP and emitted by `shimp audit-text` (s25), applying to whatever was fetched. [27] had this shape and s24 records it: "report what exact code will execute, what resources it can reach, what persists, what network access exists, any unverified assumptions."
+
+Those are prompts to LOOK, and the answers are derived. "This execs VS Code" is not a caveat somebody wrote; it is `exec.Command` in the fetched source.
+
+#### ⚠️ And the honest corollary
+
+An audit that always returns SAFE is worthless. s24 has four verdicts so that a link which SHOULD make somebody pause does. The design's job is to make the unease **accurate**: present when warranted, absent when not, and never manufactured by a sender who wanted a click.
+
+### s57. remote_chrome_cdp is a hand-rolled shimp, and three of its four invented pieces become unnecessary
+
+Observed 14 Oct 2026. The tool was written for the `amazeme` sibling to automate navigation from a URL, which is shimp's job description reached independently and earlier.
+
+Its links look like `http://127.0.0.1:8790/show/logo-url?t=K7M2XQ4P`: a clickable thing in a document that causes one named action from a closed set to happen locally. That is `shimp://<capability>/<action>` with a hand-rolled transport.
+
+#### What it had to invent, and what shimp makes unnecessary
+
+| invented | why | under shimp |
+|---|---|---|
+| `-listen` port | a link needs something to hit | gone. s20: local only, no port to manage |
+| `-token` | any page in the browser can call localhost | gone, and this is the real win |
+| `-manifest` | a closed set of allowed ids | gone. Each allowed page is its own capability, so its own link |
+| a long-running server | so links keep working | optional. s46's one-shot class |
+
+#### ⚠️ The token is substantive, not tidiness
+
+Its own header concedes it: "it travels in a document, so it is not a secret. The thing that makes this safe to run is that the vocabulary is closed."
+
+A localhost HTTP server is reachable by **any page the browser has open**. A `shimp://` link is not: a sandboxed page cannot silently ask the OS to open a custom scheme. So the conversion removes an exposure the current design can only mitigate.
+
+#### ⚠️ And the manifest point is subtler
+
+A manifest is an EDITABLE allowlist consulted at request time. Under shimp the allowlist becomes **which links exist**, and each link is a pinned specification with no editable middle layer. That is s35's move exactly: state between the link and the behaviour is state that can drift or be tampered with.
+
+#### What stays, and it is what the tool is for
+
+Open a tab it created, navigate to one address, highlight one string in the page source, bring the window forward. "Replaces trust with looking."
+
+Of 3,517 lines, the HTTP server, manifest, token guard, sweep lanes and health endpoint are transport scaffolding. Strip them and what remains is the page interaction, which is exactly what an auditor should see, undiluted rather than buried.
+
+#### Three cautions
+
+* **nothing forces this.** It works, and the measured lessons in it, the 2 Oct tab hijack and the dedicated-profile discovery, are embodied in that code and must survive a rewrite rather than be lost with it.
+* **sequence.** shimp's dispatch half does not exist, so: shimp first, then convert. Converting in anticipation leaves a tool that works neither way.
+* ⚠️ **one real loss.** The server form works from any document that can make an HTTP request. A `shimp://` link only works where shimp is installed. Irrelevant for a local playbook, and worth knowing before calling the server form obsolete.
+
+#### And `amazeme` has no live consumer
+
+Checked 14 Oct: it appears in `amazeme`'s slate, a `drive-server.log` and `scripts.txt`, and in no `.py` or `.md` code path. So a conversion would break nothing today.

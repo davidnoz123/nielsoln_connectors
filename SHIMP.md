@@ -59,6 +59,7 @@
 | s57 | remote_chrome_cdp is a hand-rolled shimp, and three of its four invented pieces become unnecessary | OBSERVED 14 Oct 2026, no change proposed yet | shimp's dispatch half, before any conversion |
 | s58 | `vscode:` is already registered, so s40's first capability already exists | MEASURED 14 Oct 2026 | a decision on what shimp's first capability should be instead |
 | s59 | Cached attestations per module@sha: capabilities verified, exposure attributed | **DECIDED** and the first one WRITTEN, 14 Oct 2026 | one per module, as each is written or changed |
+| s60 | The leaf candidates, MEASURED, and the divergence nobody was looking for | **MEASURED** 14 Oct 2026, and `repocheck` now runs it | a decision on whether to propagate remote_ai's foldsCase lesson |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -553,6 +554,12 @@ This row's own wording was "not urgent until the second consumer exists", and on
 The DECISION above stands: if we share, it is a module, under s55's two maxims. The trigger is restored to **the probe existing**, so that extraction happens at second use rather than in anticipation of it.
 
 And the better reason for waiting: the probe needs connect, attach-to-existing and evaluate, and NOT tab creation, which s12 showed is opposite-stanced. That is perhaps 200 lines rather than 395. Writing it first means deciding what is common with two real implementations in view rather than one and a projection.
+
+#### ⚠️ And measurement says this was not the urgent one. 14 Oct 2026
+
+s60 counted the duplication instead of reasoning about it. `cdpcore` has ONE consumer today. `contained`, the path-containment check, has two, is byte-identical in both, and calls a `foldsCase` that has DIVERGED with a learned lesson stranded in one copy.
+
+So this row's hazard is real and has already happened somewhere else. That strengthens the row's argument and weakens its priority: the extraction worth doing first is not the one that was discussed for a session.
 
 ### s14. patchbucket: transport and ordering, never merging
 
@@ -2848,6 +2855,12 @@ What this row verifies is exactly the **facts** half of an attestation. s59 adds
 
 ⚠️ And it is the division that makes a self-issued attestation worth anything: the capabilities are mechanically checked, so only the judgement is a claim.
 
+#### A leaf candidate in its own right, 14 Oct 2026
+
+s60 ranks this second of the measured candidates. The AST checker is pure stdlib and pure mechanism, has one consumer and five planned, and rolling it out to the other four connectors is what will CREATE the duplication.
+
+⚠️ So the ordering matters: extract it before copying it four times, or `repocheck` will report four identical copies of a checker whose whole purpose is catching undeclared duplication.
+
 ### s55. Sharing code across SHAs: the mechanism, the invariant, and what 100% means
 
 Decided 14 Oct 2026.
@@ -3137,3 +3150,65 @@ A first attestation returning SAFE would have demonstrated nothing about the for
 #### Where it goes next
 
 Shaped to move to a signed transparency log, Sigstore or Rekor, unchanged, when there is a second party to sign. Until then self-issued, which is weaker than third-party review and stronger than nothing: the capability half is verified, so only the judgement is a claim, and it is attributed and append-only through git.
+
+### s60. The leaf candidates, MEASURED, and the divergence nobody was looking for
+
+Measured 14 Oct 2026, after a whole session of reasoning about what should be shared.
+
+#### ⚠️ REASONING FOUND cdpcore. MEASUREMENT FOUND PATH SAFETY.
+
+Counting function names present in two or more connectors, and hashing each body so divergence shows:
+
+| name | consumers | state |
+|---|---|---|
+| `contained` | pdf_view_server, remote_ai | **BYTE-IDENTICAL** |
+| `foldsCase` | pdf_view_server, remote_ai | ⚠️ **DIVERGED**, 23 lines against 16 |
+| `resolve` | both | same name, different jobs, 12 lines against 92 |
+| `raiseWindow` | pdf_view_server, remote_chrome_cdp | different jobs, 96 against 14 |
+
+`cdpcore`, which s13 spent the session on, has ONE consumer today. The path cluster has two, now.
+
+⚠️ **And the websocket duplication did not appear at all**, because the two implementations use different function names. So name-matching UNDERSTATES duplication, and the only reason that pair is known is that it came up in conversation.
+
+#### The divergence, and what is actually at stake
+
+`contained(root, real)` decides whether a resolved path sits inside the permitted root. It is the traversal defence, and it is byte-identical in both connectors.
+
+It calls `foldsCase`, which is not:
+
+* **pdf_view_server** stats the directory, flips its case, stats again, and compares with `os.SameFile`. On a failed flipped-stat it **caches `false`**.
+* **remote_ai** delegates to `probeFold` and deliberately does **not** cache an undetermined answer, with the reason in its own comment: *"An empty share cannot be asked whether it folds, and the moment it has a file in it, it can. Caching the guess would keep answering from the one moment the question was unanswerable."*
+
+⚠️ **So a learned lesson is stranded in one copy**, which is precisely s13's hazard, realised, in the one area nobody had looked at.
+
+#### Severity, stated accurately rather than alarmingly
+
+The failure direction is over-strict **REJECTION**, not admission: a wrong `false` makes `contained` compare case-sensitively, so a legitimate path is refused. Both copies are conservative in the dangerous direction, where a wrong `true` would treat two different directories as one.
+
+So this is a **divergence in safety-adjacent code**, not a hole. ⚠️ The live defect is pdf_view_server caching a `false` derived from a transient stat failure, for the life of the process, which is exactly what remote_ai's comment warns against.
+
+Not fixed here: propagating remote_ai's behaviour changes a working tool, and that is not a change to make silently.
+
+#### The candidate list, ranked by evidence
+
+1. ⚠️ **path safety** -- `contained`, `foldsCase`, `flipCase`, `probeFold`. Two consumers TODAY, partly identical, partly diverged, safety-adjacent. Never mentioned in any discussion.
+2. **the caveats checker** (s54). One consumer, five planned. Pure stdlib, pure mechanism, and rolling s54 out is about to create the duplication.
+3. **`cdpcore`** (s13). One consumer today, two once the probe exists.
+4. the websocket pair. Two implementations, legitimately different environments.
+5. `raiseWindow`. Probably not: one name, two jobs.
+
+#### What this says about the method, which is the transferable part
+
+We reasoned our way to a leaf from a PROJECTED second consumer, while the live problem had two ACTUAL ones and a diverged helper.
+
+⚠️ So the answer is not better reasoning, it is a cheap recurring measurement. `repocheck` is that: a program outside every module, because neither of s55's maxims is checkable from inside one, with a declared baseline so that a NEW overlap fails rather than being noticed by somebody in a year.
+
+Overlap is not a defect, and the baseline is the point: `main` is in every connector, and two functions can share a name while doing different jobs. What is forbidden is UNNOTICED overlap.
+
+#### ⚠️ And the baseline immediately caught itself
+
+The first `known_overlaps.go` listed seven names that were not overlaps at all -- `flipCase`, `probeFold`, `windowExists`, `isReparse`, `isReparseInfo`, `isLoopback`, `contains` -- taken from a grep that had not distinguished a cross-connector overlap from a build-tag pair inside ONE module.
+
+`TestBaselineHasNoStaleEntries` found all seven. That is the same discipline in the other direction: an allowlist must not claim duplication that does not exist, or the next reader cannot tell which entries are live.
+
+Every check in `repocheck` also has a companion proving it CAN fail, because three times in this repo a safety check has passed by being blind: s54's walk missed its package's primary reach, then matched per-file rather than per-reach, then could not see inside an import.

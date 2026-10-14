@@ -12,7 +12,7 @@
 | s10 | A long action reports to a visible console, and the click never waits | **DECIDED** 7 Oct 2026 | nothing |
 | s11 | Two clicks, not a library, because s15's refusal carries the safety | **DECIDED** 7 Oct 2026, and the library is deferred rather than rejected | nothing |
 | s12 | chrome_sessions: liveness built, authority open | **DECIDED** 14 Oct 2026: liveness is the whole job | nothing |
-| s13 | Extract the CDP client, do not copy it | **DECIDED** 14 Oct 2026: a leaf module, and the trigger has fired | nothing |
+| s13 | Extract the CDP client, do not copy it | **DECIDED** 14 Oct 2026: a leaf module, and the trigger has fired | the probe EXISTING, so extraction happens at second use |
 | s14 | patchbucket: transport and ordering, never merging | SPECIFIED | nothing, and it is unblocked |
 | s15 | chatgpt_capture needs a SIGNED-IN Chrome, and must refuse without one | SPECIFIED | s12's authority probe |
 | s16 | Excel is a session-protocol problem, not a prohibition | PARKED 7 Oct 2026 | a reason to drive Excel through a `shimp://` link |
@@ -39,7 +39,7 @@
 | s37 | The SHA in the URI: exactly one legal length, and it should be 40 | RAISED 7 Oct 2026, recommending 40 | one measurement: what Go does with an AMBIGUOUS abbreviation |
 | s38 | The Excel surface, measured twice: the object refuses, the formula corrupts | **DECIDED** 10 Oct 2026, measured in two repos | nothing. Length is not a constraint on this design. |
 | s39 | The minimum SHAPE another tool may refuse a shimp URI on | **DECIDED** 10 Oct 2026, check 6 corrected 11 Oct | nothing, except that check 4's length follows s37 |
-| s40 | FIRST CAPABILITY: open an editor at a line of a file | ACCEPTED 10 Oct 2026 as the first capability, not built | the grammar freeze, then the handler |
+| s40 | FIRST CAPABILITY: open an editor at a line of a file | SUPERSEDED IN PART by s58: `vscode:` already does this | the grammar freeze, then the handler |
 | s41 | A query is legal AFTER the `#` and banned before it | **DECIDED** 11 Oct 2026 | nothing. It closes one of the four grammar blockers. |
 | s42 | Two outbound messages were silently never delivered | RECORDED 11 Oct 2026 | nothing from this repo |
 | s43 | The runner is a TABLE, not a parse: `go/run` consumes two segments | **DECIDED** 11 Oct 2026 | nothing |
@@ -54,9 +54,10 @@
 | s52 | The startup timeout is 120s, and our own measurement rules out any short value | **DECIDED** 12 Oct 2026 | nothing |
 | s53 | The named pipe IS the lock, and on Unix it is not | **DECIDED** 12 Oct 2026, with the platform asymmetry reported | nothing |
 | s54 | Caveats live in the SOURCE and are checked, because silence must not read as safety | **DECIDED** and BUILT for chrome_sessions, 14 Oct 2026 | rolling it to the other four connectors, and the AGENTS entry |
-| s55 | Sharing code across SHAs: the mechanism, the invariant, and what 100% means | **DECIDED** 14 Oct 2026, mechanism NOT yet proven | one throwaway push to prove the three untested parts |
+| s55 | Sharing code across SHAs: the mechanism, the invariant, and what 100% means | **DECIDED** 14 Oct 2026: TWO maxims, provenance and no indirection. Mechanism not yet proven | one throwaway push to prove the three untested parts |
 | s56 | NOTHING in the audit payload may be an assertion | **DECIDED** 14 Oct 2026, and four earlier decisions already follow from it | nothing |
 | s57 | remote_chrome_cdp is a hand-rolled shimp, and three of its four invented pieces become unnecessary | OBSERVED 14 Oct 2026, no change proposed yet | shimp's dispatch half, before any conversion |
+| s58 | `vscode:` is already registered, so s40's first capability already exists | MEASURED 14 Oct 2026 | a decision on what shimp's first capability should be instead |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -541,6 +542,16 @@ Asked to weigh duplication against how easily a model can certify the code, the 
 ⚠️ **The cheapest audit is of code that does not exist.** A leaf module and a copy-with-tripwire have IDENTICAL byte counts for an auditor; they differ only in how identity is established, by version string or by hash comparison. What actually reduces audit cost is not arranging 395 lines better but not having them in a second place at all.
 
 That is what made "put the probe in `remote_chrome_cdp`" attractive, and what s12's invariants then ruled out. So: the leaf, because the alternative was foreclosed, not because sharing is free.
+
+#### Trigger corrected, 14 Oct 2026
+
+This row's own wording was "not urgent until the second consumer exists", and on 14 Oct I declared the trigger fired because s12 established the probe must be SEPARATE.
+
+⚠️ **"Must be separate" is not "exists".** The probe is an unwritten program, needed by s15, which is itself unbuilt. So the second consumer is two unwritten programs away, and a shared module with one consumer is strictly worse than no module.
+
+The DECISION above stands: if we share, it is a module, under s55's two maxims. The trigger is restored to **the probe existing**, so that extraction happens at second use rather than in anticipation of it.
+
+And the better reason for waiting: the probe needs connect, attach-to-existing and evaluate, and NOT tab creation, which s12 showed is opposite-stanced. That is perhaps 200 lines rather than 395. Writing it first means deciding what is common with two real implementations in view rather than one and a projection.
 
 ### s14. patchbucket: transport and ordering, never merging
 
@@ -1992,6 +2003,14 @@ s41 settles it: a query is legal after the `#` and banned before it, because the
 
 So this capability's link needs no exception and the grammar needs no special case.
 
+#### ⚠️ SUPERSEDED IN PART, 14 Oct 2026: this already exists
+
+s58 measured `vscode:` as registered on this machine, so `vscode://file/<path>:<line>` opens an editor at a line today with no shimp at all.
+
+So the capability this row accepted is solved, and raccoon's need is met by a link in a `hyperlink=True` column plus s8's trusted-protocol key for `vscode:`.
+
+What survives: this row's reasoning about what makes a good FIRST capability, being tiny, daily, no auth, no Chrome and no Excel, with a live requester. What does not: that it should be an editor opener. s58 argues the first capability must be something `vscode:` cannot do, which means pinning and audit rather than navigation.
+
 ### s41. A query is legal AFTER the `#` and banned before it
 
 Decided 11 Oct 2026, resolving a contradiction between two rows written a day apart.
@@ -2856,6 +2875,83 @@ Today an auditor reads one folder and is PROVABLY done. With a dependency they m
 
 Three parts are untested: a subdirectory module exposing an importable sub-package, a sibling required at a pseudo-version, and the whole thing resolving from a bare `go run` with no checkout. s1's lesson is that the install story rested on an untested assumption for weeks. One throwaway push settles it.
 
+#### TWO MAXIMS, 14 Oct 2026, replacing the invariant list above
+
+The list above went through four forms in one afternoon: four invariants, then three, then two, then these. Each reduction came from a question rather than from tidying, and the final form constrains something different from the first.
+
+> **1. Every module in the closure lives in this repo.**
+> **2. Nothing may stand between the declaration and the thing** — no `replace`, no `exclude`.
+
+That is all. Depth is not constrained. A leaf may aggregate leaves, to any depth.
+
+#### ⚠️ WHY DEPTH TURNED OUT NOT TO MATTER
+
+Three of the earlier invariants existed to make the resolved version derivable by reading, so that an auditor could reason about MVS. They are unnecessary, for a reason that was available all along:
+
+**`go.sum` enumerates the resolved closure.** Every module version in the build, transitive ones included. So the audit's stopping condition is one file:
+
+> Read `go.sum`. That is the complete set of modules. You are done when you have read all of them.
+
+No graph walk, no MVS reasoning, no depth limit. ⚠️ That also answers the worry recorded earlier in this row, that an auditor who stops after one folder has silently under-audited: they stop when `go.sum` is exhausted, and `go.sum` says when that is.
+
+This came from looking for prior art. Nix's `flake.lock` is the canonical "one file naming the whole closure", and Go already ships the same thing.
+
+#### What the earlier invariants were really protecting, and what replaces them
+
+| earlier invariant | fate |
+|---|---|
+| every shared module is a leaf | **dropped.** Aggregation is allowed. Mechanism-versus-stance is a design judgement, not a rule |
+| one level deep | **dropped.** `go.sum` makes depth irrelevant to the audit |
+| the repo moves as one | **dropped**, and it was the expensive one: it coupled the release of unrelated connectors |
+| no `replace`, no `exclude` | **kept** as maxim 2 |
+| | **maxim 1 is new**: provenance, which is what all of it was groping at |
+
+⚠️ **Provenance is the constraint, not shape.** With depth 1, every module in a build is one we named; with arbitrary depth, an aggregating leaf could pull in something nobody looked at. That is the third-party-dependency risk in a different hat, and it is what `AGENTS.project.md` means by calling zero dependencies "a property to keep rather than an accident". "Empty `require`" was never the point; "nothing we did not write" was.
+
+Checkable in one line: every path in `go.sum` must begin with `github.com/davidnoz123/nielsoln_connectors/`.
+
+#### And why the AWS-shaped pain cannot reach us
+
+`aws-sdk-go-v2` and OpenTelemetry Go are the production examples of this exact pattern, one repo with a module per folder and a shared core, and both are known for version-alignment pain.
+
+⚠️ **It does not transfer, and not because we are more disciplined.** Their consumers combine many service modules into ONE application build, so MVS has dozens of requirements on the core to reconcile. Our connectors are separate programs that are never linked together, and under maxim 1 every pin in any closure is ours to fix. Their pain is consumers inheriting a core they do not control.
+
+#### The development mechanism, which maxim 2 would otherwise cost
+
+Maxim 2 forbids the commonest multi-module move:
+
+```
+replace github.com/davidnoz123/nielsoln_connectors/cdpcore => ../cdpcore
+```
+
+Without it, editing a leaf and testing a consumer against it needs a commit and a push. `go.work` is the answer, and the property that makes it safe is the one that made it irrelevant to the audit:
+
+| | travels with the repo | seen by `go run module@sha` |
+|---|---|---|
+| `replace` in `go.mod` | **yes**, which is the problem | yes |
+| `go.work` | no, gitignored | **no, ignored by design** |
+
+So: develop with `go.work`, never commit it, never use `replace`. ⚠️ It was NOT in `.gitignore`; added 14 Oct.
+
+#### A note rather than a rule
+
+Skew becomes possible once depth exceeds 1, and a `go.work` build is where it will surface, because a workspace unifies the graph. So: if you aggregate, expect to align pins, and the workspace is where you find out. A cost to know, not a prohibition.
+
+#### Prior art, for comparison rather than adoption
+
+| | what it does | what it offers us |
+|---|---|---|
+| Nix flakes | pins the closure INCLUDING the compiler | solves the toolchain gap s34 concedes, if it ever matters enough |
+| `go.sum` + sum.golang.org | content hashes, plus an append-only public log | ⚠️ interesting against s47, which refused a published hash list. `sum.golang.org` IS one, and works because it is append-only and maintained by somebody else rather than hand-curated |
+| SLSA / in-toto | provenance attestations; a layout of allowed materials | the vocabulary. in-toto's "layout" is s54's caveats file under another name |
+| Deno | `--allow-net=example.com` on the invocation | the same shape as argv in a shimp link. Deno enforces at runtime; s17 refuses to |
+| object-capability systems | an unforgeable reference IS the authority | ⚠️ we borrow the word "capability", not the semantics. Ours is a name; authority comes from the OS |
+| Android / extension manifests | declared permissions, reviewed at a gate | the cautionary tale below |
+
+⚠️ **The cautionary one.** An unenforced declaration becomes noise: P3P, Do Not Track and `robots.txt` were all declarations nobody could verify, and all ended up ignored or lied in. Android permissions work because the OS ENFORCES them, and s17 refuses enforcement.
+
+s54 uses a third mechanism neither of those: not "the OS prevents it" and not "trust the declaration", but **a test proves the declaration complete against the code**. That is the only reason to expect our manifests to survive where P3P did not, and it is worth being clear about.
+
 ### s56. NOTHING in the audit payload may be an assertion
 
 Decided 14 Oct 2026, prompted by the suggestion that per-link caveats be pasted alongside a link.
@@ -2929,3 +3025,28 @@ Of 3,517 lines, the HTTP server, manifest, token guard, sweep lanes and health e
 #### And `amazeme` has no live consumer
 
 Checked 14 Oct: it appears in `amazeme`'s slate, a `drive-server.log` and `scripts.txt`, and in no `.py` or `.md` code path. So a conversion would break nothing today.
+
+### s58. `vscode:` is already registered, so s40's first capability already exists
+
+Measured 14 Oct 2026, while looking for prior art:
+
+```
+HKCU\Software\Classes\vscode\shell\open\command
+  "...\Microsoft VS Code\Code.exe" --open-url -- "%1"
+```
+
+So `vscode://file/<path>:<line>:<col>` works on this machine **today**, with no shimp, no install and no code. s40's first capability, "open an editor at a line of a file", is shipped prior art from Microsoft.
+
+#### Three consequences
+
+* ⚠️ **raccoon's actual need is met now.** A `vscode://file/...:1735` link in a `hyperlink=True` column keeps the line number, which is strictly better than slate_tools' interim suggestion of losing it. s40 and `TO_DATAANNOTATION_TOOLS.md` both offered a worse answer than the one already installed.
+* ⚠️ **and they will hit s8's modal**, because Office does not know `vscode:` either. Same fix, same trailing colon: `...\Trusted Protocols\All Applications\vscode:`
+* **shimp's first capability should NOT be `editor_open`.** That problem is solved. The first capability should be something `vscode:` cannot do, which means pinning and audit rather than navigation.
+
+#### What it says about shimp, which is the more useful part
+
+The pattern shimp generalises is already in production from Microsoft, and from JetBrains, GitHub, Slack and Zoom. A custom scheme that takes an action and acts locally is ordinary.
+
+⚠️ So shimp's novelty is NOT the scheme, and never was. [32] reached the same conclusion from a precedents search on 7 Oct: every ingredient is established and only the composition is not, with the two-line audit "the most original and valuable part".
+
+This is that conclusion arriving from the other direction, by measurement rather than by search, and it sharpens what the first capability has to demonstrate: **immutable pinning and a two-line audit of code a stranger can fetch.** `vscode:` has neither. It runs whatever VS Code happens to be installed, with no way to say which.

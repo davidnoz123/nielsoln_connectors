@@ -15,3 +15,13 @@ transcripts/
 
 # Agent local overrides (machine-specific, must not be committed)
 AGENTS.local.md
+
+# Go workspace. Local cross-folder development only, and NEVER committed.
+#
+# It is what makes s55's maxim 2 affordable: `replace` in a go.mod travels
+# with the repo and is forbidden, while a workspace is machine-local and is
+# IGNORED by `go run module@sha`. The property that makes it irrelevant to an
+# audit is exactly what makes it safe here. Committing one would reach every
+# build from a checkout, including every test run.
+go.work
+go.work.sum

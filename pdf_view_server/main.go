@@ -824,7 +824,25 @@ func foldsCase(dir string) bool {
 	}
 	other, err := os.Stat(flipped)
 	if err != nil {
-		foldCache[dir] = false
+		// ⚠️ CACHE ONLY A DETERMINED ANSWER. "The flipped name does not
+		// exist" is evidence the filesystem is case-SENSITIVE, so it is worth
+		// remembering. Any other stat failure -- a permission error, a
+		// network share hiccup, an antivirus lock -- says nothing about
+		// folding, and caching it would keep answering from the one moment
+		// the question was unanswerable, for the life of the process.
+		//
+		// Propagated from remote_ai's foldsCase on 14 Oct 2026, which had
+		// learned this and written it down while this copy had not. s60
+		// records how the divergence was found: `contained` is
+		// byte-identical in both connectors and the `foldsCase` it calls was
+		// not, which repocheck now reports.
+		//
+		// Note the asymmetry with the two returns above: a failed stat of
+		// `dir` itself, and a `dir` with no letters to flip, are both already
+		// uncached here. This branch was the only one that guessed.
+		if os.IsNotExist(err) {
+			foldCache[dir] = false
+		}
 		return false
 	}
 	folds := os.SameFile(st, other)

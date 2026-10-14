@@ -62,7 +62,7 @@
 | s60 | The leaf candidates, MEASURED, and the divergence nobody was looking for | **MEASURED** and the divergence CLOSED 14 Oct 2026 | nothing |
 | s61 | editor_open: the first capability, because NO editor but VS Code has a scheme | DESIGNED 14 Oct 2026, deliberately NOT built | a decision to build it, plus two measurements |
 | s62 | linkprobe: fourteen ways in, MEASURED, and two of them cannot carry a shimp link | **BUILT and MEASURED** 15 Oct 2026 | four human routes, which are unanswered rather than passed |
-| s63 | The browser route: Chrome keeps the link VERBATIM and refuses to fire it without a gesture | **MEASURED** 15 Oct 2026. Automation BLOCKED, and the blocker is a feature | a websocket, which means extracting remote_chrome_cdp's wsConn as a leaf |
+| s63 | The browser route: Chrome keeps the link VERBATIM and refuses to fire it without a gesture | **MEASURED and CLOSED** 15 Oct 2026. No automated browser route exists | nothing |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -3269,6 +3269,16 @@ This row noted that the websocket duplication never showed up in the overlap cou
 
 `remote_chrome_cdp`'s `wsConn` is the extraction candidate, and `linkprobe` is the caller waiting on it.
 
+#### ⚠️ THE SECOND CONSUMER IS WITHDRAWN, 15 Oct 2026
+
+The note above claimed `linkprobe` was a real second consumer for the websocket, waiting on `wsConn` being extracted. **s63 measured the premise and it is false**: a CDP-synthesized click does not satisfy Chrome's external-protocol gate, so a websocket would not have moved the browser route at all.
+
+So the websocket candidate is back to where this row originally put it: **two implementations, and the duplication never showed up in the overlap count because they use different function names.**
+
+⚠️ And `remote_chrome_cdp/ws.go`'s own header already explains why the two are deliberately different: remote_ai's client carries TLS, permessage-deflate and a handshake hardened against captive portals because it crosses the internet; this one talks to `127.0.0.1` and nothing else, so each of those costs buys nothing here. It even names the right future move, which is to lift remote_ai's `dial()` when the bridge transport lands rather than to merge the two now.
+
+So this is not undiscovered duplication awaiting extraction. It is **a recorded decision that the two should differ**, and a shared leaf would have to overturn it rather than tidy it.
+
 ### s61. editor_open: the first capability, because NO editor but VS Code has a scheme
 
 Designed 14 Oct 2026 and deliberately not built. This is what s58 asked for: a first capability demonstrating something `vscode:` cannot do.
@@ -3467,3 +3477,35 @@ That needs a websocket. Go's stdlib has none and this repo takes no third-party 
 A throwaway `--user-data-dir` per launch, the test scheme purged, the temp profiles removed, and the user's own 25 Chrome processes untouched throughout. Verified afterwards rather than assumed: no scheme class, no policy key, no probe home.
 
 `remote_chrome_cdp`'s rule is *we open our own tab, always*, because attaching to an existing one once drove somebody else's tab away from its own page and reported a confident result measured on the wrong document. The same rule one level up is **our own profile, always**.
+
+#### ⚠️ CLOSED 15 Oct 2026, and the answer is NO
+
+This row named extracting `remote_chrome_cdp`'s `wsConn` as the work that would close the browser route. **That was a guess, it was tested before it was built, and it is wrong.**
+
+The premise was proved out with a throwaway Python CDP client rather than by paying for the Go extraction first, since the venv already carries `websocket-client` and `linkprobe` already has a Python-driven route in the Excel pair.
+
+| | |
+|---|---|
+| **CONTROL**: synthetic click on an ordinary `<a href>` | **NAVIGATES** |
+| **SHIMP**: the same click on a `shimp://` `<a href>` | handler **silent** |
+
+⚠️ **The control is what makes this conclusive.** Without it, a null result is indistinguishable from a probe that missed the link. The ordinary link navigated from `control.html` to `target.html`, so the click mechanism works, the coordinates are right, and Chrome processes the event as a genuine link activation.
+
+The same click on a custom scheme fires nothing, raises **no dialog** (window enumeration on the test Chrome found only the page itself) and leaves the tab where it was. Two passes, same result.
+
+#### What that means
+
+Chrome distinguishes **CDP-injected input from real user input for an external-protocol launch specifically**, and blocks it silently.
+
+So s62's reading holds and strengthens: the gesture requirement is not a permission that can be granted or a dialog that can be dismissed. It is a genuine trust boundary, and **CDP sits on the wrong side of it**.
+
+⚠️ There is no automated browser route to be had. Both Chrome rows are human-only by Chrome's design rather than by any limitation in our tooling, and that is now measured rather than inferred.
+
+#### ⚠️ And the extraction is NOT justified by this row
+
+Which is the useful outcome: a 205-line leaf extraction, plus a second consumer for a module whose page-interaction content is the most audit-sensitive thing in the repo, was avoided by a twenty-minute test.
+
+#### Two more things measured on the way
+
+* ⓘ **Chrome 155 rejects a CDP websocket carrying an `Origin` header** with 403 unless launched with `--remote-allow-origins`. `suppress_origin` is the right fix: a CDP client has no business claiming a web origin. ⚠️ The first run of the premise test reported "PREMISE FAILS" on this 403, which was the harness mislabelling its own transport error as a result. The traceback is the only reason it was caught.
+* `DOM.getBoxModel` plus `Input.dispatchMouseEvent` is enough to click a link with **no `Runtime.evaluate` anywhere**, which respects `cdp.go`'s closed vocabulary and is a more faithful model of a click in any case.

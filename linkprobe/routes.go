@@ -281,13 +281,29 @@ var routes = []Route{
 		// worth having, and it is why this route stays NeedsHuman: the
 		// gesture is the mechanism, not an inconvenience around it.
 		//
-		// What would close it is a TRUSTED input event, which is
-		// Input.dispatchMouseEvent over a websocket. Go's stdlib has no
-		// websocket and this repo takes no third-party dependencies, so it
-		// needs remote_chrome_cdp's wsConn extracted as a leaf. s60 already
-		// ranked that extraction; this is a second consumer for it.
+		// ⚠️ AND A SYNTHETIC CLICK DOES NOT HELP. MEASURED, which killed the
+		// plan that was written here first.
+		//
+		// The previous version of this comment said the route needed
+		// Input.dispatchMouseEvent over a websocket, and named extracting
+		// remote_chrome_cdp's wsConn as the work. That was a guess. It was
+		// tested before being built, and it is wrong:
+		//
+		//   CONTROL: synthetic click on an ordinary <a href>  NAVIGATES
+		//   SHIMP:   same click on a shimp:// <a href>        handler silent
+		//
+		// The control is what makes this conclusive. The click mechanism
+		// works, the coordinates are right, and Chrome processes it as a
+		// real link activation, because the ordinary link navigated. The
+		// same click on a custom scheme fires nothing, raises NO dialog
+		// (window enumeration on the test Chrome found only the page), and
+		// leaves the tab where it was. Two passes, same result.
+		//
+		// So Chrome distinguishes CDP-injected input from real user input
+		// for an external-protocol launch specifically, and blocks it
+		// SILENTLY. There is no automated browser route to be had.
 		Expect:  Manual,
-		Because: "measured: Chrome holds the URI verbatim in a tab and does not launch the handler without a user gesture, by design. Automating it needs a trusted input event, so a websocket",
+		Because: "measured twice: Chrome holds the URI verbatim and will not launch it from a programmatic navigation OR from a CDP-synthesized click, while an ordinary link clicked the same way navigates fine. Human-only by Chrome's design, not by our tooling",
 	},
 	{
 		ID:   "chrome-link-click",
@@ -307,8 +323,12 @@ var routes = []Route{
 		// POLICY is the documented suppression mechanism and was
 		// deliberately not used: it is machine state under HKCU\Policies,
 		// and a probe should not rewrite the user's browser policy.
+		// ⚠️ This is the row the CDP click was actually tested against, and
+		// it is the one that proves there is no automated route: the click
+		// lands on a real <a href> on a real file:// page and still fires
+		// nothing. See chrome-address-bar above for the control.
 		Expect:  Manual,
-		Because: "⚠️ a different code path from the address bar, and the origin is what a protocol permission is keyed on. Needs the same trusted input event to automate",
+		Because: "⚠️ measured: a CDP-synthesized click on this exact page fires nothing, while the same click on an ordinary link navigates. Chrome blocks an external-protocol launch from synthetic input, silently and with no dialog",
 	},
 	{
 		ID:      "run-dialog",

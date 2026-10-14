@@ -62,7 +62,8 @@
 | s60 | The leaf candidates, MEASURED, and the divergence nobody was looking for | **MEASURED** and the divergence CLOSED 14 Oct 2026 | nothing |
 | s61 | editor_open: the first capability, because NO editor but VS Code has a scheme | DESIGNED 14 Oct 2026, deliberately NOT built | a decision to build it, plus two measurements |
 | s62 | linkprobe: fourteen ways in, MEASURED, and two of them cannot carry a shimp link | **BUILT and MEASURED** 15 Oct 2026 | four human routes, which are unanswered rather than passed |
-| s63 | The browser route: Chrome keeps the link VERBATIM and refuses to fire it without a gesture | **MEASURED and CLOSED** 15 Oct 2026. No automated browser route exists | nothing |
+| s63 | The browser route: Chrome keeps the link VERBATIM and refuses to fire it without a gesture | **SUPERSEDED** by s64, 15 Oct 2026. Its conclusion was wrong: an automated browser route exists | nothing |
+| s64 | The browser route AUTOMATED, and the security property turned out to be false | **MEASURED** 15 Oct 2026. 13 of 15 routes now run unattended | nothing. Two routes remain human by nature, not by limitation |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -3428,6 +3429,14 @@ So the two rows stay `NeedsHuman` on purpose. Automating them needs a TRUSTED in
 
 ⚠️ And one apparent finding was withdrawn: the fragment looked stripped, and that was an unencoded `#` in the probe's own `/json/new` request rather than anything Chrome did.
 
+#### ⚠️ CORRECTION 15 Oct 2026: the security claim above is FALSE
+
+This row recorded that a web page cannot silently fire a shimp link, and treated the gesture requirement as a security property. **s64 measured it and it is wrong.**
+
+A page served over http, with the protocol permitted for its origin, fires the handler from a **meta refresh**: no JavaScript, no click, no interaction of any kind. Reproducible 3 passes of 3 on a fresh browser.
+
+The per-origin permission is the sole gate, granted once by a user ticking "always allow". Everything after that is silent.
+
 ### s63. The browser route: Chrome keeps the link VERBATIM and refuses to fire it without a gesture
 
 Measured 15 Oct 2026, attempting to automate s62's two Chrome rows.
@@ -3509,3 +3518,80 @@ Which is the useful outcome: a 205-line leaf extraction, plus a second consumer 
 
 * ⓘ **Chrome 155 rejects a CDP websocket carrying an `Origin` header** with 403 unless launched with `--remote-allow-origins`. `suppress_origin` is the right fix: a CDP client has no business claiming a web origin. ⚠️ The first run of the premise test reported "PREMISE FAILS" on this 403, which was the harness mislabelling its own transport error as a result. The traceback is the only reason it was caught.
 * `DOM.getBoxModel` plus `Input.dispatchMouseEvent` is enough to click a link with **no `Runtime.evaluate` anywhere**, which respects `cdp.go`'s closed vocabulary and is a more faithful model of a click in any case.
+
+#### ⚠️ CORRECTION 15 Oct 2026: this row's conclusion was WRONG
+
+**There IS an automated browser route.** s64 has it working, from the user's suggestion of serving the links over http rather than from a file.
+
+Two faults in the measurement this row rests on:
+
+* ⚠️ **`file://` is an opaque origin** and cannot hold Chrome's external-protocol permission, so that test could never have succeeded. The conclusion was generalised from the one origin incapable of passing.
+* ⚠️ **the control was unreliable.** `Page.bringToFront` alone does not make a page hit-testable; `Page.setWebLifecycleState` active and `Emulation.setFocusEmulationEnabled` were also needed. Until then an ordinary link did not navigate either, so the null result said nothing.
+
+A CDP click **does** count as a user gesture. And that turns out not to matter, because **no gesture is required at all** once the origin is permitted, which also disproves this row's security claim.
+
+### s64. The browser route AUTOMATED, and the security property turned out to be false
+
+Measured 15 Oct 2026, from the user's suggestion: serve the test links from a tiny Python server and click them with CDP.
+
+#### ⚠️ The suggestion corrected an error of mine, and that is the main event
+
+s63 concluded there was **no automated browser route** and that Chrome blocks an external-protocol launch from CDP-synthesized input as a trust boundary. Both halves were wrong, for two separate reasons:
+
+1. ⚠️ **`file://` IS AN OPAQUE ORIGIN.** Chrome keys its external-protocol permission on origin, so a `file://` page **cannot hold one**. The test could never have succeeded, and I generalised from the single origin incapable of passing.
+2. ⚠️ **MY CONTROL WAS UNRELIABLE.** Hit-testing an inactive page silently finds nothing, which is indistinguishable from a refused click. `Page.bringToFront` alone was not enough: `Page.setWebLifecycleState` active **and** `Emulation.setFocusEmulationEnabled` were both needed. Until they were, an ordinary link did not navigate either, so the null result said nothing at all.
+
+An http origin is also the **realistic** route: a link on a web page is what shimp links are for. `file://` was never the thing to measure.
+
+#### The measurement, with a control that passes
+
+| origin | permission | gesture | handler |
+|---|---|---|---|
+| `file` | cannot hold one | click | silent |
+| `http` | none | click | navigation requested, launch **REFUSED** |
+| `http` | granted | click | **FIRES**, verbatim |
+| `http` | granted | meta refresh | ⚠️ **FIRES**, verbatim, 3 passes of 3 |
+
+#### ⚠️ AND THE SECURITY PROPERTY IS FALSE
+
+s62 and s63 both recorded that *a web page cannot silently fire a shimp link*, and both treated it as a property in shimp's favour. **It is not true.**
+
+The last two rows settle the mechanism between them:
+
+```
+click,      NO permission  ->  ABSENT   so the permission is NECESSARY
+NO gesture, permission     ->  FIRES    so a gesture is NOT required
+```
+
+So the **per-origin permission is the sole gate**. A user grants it once, through Chrome's "always allow" checkbox, and from then on that origin can fire shimp links on any later visit with **no interaction whatsoever**. A meta refresh does it, with no JavaScript and no click.
+
+⚠️ An earlier one-off run DID come back silent, which is why the claim was believed twice. That run reused a Chrome already driven through two other tests with its server restarted underneath it. The harness reproduces 3 of 3 on a fresh browser; the one-off does not reproduce and is not trusted.
+
+#### What follows for shimp, which is a design consequence rather than a bug
+
+The handler must treat **every arriving link as untrusted** and must never act on one merely because it arrived. The comfort of "somebody must have clicked" is not available.
+
+Much of this is already the design: identity over verbatim bytes (s44), refuse rather than normalise (s35), the keeper owning one instance per identity (s20). What changes is the **threat model's entry assumption**, and the `chrome-no-gesture` row now holds that fact where it cannot be forgotten.
+
+#### The centralised harness, as it now stands
+
+**15 routes, 13 of them unattended.**
+
+| | |
+|---|---|
+| VERBATIM | `shellexecute`, `cmd-start`, `powershell-start-process`, `python-startfile`, `python-webbrowser`, `excel-hyperlink-object`, `chrome-link-click`, `chrome-no-gesture` |
+| ABSENT, correctly | `explorer`, `chrome-control-no-permission` |
+| REFUSED / UNRUNNABLE | `curl`, `wget`, `excel-hyperlink-formula` |
+| still human | `run-dialog`, `outlook-email` |
+
+The two remaining are human **by nature**: one needs keystrokes into a system dialog, the other needs a real email to arrive. Both are named in the report rather than skipped.
+
+#### Three things that make the Chrome driver honest
+
+* **it reports Chrome's navigation events**, so "nothing arrived" is never ambiguous between a click that missed and a launch that was refused. Conflating those is exactly what produced the wrong conclusion.
+* **the control is a ROW IN THE TABLE**, not a thing done once by hand. `chrome-control-no-permission` proves on every run that the click lands, by navigating an ordinary link on the same origin.
+* **no machine state.** The permission is seeded into a throwaway `--user-data-dir`. Chrome's `AutoLaunchProtocolsFromOrigins` policy would also have worked and was deliberately not used: a probe should not rewrite the user's browser policy to make its own measurement pass.
+
+#### And the wsConn question is settled by not arising
+
+s63 said the browser route needed `remote_chrome_cdp`'s `wsConn` extracted as a leaf. It does need a websocket, and the answer is **Python**, which already has one and was already the pattern here for Excel. No Go extraction, and `ws.go`'s own header still stands: the two Go websocket clients differ deliberately.

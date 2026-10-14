@@ -67,6 +67,18 @@ const (
 	// Go has no business driving COM here.
 	NeedsExcel Kind = "excel"
 
+	// NeedsChrome: driven by chrome_route.py, which serves a page over http
+	// and clicks the link through CDP.
+	//
+	// ⚠️ Python rather than Go for one specific reason: CDP needs a
+	// websocket, Go's stdlib has none, and this repo takes no third-party
+	// dependencies. remote_chrome_cdp hand-rolled one, and ITS OWN HEADER
+	// records why it and remote_ai's are deliberately different -- so a
+	// shared leaf would overturn a decision rather than tidy an oversight.
+	// The venv already carries websocket-client, and the Excel routes
+	// already established the shell-out-to-Python pattern here.
+	NeedsChrome Kind = "chrome"
+
 	// NeedsHuman: a consent dialog, a keystroke, or an application nobody
 	// should be automating for a measurement this small.
 	NeedsHuman Kind = "human"
@@ -260,75 +272,95 @@ var routes = []Route{
 		Because: "exposes NO Hyperlink object (Hyperlinks.Count is 0), so delivery is only answerable by a human clicking the cell. Also a formula cell reads back as its result, so a pull/publish cycle destroys the link. ⚠️ The 255-byte truncation is NOT where it was believed to be: 326 bytes stored unaltered",
 	},
 	{
-		ID:   "chrome-address-bar",
-		What: "navigating Chrome to the link, by command line or by CDP",
-		Kind: NeedsHuman,
-		// ⚠️ ATTEMPTED AUTOMATICALLY 15 Oct 2026, AND IT CANNOT BE. Two
-		// independent routes were tried against a throwaway profile:
+		ID:   "chrome-link-click",
+		What: "clicking an <a href> on an http-served page, through CDP",
+		Kind: NeedsChrome,
+		Argv: []string{"click"},
+		// ⚠️ THIS ROUTE WORKS, AND AN EARLIER VERSION OF THIS TABLE SAID IT
+		// COULD NOT. The correction is worth more than the result.
 		//
-		//   chrome.exe <uri>                     handler silent
-		//   CDP PUT /json/new?<uri>              handler silent
+		// The first attempt used a file:// page, measured nothing, and
+		// concluded that Chrome blocks an external-protocol launch from
+		// CDP-synthesized input in general. Two things were wrong with it:
 		//
-		// The second is the informative one. Chrome CREATED the tab and
-		// `/json/list` showed it holding the URI complete, fragment and
-		// all, byte-for-byte as sent. So Chrome does not mangle a shimp
-		// link. It simply declines to hand it to the OS.
+		//  1. ⚠️ file:// IS AN OPAQUE ORIGIN. Chrome keys its
+		//     external-protocol permission on origin, so a file:// page
+		//     cannot hold one and that test could never have succeeded. The
+		//     conclusion was generalised from the one origin incapable of
+		//     passing.
+		//  2. ⚠️ THE CONTROL WAS UNRELIABLE. Hit-testing an inactive page
+		//     silently finds nothing, which is indistinguishable from a
+		//     refused click. Page.bringToFront alone was not enough;
+		//     Page.setWebLifecycleState active and
+		//     Emulation.setFocusEmulationEnabled were both needed. Until
+		//     they were, an ordinary link did not navigate either, and a
+		//     null result from a harness whose control fails says nothing.
 		//
-		// ⚠️ THE READING, and it is good news rather than an obstacle:
-		// Chrome gates an external-protocol launch behind a real user
-		// gesture, and a programmatic navigation is not one. So a web page
-		// CANNOT silently fire a shimp link. That is a security property
-		// worth having, and it is why this route stays NeedsHuman: the
-		// gesture is the mechanism, not an inconvenience around it.
+		// Measured properly, both conditions are required and a CDP click
+		// DOES count as a user gesture:
 		//
-		// ⚠️ AND A SYNTHETIC CLICK DOES NOT HELP. MEASURED, which killed the
-		// plan that was written here first.
-		//
-		// The previous version of this comment said the route needed
-		// Input.dispatchMouseEvent over a websocket, and named extracting
-		// remote_chrome_cdp's wsConn as the work. That was a guess. It was
-		// tested before being built, and it is wrong:
-		//
-		//   CONTROL: synthetic click on an ordinary <a href>  NAVIGATES
-		//   SHIMP:   same click on a shimp:// <a href>        handler silent
-		//
-		// The control is what makes this conclusive. The click mechanism
-		// works, the coordinates are right, and Chrome processes it as a
-		// real link activation, because the ordinary link navigated. The
-		// same click on a custom scheme fires nothing, raises NO dialog
-		// (window enumeration on the test Chrome found only the page), and
-		// leaves the tab where it was. Two passes, same result.
-		//
-		// So Chrome distinguishes CDP-injected input from real user input
-		// for an external-protocol launch specifically, and blocks it
-		// SILENTLY. There is no automated browser route to be had.
-		Expect:  Manual,
-		Because: "measured twice: Chrome holds the URI verbatim and will not launch it from a programmatic navigation OR from a CDP-synthesized click, while an ordinary link clicked the same way navigates fine. Human-only by Chrome's design, not by our tooling",
+		//	origin  permission   gesture       handler
+		//	file    cannot hold  click         silent
+		//	http    none         click         navigation requested, REFUSED
+		//	http    granted      click         FIRES, verbatim
+		//	http    granted      meta refresh  silent
+		Expect:  Verbatim,
+		Because: "",
 	},
 	{
-		ID:   "chrome-link-click",
-		What: "clicking an <a href> on a page, which is NOT the address bar",
-		Kind: NeedsHuman,
-		// Still distinct from the row above: the href is resolved against
-		// the page's base URL before anything else sees it, and the page
-		// origin is what the protocol permission is keyed on. The probe
-		// writes click_me.html so a human only has to click.
+		ID:   "chrome-no-gesture",
+		What: "an http page trying to fire the link with NO gesture, by meta refresh",
+		Kind: NeedsChrome,
+		Argv: []string{"no-gesture"},
+		// ⚠️⚠️ IT FIRES. A PAGE CAN LAUNCH A SHIMP LINK WITH NO GESTURE.
 		//
-		// ⓘ A profile-local preference DOES exist for pre-allowing the
-		// protocol per origin, and seeding a throwaway profile with
-		//   protocol_handler.allowed_origin_protocol_pairs
-		// touches no machine state. It did not make a programmatic
-		// navigation fire, consistent with the gesture being the gate
-		// rather than the permission. Chrome's AutoLaunchProtocolsFromOrigins
-		// POLICY is the documented suppression mechanism and was
-		// deliberately not used: it is machine state under HKCU\Policies,
-		// and a probe should not rewrite the user's browser policy.
-		// ⚠️ This is the row the CDP click was actually tested against, and
-		// it is the one that proves there is no automated route: the click
-		// lands on a real <a href> on a real file:// page and still fires
-		// nothing. See chrome-address-bar above for the control.
-		Expect:  Manual,
-		Because: "⚠️ measured: a CDP-synthesized click on this exact page fires nothing, while the same click on an ordinary link navigates. Chrome blocks an external-protocol launch from synthetic input, silently and with no dialog",
+		// Measured 15 Oct 2026, reproducible 3 passes out of 3: a meta
+		// refresh, no JavaScript and no click of any kind, fires the handler
+		// and delivers the URI verbatim, once the protocol is permitted for
+		// the page's origin.
+		//
+		// ⚠️ THIS KILLS A CLAIM MADE TWICE IN THIS REPO. s62 and s63 both
+		// recorded that "a web page cannot silently fire a shimp link" and
+		// treated it as a security property in shimp's favour. It is not
+		// true. Taken with chrome-control-no-permission below, the two rows
+		// settle the mechanism between them:
+		//
+		//	click,     NO permission  ->  ABSENT   (so permission is NECESSARY)
+		//	NO gesture, permission    ->  FIRES    (so gesture is NOT required)
+		//
+		// So the PER-ORIGIN PERMISSION IS THE SOLE GATE. A user grants it
+		// once, through Chrome's "always allow" checkbox, and from then on
+		// that origin can fire shimp links on any later visit with no
+		// interaction at all.
+		//
+		// What follows for shimp, and it is a design consequence rather than
+		// a bug to fix here: the handler must treat every arriving link as
+		// untrusted and must never act on one merely because it arrived. The
+		// comfort of "somebody must have clicked" is not available.
+		//
+		// Expect is Verbatim because that is what happens, so the row flags
+		// a CHANGE. ⚠️ An ABSENT here would be good news, not a failure.
+		Expect:  Verbatim,
+		Because: "",
+	},
+	{
+		ID:   "chrome-control-no-permission",
+		What: "the same click with the protocol NOT permitted for the origin",
+		Kind: NeedsChrome,
+		Argv: []string{"control"},
+		// ⚠️ THE CONTROL, kept in the table rather than done once by hand.
+		//
+		// Two things it establishes, and the harness is worthless without
+		// the first: that the click LANDS, by navigating an ordinary link on
+		// the same origin; and that without the per-origin permission the
+		// shimp launch is refused even though the click landed.
+		//
+		// chrome_route.py reports the navigation events Chrome emitted, so
+		// "nothing arrived" is never ambiguous between a click that missed
+		// and a launch that was refused. Conflating those two is exactly
+		// what produced the wrong conclusion the first row above records.
+		Expect:  Absent,
+		Because: "no permission for the origin, so the launch is refused even though the click lands and Chrome requests the navigation. Proves the harness can tell a landed click from a refused launch",
 	},
 	{
 		ID:      "run-dialog",

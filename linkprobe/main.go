@@ -223,6 +223,21 @@ func probe(r Route, shimpExe, python, logPath, root string) Result {
 		c = exec.CommandContext(ctx, python,
 			filepath.Join(root, "linkprobe", "excel_route.py"),
 			r.Argv[0], res.Sent)
+	} else if r.Kind == NeedsChrome {
+		if python == "" {
+			res.Got = Unrunnable
+			res.Detail = "no Python interpreter found, and the Chrome routes " +
+				"need one for the websocket CDP needs"
+			return res
+		}
+		// Longer than Excel's, because this one launches a browser, waits
+		// for a debug port and serves pages. Still bounded: a hung Chrome
+		// must not hang the matrix.
+		ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
+		defer cancel()
+		c = exec.CommandContext(ctx, python,
+			filepath.Join(root, "linkprobe", "chrome_route.py"),
+			r.Argv[0], res.Sent)
 	} else {
 		argv := r.Fill(map[string]string{
 			"{{uri}}":    res.Sent,

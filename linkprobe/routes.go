@@ -260,18 +260,55 @@ var routes = []Route{
 		Because: "exposes NO Hyperlink object (Hyperlinks.Count is 0), so delivery is only answerable by a human clicking the cell. Also a formula cell reads back as its result, so a pull/publish cycle destroys the link. ⚠️ The 255-byte truncation is NOT where it was believed to be: 326 bytes stored unaltered",
 	},
 	{
-		ID:      "chrome-address-bar",
-		What:    "typing the link into Chrome's address bar",
-		Kind:    NeedsHuman,
+		ID:   "chrome-address-bar",
+		What: "navigating Chrome to the link, by command line or by CDP",
+		Kind: NeedsHuman,
+		// ⚠️ ATTEMPTED AUTOMATICALLY 15 Oct 2026, AND IT CANNOT BE. Two
+		// independent routes were tried against a throwaway profile:
+		//
+		//   chrome.exe <uri>                     handler silent
+		//   CDP PUT /json/new?<uri>              handler silent
+		//
+		// The second is the informative one. Chrome CREATED the tab and
+		// `/json/list` showed it holding the URI complete, fragment and
+		// all, byte-for-byte as sent. So Chrome does not mangle a shimp
+		// link. It simply declines to hand it to the OS.
+		//
+		// ⚠️ THE READING, and it is good news rather than an obstacle:
+		// Chrome gates an external-protocol launch behind a real user
+		// gesture, and a programmatic navigation is not one. So a web page
+		// CANNOT silently fire a shimp link. That is a security property
+		// worth having, and it is why this route stays NeedsHuman: the
+		// gesture is the mechanism, not an inconvenience around it.
+		//
+		// What would close it is a TRUSTED input event, which is
+		// Input.dispatchMouseEvent over a websocket. Go's stdlib has no
+		// websocket and this repo takes no third-party dependencies, so it
+		// needs remote_chrome_cdp's wsConn extracted as a leaf. s60 already
+		// ranked that extraction; this is a second consumer for it.
 		Expect:  Manual,
-		Because: "Chrome shows an \"Open shimp-probe?\" consent dialog needing a click, and automating a consent dialog in order to measure consent is self-defeating",
+		Because: "measured: Chrome holds the URI verbatim in a tab and does not launch the handler without a user gesture, by design. Automating it needs a trusted input event, so a websocket",
 	},
 	{
-		ID:      "chrome-link-click",
-		What:    "clicking an <a href> on a page, which is NOT the address bar",
-		Kind:    NeedsHuman,
+		ID:   "chrome-link-click",
+		What: "clicking an <a href> on a page, which is NOT the address bar",
+		Kind: NeedsHuman,
+		// Still distinct from the row above: the href is resolved against
+		// the page's base URL before anything else sees it, and the page
+		// origin is what the protocol permission is keyed on. The probe
+		// writes click_me.html so a human only has to click.
+		//
+		// ⓘ A profile-local preference DOES exist for pre-allowing the
+		// protocol per origin, and seeding a throwaway profile with
+		//   protocol_handler.allowed_origin_protocol_pairs
+		// touches no machine state. It did not make a programmatic
+		// navigation fire, consistent with the gesture being the gate
+		// rather than the permission. Chrome's AutoLaunchProtocolsFromOrigins
+		// POLICY is the documented suppression mechanism and was
+		// deliberately not used: it is machine state under HKCU\Policies,
+		// and a probe should not rewrite the user's browser policy.
 		Expect:  Manual,
-		Because: "⚠️ a different code path: the href is resolved against the page's base URL before anything else sees it. The probe writes the page, so a human only has to click",
+		Because: "⚠️ a different code path from the address bar, and the origin is what a protocol permission is keyed on. Needs the same trusted input event to automate",
 	},
 	{
 		ID:      "run-dialog",

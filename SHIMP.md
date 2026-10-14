@@ -62,6 +62,7 @@
 | s60 | The leaf candidates, MEASURED, and the divergence nobody was looking for | **MEASURED** and the divergence CLOSED 14 Oct 2026 | nothing |
 | s61 | editor_open: the first capability, because NO editor but VS Code has a scheme | DESIGNED 14 Oct 2026, deliberately NOT built | a decision to build it, plus two measurements |
 | s62 | linkprobe: fourteen ways in, MEASURED, and two of them cannot carry a shimp link | **BUILT and MEASURED** 15 Oct 2026 | four human routes, which are unanswered rather than passed |
+| s63 | The browser route: Chrome keeps the link VERBATIM and refuses to fire it without a gesture | **MEASURED** 15 Oct 2026. Automation BLOCKED, and the blocker is a feature | a websocket, which means extracting remote_chrome_cdp's wsConn as a leaf |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -3260,6 +3261,14 @@ An assertion claimed the "nothing to flip" branch fires for a name like `123`. I
 
 Said plainly in the test: the non-ENOENT branch is the new logic and is NOT directly testable, because a permission error is not something a test can portably arrange. The two reachable not-cached paths are covered and the third is argued rather than proved.
 
+#### ⚠️ A SECOND CONSUMER appeared for the websocket, 15 Oct 2026
+
+s63 needs `Input.dispatchMouseEvent` to automate the browser routes, which needs a websocket, which Go's stdlib does not have and this repo will not take as a dependency.
+
+This row noted that the websocket duplication never showed up in the overlap count, because the two implementations use different function names, and that name-matching therefore UNDERSTATES duplication. It now has what `cdpcore` was ranked third for lacking: **a real second consumer, today, not a projected one**.
+
+`remote_chrome_cdp`'s `wsConn` is the extraction candidate, and `linkprobe` is the caller waiting on it.
+
 ### s61. editor_open: the first capability, because NO editor but VS Code has a scheme
 
 Designed 14 Oct 2026 and deliberately not built. This is what s58 asked for: a first capability demonstrating something `vscode:` cannot do.
@@ -3397,3 +3406,64 @@ Each was caught by looking at what the handler's log actually held rather than a
 * it rests on s48: an isolated scheme, installed and purged per run, refusing the production scheme by name
 
 `repocheck` saw the new module on its first run and flagged `probe` as an undeclared overlap with `chrome_sessions`. Different signatures, different jobs, now declared.
+
+#### ⚠️ The browser rows, attempted and understood. 15 Oct 2026
+
+s63 tried to automate `chrome-address-bar` and `chrome-link-click` and established why they cannot be:
+
+* **Chrome keeps the URI VERBATIM**, fragment included, which is the opposite of what `explorer` does
+* **and refuses to hand it to the OS without a real user gesture**, which is a security property rather than an obstacle: a web page cannot silently fire a link that names code to run
+
+So the two rows stay `NeedsHuman` on purpose. Automating them needs a TRUSTED input event, so a websocket, so `remote_chrome_cdp`'s `wsConn` extracted as a leaf.
+
+⚠️ And one apparent finding was withdrawn: the fragment looked stripped, and that was an unencoded `#` in the probe's own `/json/new` request rather than anything Chrome did.
+
+### s63. The browser route: Chrome keeps the link VERBATIM and refuses to fire it without a gesture
+
+Measured 15 Oct 2026, attempting to automate s62's two Chrome rows.
+
+#### What was tried, and what each attempt said
+
+| attempt | handler |
+|---|---|
+| `chrome.exe <uri>`, throwaway profile | silent |
+| CDP `PUT /json/new?<uri>` | silent |
+
+The second is the informative one. Chrome **created the tab**, and `/json/list` showed it holding the URI complete, fragment and all, byte-for-byte as sent.
+
+#### ⚠️ SO CHROME DOES NOT MANGLE A SHIMP LINK
+
+That is the first half of the answer and it is the reassuring half. s62 found `explorer` dropping any URI with a `?` and inserting a byte into an empty path. Chrome did neither: the full 139-byte URI including `#open?route=...` came back from the tab unaltered.
+
+#### ⚠️ AND IT DECLINES TO HAND IT TO THE OS, WHICH IS A FEATURE
+
+Chrome gates an external-protocol launch behind a **real user gesture**, and a programmatic navigation is not one. The tab sits on the URI with an empty title and nothing reaches the handler.
+
+Read the right way round, that is a **security property in shimp's favour**: a web page cannot silently fire a `shimp://` link. Given that a shimp link names code to run, a browser that launched one without a gesture would be the hole. So the gesture is the mechanism, not an inconvenience around it.
+
+This is why both Chrome rows stay `NeedsHuman` rather than becoming automatable: the thing that cannot be automated is the thing that makes the route safe.
+
+#### ⚠️ A NON-FINDING, recorded so nobody inherits it
+
+The first CDP attempt appeared to show Chrome **stripping the fragment**. It was not Chrome. The `#` was unencoded in the `/json/new` request URL, so Chrome parsed it as a fragment of *its own* endpoint and never saw it. With `%23` the fragment survived intact.
+
+An artifact of the probe's transport, indistinguishable from a finding until it was encoded properly. Written down because a stripped fragment is exactly the kind of result that would have been believed.
+
+#### What would close it, and what it costs
+
+A **trusted** input event: `Input.dispatchMouseEvent`, which Chrome treats as genuine user activation because it is injected below the page.
+
+That needs a websocket. Go's stdlib has none and this repo takes no third-party dependencies, so it needs `remote_chrome_cdp`'s `wsConn` extracted as a leaf. s60 already ranked that extraction among the measured candidates; this is a **second consumer** for it, which is the thing s60 said `cdpcore` lacked.
+
+⚠️ So the browser rows are blocked on the leaf extraction, not on anything about Chrome.
+
+#### Two mechanisms deliberately NOT used
+
+* **`AutoLaunchProtocolsFromOrigins`**, Chrome's documented policy for pre-allowing a protocol. It is real and it would work. It is also machine state under `HKCU\SOFTWARE\Policies`, and a probe should not rewrite the user's browser policy to make its own measurement pass. Attempted once and correctly refused by the environment, which was the right answer.
+* **the profile-local preference** `protocol_handler.allowed_origin_protocol_pairs`, seeded into a throwaway profile. This touches no machine state and was tried. It did not make a programmatic navigation fire, which is consistent with the **gesture** being the gate rather than the permission.
+
+#### And the whole attempt touched nothing
+
+A throwaway `--user-data-dir` per launch, the test scheme purged, the temp profiles removed, and the user's own 25 Chrome processes untouched throughout. Verified afterwards rather than assumed: no scheme class, no policy key, no probe home.
+
+`remote_chrome_cdp`'s rule is *we open our own tab, always*, because attaching to an existing one once drove somebody else's tab away from its own page and reported a confident result measured on the wrong document. The same rule one level up is **our own profile, always**.

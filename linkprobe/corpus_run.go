@@ -190,7 +190,19 @@ func doCorpus(only string, keep, windowsGUI bool) int {
 // dispatchViaBaseline uses `shimp dispatch`, which is ShellExecuteW: the same
 // path a click takes.
 func dispatchViaBaseline(exe, link string) error {
-	out, err := exec.Command(exe, "dispatch", link).CombinedOutput()
+	c := exec.Command(exe, "dispatch", link)
+	// ⚠️ SUPPRESS THE HOLD, NOT THE MESSAGE. shimp now shows a refusal in a
+	// console and waits up to 25s for a keypress, which is the fix for a
+	// human seeing an empty flash. Eight shapes would add over three
+	// minutes to an unattended run.
+	//
+	// ⚠️ And it only works where the environment PROPAGATES. ShellExecuteW
+	// passes the caller's environment to the launched handler, so the
+	// baseline route inherits it. A BROWSER click does not: that handler is
+	// a child of Chrome, which never saw this variable. So -run's chrome
+	// routes still hold, and that is measured rather than assumed.
+	c.Env = append(os.Environ(), "SHIMP_NO_HOLD=1")
+	out, err := c.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -266,6 +278,18 @@ func short(s string) string {
 }
 
 // doServe renders the corpus as a page and waits for a human.
+//
+// ⚠️ RUN THIS IN A VISIBLE TERMINAL. NEVER BACKGROUND IT.
+//
+// It installs a real registry claim, serves a page for a PERSON to click,
+// and purges on THEIR Ctrl-C. Backgrounding it defeats all three: measured
+// 15 Oct 2026, an agent started it from a hidden process and the user could
+// not see it, could not stop it, and could not tell whether it was alive.
+//
+// AGENTS states the rule plainly -- no hidden windows, because a process the
+// user cannot see is a process they cannot diagnose. That it was broken by
+// the very tool built to find invisible failures is worth recording rather
+// than quietly fixing.
 //
 // ⚠️ Served over http on 127.0.0.1, never written as a file:// page. s64
 // measured why: Chrome keys its external-protocol permission on ORIGIN, and

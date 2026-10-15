@@ -454,3 +454,99 @@ func TestClickLogsTheLengthS36CannotOtherwiseMeasure(t *testing.T) {
 		}
 	}
 }
+
+// ---- the refusal display, s67 ----
+
+// TestBothRefusalPathsReachTheUser is what the seam was added for.
+//
+// ⚠️ A human clicked eight links and saw an empty command-prompt flash,
+// twice. The log had everything and the screen had nothing, which is
+// indistinguishable from an unregistered scheme or a handler that died
+// before _log existed. So a refusal reaching the USER is now a behaviour
+// with a test, not a side effect.
+func TestBothRefusalPathsReachTheUser(t *testing.T) {
+	var shown []string
+	showRefusalFn = func(reason string) { shown = append(shown, reason) }
+	t.Cleanup(func() { showRefusalFn = showRefusal })
+	logTo = &bytes.Buffer{}
+	t.Cleanup(func() { logTo = nil })
+
+	// -- path 1: the parser refuses. 39 hex rather than 40.
+	bad := scheme + "://v1/go/run/github.com/davidnoz123/nielsoln_connectors/" +
+		"x@" + strings.Repeat("a", 39)
+	if rc := onClick(bad); rc == 0 {
+		t.Fatal("a 39-character commit was accepted")
+	}
+	if len(shown) != 1 {
+		t.Fatalf("a parser refusal showed the user %d message(s), want 1. "+
+			"Logged-but-not-shown is the hole this closes.", len(shown))
+	}
+	if !strings.Contains(shown[0], "must be exactly 40") {
+		t.Errorf("the user was shown %q, which does not name the rule that "+
+			"rejected their link", shown[0])
+	}
+
+	// -- path 2: the link is VALID and the keeper is not built.
+	good := scheme + "://v1/go/run/github.com/davidnoz123/nielsoln_connectors/" +
+		"x@" + strings.Repeat("a", 40) + "#ensure"
+	if rc := onClick(good); rc == 0 {
+		t.Fatal("a valid link returned success, but nothing can run it yet")
+	}
+	if len(shown) != 2 {
+		t.Fatalf("the keeper refusal showed the user %d message(s) in total, "+
+			"want 2", len(shown))
+	}
+	msg := shown[1]
+	// ⚠️ The user must be told the link is VALID, or a keeper refusal reads
+	// exactly like a malformed link and they will go and edit a correct URI.
+	if !strings.Contains(msg, "VALID") {
+		t.Errorf("the keeper refusal does not tell the user the link is "+
+			"valid, so it is indistinguishable from a bad link: %q", msg)
+	}
+	if !strings.Contains(msg, "identity") {
+		t.Errorf("the keeper refusal names no identity, so there is nothing "+
+			"to check against the link they clicked: %q", msg)
+	}
+}
+
+// TestTheRefusalSeamIsNotTheRealFunctionDuringTests guards the accident.
+//
+// ⚠️ The real showRefusal allocates a console and waits up to 25 seconds.
+// It did not hang this suite only because AllocConsole happens to fail under
+// `go test`, which is luck rather than design: in a plain console it would
+// have blocked. Anything that drives onClick must replace the seam first.
+func TestTheRefusalSeamIsNotTheRealFunctionDuringTests(t *testing.T) {
+	var called bool
+	showRefusalFn = func(string) { called = true }
+	t.Cleanup(func() { showRefusalFn = showRefusal })
+	logTo = &bytes.Buffer{}
+	t.Cleanup(func() { logTo = nil })
+
+	onClick(scheme + "://nonsense")
+	if !called {
+		t.Fatal("the seam was not used, so onClick called the real display " +
+			"function and this suite's speed depends on AllocConsole failing")
+	}
+}
+
+func TestRefusalTextWrapsWithoutLosingWords(t *testing.T) {
+	long := "the commit is 39 characters and must be exactly 40 because an " +
+		"abbreviation would be re-resolved by the toolchain on every click"
+	got := wrap(long, 40)
+	for _, w := range strings.Fields(long) {
+		if !strings.Contains(got, w) {
+			t.Errorf("wrap lost the word %q", w)
+		}
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if n := len(strings.TrimLeft(line, " ")); n > 40 {
+			t.Errorf("a wrapped line is %d chars, over the 40 asked for: %q",
+				n, line)
+		}
+	}
+	// ⚠️ A refusal with no spaces must not be silently dropped: some of
+	// these carry a 64-character identity as one token.
+	if got := wrap(strings.Repeat("x", 80), 40); !strings.Contains(got, "xxxx") {
+		t.Error("wrap discarded an unbreakable token")
+	}
+}

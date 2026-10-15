@@ -66,6 +66,7 @@
 | s64 | The browser route AUTOMATED, and the security property turned out to be false | **MEASURED** 15 Oct 2026. 13 of 15 routes now run unattended | nothing. Two routes remain human by nature, not by limitation |
 | s65 | linkprobe consumable by a test suite, and the duplication check that can see past a rename | **BUILT** 15 Oct 2026 | nothing |
 | s66 | The second axis: link SHAPES and the handler's verdict, after a human found what the harness could not | **BUILT and MEASURED** 15 Oct 2026, 8 shapes, 0 findings | nothing |
+| s67 | A refused click is VISIBLE: the lazy console, wired at last | **BUILT and CONFIRMED by the user** 15 Oct 2026 | nothing |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -923,6 +924,14 @@ Building the keeper would have hit each of these, and none was on any row:
 | **s53** | the "instance lock" and the named pipe are **the same object** on Windows, which makes this row's lock-lifetime, stale-state and re-check-after-lock properties free rather than implemented. On Unix a socket path persists, so none of it is free there |
 | **s51** | the keeper must ACCEPT a connection before READY and HOLD the action, or a cold first click starts the target and silently drops the action it carried |
 | **s50** | nothing about a console is ever declared by a capability |
+
+#### ⚠️ NOT the blocker for a one-shot capability, 15 Oct 2026
+
+This row has been described repeatedly as the largest remaining piece and as what stands between a click and anything happening. For a RESIDENT capability that is true. For a one-shot it is not, and the first real use case asked for is two one-shots.
+
+⚠️ `shimp` has NO exec machinery at all. It derives the argv, logs `would run [...]`, and stops. A one-shot click needs only that last step, which is about fifty lines, and none of this row's lock, IPC or handshake.
+
+s67 records the correction. The keeper remains necessary for the resident class and for action delivery to a running instance, which is what it was always for.
 
 ### s21. Two more descriptor fields the source froze, and s19's list is short
 
@@ -2672,6 +2681,14 @@ So the binary reads its own PE header, and the omission is made loud twice:
 
 ⚠️ The real defect was that `verify`'s output could not be captured, so a test could only ever assert the aggregate and never which check failed. `AGENTS.md` names that exactly: where there is no seam, the absence is usually the design problem the test was about to find. `verify` now writes through an `out` seam and the test asserts on the `binary sha256` line, which is its actual subject.
 
+#### ⚠️ The lazy console is WIRED, 15 Oct 2026
+
+This row decided the console belongs to the keeper rather than to a capability, and `console_windows.go`'s header answered the sharper question put back to it: a handler can start with no console and allocate one only when it has something to show.
+
+⚠️ `allocConsole` was then written and **never called by anything**, until a human clicked eight links and saw an empty flash.
+
+s67 wires it, and the asymmetry strengthens this row rather than weakening it: a refusal gets a window because it has something to say, a success gets none because it does not, and nothing has to be declared in advance.
+
 ### s51. s6 and s10 contradicted each other: the handler never does the work
 
 Decided 12 Oct 2026.
@@ -3760,3 +3777,81 @@ It is a real tension, not an oversight. Measured: console-subsystem gives a visi
 **And `afterSignature` broke again, in exactly the same way, one commit after being fixed.** The rule was "strip to the first `{\n`", and Python has no braces, so every Python signature stayed inside the hash and two renamed copies hashed differently. The same companion test caught it the second time.
 
 It reports nothing today, because both Python files live in one module and only cross-module sharing is reported. Covered for when that changes, which is the point.
+
+### s67. A refused click is VISIBLE: the lazy console, wired at last
+
+Built 15 Oct 2026, from two reports by the user, both correct:
+
+> *"nothing seems to be happening"* — then — *"all I see when I click is a command prompt flash"*
+
+| build | what a human saw |
+|---|---|
+| `-H=windowsgui` | no window at all, **total silence** |
+| console-subsystem | a window appears and **shows NOTHING** |
+
+⚠️ **The second is worse than the first.** A window appearing implies something happened and then tells you nothing, because `_log` writes to the file and falls back to stderr only when it cannot.
+
+So a user could not distinguish a refused link from: the scheme unregistered, the handler dying before `_log` existed, Chrome blocking the launch, or a malformed link. ⚠️ **This repo's cardinal sin, a silent failure, in the thing being shipped rather than in the tooling.**
+
+#### ⚠️ And the answer was already decided, written down, built, and never called
+
+`console_windows.go`'s header, from s50:
+
+> *"can a keeper start with NO console and allocate one only when it turns out to have something to show? The answer is yes, and it is AllocConsole ... no window for a click that has nothing to say, and a window the moment something does."*
+
+`allocConsole` was written for exactly this and **nothing invoked it**. Reasoned, recorded, implemented, unwired. ⚠️ That is the third instance of the same pattern inside two days, after s60's blind spot and s65's Python gap.
+
+#### The asymmetry is the design
+
+A refusal is an error the user must see. A success has nothing to say. So s50's refusal of a descriptor field for the console gets **stronger**: nothing is declared in advance, and the window appears only where there is something to read.
+
+Confirmed by the user, verbatim:
+
+```
+  shimp-linkprobe:// REFUSED
+
+  the KEEPER is not built, so there is nothing to hand this to yet. The
+  link is VALID: identity 08f7fefa65fd4929... over 135 bytes.
+
+  the full record is in C:\Users\david\.shimp-linkprobe\shimp.log
+
+  press any key, or this closes in 25s
+```
+
+⚠️ The message says **VALID** deliberately. A keeper refusal otherwise reads exactly like a malformed link, and the user goes away and edits a correct URI.
+
+#### Four things that had to be got right, each measured
+
+* **a timeout AS WELL AS a keypress.** Keypress alone hangs an unattended run; a timer alone makes a human stare at something already read.
+* ⚠️ **the input buffer is FLUSHED first.** A freshly allocated console already holds focus and mouse events, and treating one as the keypress would close the window before it was read, which is this row's own bug one layer down.
+* ⚠️ **`SHIMP_NO_HOLD` suppresses the WAIT, never the MESSAGE.** A variable that hid the reason would be the opposite of the purpose. Measured: it propagates through `ShellExecuteW`, so `-corpus` takes **28s for 8 shapes** rather than 200. It does NOT propagate through a browser click, where the handler is a child of Chrome, so `chrome-link-click` went from ~40s to **65s** and still passes with no orphan consoles.
+* **polled, not blocking.** `ReadConsoleInput` has no timeout, so a blocking read would ignore the deadline entirely.
+
+#### ⚠️ The test passed by ACCIDENT, which was worse than failing
+
+`TestClickLogsTheLengthS36CannotOtherwiseMeasure` already drives `onClick` down a refusal path. The real `showRefusal` allocates a console and waits 25 seconds, so it should have blocked the repo's own loop.
+
+It did not, and the reason is luck: **`AllocConsole` happens to FAIL under `go test`** because the process is already attached to one, so the early return made the suite fast by accident of environment. Run in a plain console it would have hung.
+
+⚠️ A test that passes by luck is precisely the failure shape this repo is organised against. So `showRefusalFn` is now a seam, which buys two things: no console in tests, and **both refusal paths become assertable**. AGENTS puts it the sharper way round: where there is no seam, the absence is usually the design problem the test was about to find. Here it was two.
+
+#### And one more caught by vetting another platform
+
+`wrap` and `splitWords` were written inside `refusal_windows.go` and inherited its build tag by proximity. `GOOS=linux go vet` failed on a platform-independent test referencing them. Nothing about breaking text at word boundaries is Windows-specific; they are in `text.go` now. Worth keeping cross-platform vet in the loop for exactly that.
+
+#### ⚠️ A separate correction: the keeper is NOT what blocks the first real use case
+
+Asked when a shimp link could ensure a CDP Chrome and then run a ChatGPT `full_update`, the answer required withdrawing something said repeatedly in this slate.
+
+**Both of those are ONE-SHOTS.** Ensure-CDP is idempotent and exits; `full_update` syncs and exits. s20's keeper exists to guarantee one RESIDENT instance and deliver actions to it, which is s46's resident class. A one-shot click needs none of it.
+
+⚠️ What it needs is the thing shimp has never had:
+
+```
+=== does shimp have ANY exec machinery? ===
+NONE -- the handler has never run anything
+```
+
+It logs `would run [...]` and then does not. **That** is the gap for a one-shot capability, and it is roughly fifty lines rather than s20's lock, IPC and handshake.
+
+⚠️ **And the day it lands, s64 bites.** A permitted origin can fire a link with no gesture, measured. Today that is harmless because nothing runs. The moment exec exists, a visited page can make the machine run `go run <module>@<sha>`. The consent mechanism has to be designed in before exec, not after, and this row's lazy console is the obvious candidate: a click about to RUN something shows what it will run and waits.

@@ -102,10 +102,15 @@ func (s Shape) Link(scheme string) string { return scheme + "://" + s.Tail }
 // bad-sha-39, double-encoded-colon. Those expectations are recorded
 // observations.
 //
-// Two were WRITTEN AS PREDICTIONS and then confirmed by the first -corpus
-// run: control-byte and unknown-runner. Weaker provenance, and worth
-// distinguishing: nobody has clicked those in a browser, so they are known
-// to hold through ShellExecuteW and nowhere else.
+// Two were WRITTEN AS PREDICTIONS -- control-byte and unknown-runner --
+// confirmed first by `-corpus` through ShellExecuteW, and then BY HAND in a
+// real browser on 15 Oct 2026, which is the stronger evidence and the reason
+// this paragraph no longer says "nobody has clicked those".
+//
+// ⚠️ The distinction is kept rather than flattened, because the order
+// matters: a prediction that a measurement later confirms is not the same
+// claim as an observation written down afterwards, and a reader deciding
+// how much to trust a row needs to know which it is looking at.
 var shapes = []Shape{
 	{
 		ID:     "plain",

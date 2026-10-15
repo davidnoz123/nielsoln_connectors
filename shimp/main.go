@@ -105,6 +105,27 @@ var out io.Writer = os.Stdout
 // logTo, when set, captures the log instead of writing it. Tests only.
 var logTo io.Writer
 
+// showRefusalFn is the seam through which a refusal reaches the user.
+//
+// ⚠️ A SEAM RATHER THAN A DIRECT CALL, and the test suite is the reason it
+// had to exist. showRefusal allocates a console and then waits up to 25
+// seconds for a keypress. TestClickLogsTheLengthS36CannotOtherwiseMeasure
+// already drives onClick down a refusal path, so the real function would
+// have blocked the repo's own loop.
+//
+// ⚠️ And it did not, which was worse: AllocConsole happens to FAIL under
+// `go test` because the process is already attached to one, so the early
+// return made the suite fast by accident of environment rather than by
+// design. Run in a plain console it would have hung for 25 seconds. A test
+// that passes by luck is the failure shape this repo is organised against,
+// so the luck is replaced by a seam.
+//
+// AGENTS puts it the other way round and that is the sharper reading: where
+// there is no seam, the absence is usually the design problem the test was
+// about to find. Here it was two -- an unassertable call and an accidental
+// pass.
+var showRefusalFn = showRefusal
+
 // logSuppressed stops _log recreating a home directory that has just been
 // purged. Set by `uninstall -purge` immediately before the removal.
 var logSuppressed bool
@@ -429,6 +450,10 @@ func onClick(uri string) int {
 	u, err := ParseURI(uri, scheme)
 	if err != nil {
 		_log("click REFUSED: %v", err)
+		// ⚠️ AND SHOWN, not only logged. A human clicked eight links and saw
+		// an empty command-prompt flash, which is indistinguishable from an
+		// unregistered scheme or a handler that died before _log existed.
+		showRefusalFn(err.Error())
 		return 1
 	}
 
@@ -442,9 +467,12 @@ func onClick(uri string) int {
 		_log("click: no action, so this is ensure-running only")
 	}
 
-	_log("click REFUSED: the KEEPER is not built. The link is valid and its " +
-		"identity is above; s20's lock, IPC and handshake and s46's " +
-		"target-side client are what remain.")
+	keeperMsg := fmt.Sprintf("the KEEPER is not built, so there is nothing "+
+		"to hand this to yet. The link is VALID: identity %s over %d bytes. "+
+		"What remains is s20's lock, IPC and handshake, and s46's "+
+		"target-side client.", u.Identity(), len(u.Raw))
+	_log("click REFUSED: %s", keeperMsg)
+	showRefusalFn(keeperMsg)
 	return 1
 }
 

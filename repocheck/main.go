@@ -257,6 +257,37 @@ func main() {
 		}
 		fmt.Printf("  %s%s\n", mark, o)
 	}
+	// ⚠️ SAME CODE, DIFFERENT NAME. The check above keys on the function
+	// name, and s60 recorded its blind spot: name-matching UNDERSTATES
+	// duplication. This inverts the key.
+	fmt.Println("\nSHARED BODIES: the same code in two modules, whatever it is called")
+	shared, err := SharedBodies(root, modules)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+	if len(shared) == 0 {
+		fmt.Printf("  none over %d significant lines\n", minBodyLines)
+	}
+	for _, sb := range shared {
+		names := sb.Names()
+		mark := "    "
+		// A body under ONE name in two modules is what Overlaps already
+		// reports, so it is not news here. A body under TWO OR MORE names is
+		// a copy somebody renamed, and that is this check's whole point.
+		if len(names) > 1 && !AcknowledgedBody(names) {
+			mark = "NEW "
+			bad++
+		}
+		fmt.Printf("  %s%s\n", mark, sb)
+	}
+
+	fmt.Println("\nDECLARED RECIPES: the same sequence of steps, written twice")
+	fmt.Println("  (nothing finds these mechanically, so they are written down)")
+	for _, r := range recipes {
+		fmt.Printf("    %s\n      %s\n", r.Name, strings.Join(r.Sites, "  "))
+	}
+
 	if bad > 0 {
 		fmt.Printf("\n%d thing(s) need a look. A NEW overlap is not a defect; "+
 			"it is undeclared.\n", bad)

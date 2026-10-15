@@ -18,6 +18,8 @@
 // that does not exist, or the next reader cannot tell which entries are live.
 package main
 
+import "strings"
+
 // acknowledged maps a function name to why its duplication is tolerated.
 var acknowledged = map[string]string{
 	"main": "every connector is a program. Nothing to share.",
@@ -75,5 +77,20 @@ var acknowledged = map[string]string{
 // Acknowledged reports whether an overlap has been written down.
 func Acknowledged(name string) bool {
 	_, ok := acknowledged[name]
+	return ok
+}
+
+// acknowledgedBodies is the baseline for SharedBodies: one entry per set of
+// NAMES that share a body across modules.
+//
+// ⚠️ Keyed on the joined names rather than the body hash, deliberately. A
+// hash changes the moment anybody edits either copy, so a hash-keyed
+// baseline would go stale on every touch and teach people to re-bless it
+// without looking. The names are what a reader recognises.
+var acknowledgedBodies = map[string]string{}
+
+// AcknowledgedBody reports whether a renamed copy has been written down.
+func AcknowledgedBody(names []string) bool {
+	_, ok := acknowledgedBodies[strings.Join(names, "+")]
 	return ok
 }

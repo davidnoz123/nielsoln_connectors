@@ -13,6 +13,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -263,6 +265,91 @@ func TestSourceHasNoStrayControlCharacters(t *testing.T) {
 			if b < 0x20 && b != '\n' && b != '\r' && b != '\t' {
 				t.Errorf("%s byte %d is control character 0x%02x", name, i, b)
 			}
+		}
+	}
+}
+
+// TestEmitJSONIsStableAndNarrow pins the published surface.
+//
+// ⚠️ A test suite asserts on this shape, so it is a contract rather than a
+// convenience. The fields are deliberately NOT Result's, because Result
+// embeds the whole Route including its prose, and a consumer must not break
+// when somebody rewords a comment.
+func TestEmitJSONIsStableAndNarrow(t *testing.T) {
+	results := []Result{
+		{
+			Route: Route{ID: "a", Kind: Auto, Expect: Verbatim},
+			Got:   Verbatim, Sent: "shimp://x", Received: "shimp://x",
+		},
+		{
+			Route: Route{ID: "b", Kind: Auto, Expect: Verbatim},
+			Got:   Mangled, Sent: "shimp://y", Received: "shimp://y/",
+		},
+		{
+			Route: Route{ID: "c", Kind: NeedsHuman, Expect: Manual},
+			Got:   Manual, Sent: "shimp://z",
+		},
+	}
+	var buf bytes.Buffer
+	if err := emitJSON(&buf, results); err != nil {
+		t.Fatal(err)
+	}
+	var got jsonReport
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("our own output does not parse, so no consumer could use "+
+			"it: %v\n%s", err, buf.String())
+	}
+	if got.Scheme != testScheme {
+		t.Errorf("scheme = %q, want %q", got.Scheme, testScheme)
+	}
+	// ⚠️ MANUAL IS NOT COUNTED AS RUN, and is not a finding. A matrix that
+	// counted unanswered routes as passing would read as complete when it
+	// is not, which is the single most misleading thing this report could
+	// do.
+	if got.Run != 2 {
+		t.Errorf("run = %d, want 2: the MANUAL route must not count as run", got.Run)
+	}
+	if got.Manual != 1 {
+		t.Errorf("manual = %d, want 1", got.Manual)
+	}
+	if got.Findings != 1 {
+		t.Errorf("findings = %d, want 1 (only the MANGLED route)", got.Findings)
+	}
+	if len(got.Results) != 3 {
+		t.Fatalf("results = %d, want 3", len(got.Results))
+	}
+	if got.Results[1].Received != "shimp://y/" {
+		t.Errorf("the mangled route lost its received bytes, which are the "+
+			"whole point of reporting it: %+v", got.Results[1])
+	}
+	if got.Results[0].SentBytes != len("shimp://x") {
+		t.Errorf("sent_bytes = %d, want %d",
+			got.Results[0].SentBytes, len("shimp://x"))
+	}
+}
+
+// TestJSONFieldNamesAreTheContract fails loudly if a field is renamed.
+//
+// ⚠️ Renaming a JSON field silently breaks every consumer, and nothing else
+// in this repo would notice. Listed explicitly so the break is here, in a
+// test with a message, rather than in somebody's CI a week later.
+func TestJSONFieldNamesAreTheContract(t *testing.T) {
+	var buf bytes.Buffer
+	if err := emitJSON(&buf, []Result{{
+		Route: Route{ID: "a", Kind: Auto, Expect: Verbatim},
+		Got:   Verbatim, Sent: "s", Received: "s", Detail: "d",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"scheme"`, `"routes"`, `"run"`, `"findings"`, `"manual"`,
+		`"results"`, `"id"`, `"kind"`, `"expect"`, `"got"`,
+		`"as_expected"`, `"sent_bytes"`, `"sent"`, `"received"`, `"detail"`,
+	} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("field %s is missing from the output. If it was renamed "+
+				"on purpose, every consumer needs telling; this test is the "+
+				"telling.\n%s", want, buf.String())
 		}
 	}
 }

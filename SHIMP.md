@@ -64,6 +64,7 @@
 | s62 | linkprobe: fourteen ways in, MEASURED, and two of them cannot carry a shimp link | **BUILT and MEASURED** 15 Oct 2026 | four human routes, which are unanswered rather than passed |
 | s63 | The browser route: Chrome keeps the link VERBATIM and refuses to fire it without a gesture | **SUPERSEDED** by s64, 15 Oct 2026. Its conclusion was wrong: an automated browser route exists | nothing |
 | s64 | The browser route AUTOMATED, and the security property turned out to be false | **MEASURED** 15 Oct 2026. 13 of 15 routes now run unattended | nothing. Two routes remain human by nature, not by limitation |
+| s65 | linkprobe consumable by a test suite, and the duplication check that can see past a rename | **BUILT** 15 Oct 2026 | nothing |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -3280,6 +3281,14 @@ So the websocket candidate is back to where this row originally put it: **two im
 
 So this is not undiscovered duplication awaiting extraction. It is **a recorded decision that the two should differ**, and a shared leaf would have to overturn it rather than tidy it.
 
+#### ⚠️ THE BLIND SPOT IS NOW A CHECK, 15 Oct 2026
+
+This row said name-matching UNDERSTATES duplication, pointing at the two websocket clients that never appeared in the overlap count. s65 acted on it, after it bit a second time: `shimp/live_test.go` and `linkprobe/main.go` had both grown the same five-step install cycle, invisible for two reasons -- the name key, and `Overlaps` skipping `_test.go`.
+
+`SharedBodies` now inverts the key and reads tests. ⚠️ It caught an `itoa` I had just hand-rolled against one already sitting in `chrome_sessions/caveats_test.go`, which is exactly the class of thing this row predicted and exactly the file class `Overlaps` cannot see.
+
+And what no check can find is now DECLARED, in `known_recipes.go`, with markers and a staleness test. Both websocket clients are in it, with the reason they deliberately differ.
+
 ### s61. editor_open: the first capability, because NO editor but VS Code has a scheme
 
 Designed 14 Oct 2026 and deliberately not built. This is what s58 asked for: a first capability demonstrating something `vscode:` cannot do.
@@ -3595,3 +3604,71 @@ The two remaining are human **by nature**: one needs keystrokes into a system di
 #### And the wsConn question is settled by not arising
 
 s63 said the browser route needed `remote_chrome_cdp`'s `wsConn` extracted as a leaf. It does need a websocket, and the answer is **Python**, which already has one and was already the pattern here for Excel. No Go extraction, and `ws.go`'s own header still stands: the two Go websocket clients differ deliberately.
+
+### s65. linkprobe consumable by a test suite, and the duplication check that can see past a rename
+
+Built 15 Oct 2026, from the question "it may not be a test suite, but can it be used by one, and do we reuse its tooling?"
+
+The answer to the second half was **no, and there was undeclared duplication**.
+
+#### ⚠️ What the question found
+
+`shimp/live_test.go` and `linkprobe/main.go` both drive the same five steps:
+
+| step | `live_test.go` | `linkprobe/main.go` |
+|---|---|---|
+| build the real CLI | l.136 | l.175 |
+| install an isolated scheme | l.140 | l.183 |
+| trigger | `dispatchURI` | driver per `Kind` |
+| poll the handler's log | l.176-186 | `arrivalSince` |
+| `uninstall -purge` | l.206 | deferred |
+
+⚠️ **And `repocheck` could not see it, for TWO reasons**: it keys on the function NAME, and it skips `_test.go` entirely. s60 had already written down the first one, calling name-matching a thing that *understates* duplication. Nothing was done, and it bit again.
+
+#### ⚠️ Sharing it would be WORSE, which is the real finding
+
+A Go test-only import still lands in `go.mod` and `go.sum`. s55's maxim is that **`go.sum` enumerates the closure and IS the audit's stopping condition**.
+
+So a shared harness package would put **test tooling in the audit surface of the thing being shipped**. Every auditor pasting a `shimp://` link would find it. That is a cost paid by every user of the protocol to save one copy of five steps.
+
+⚠️ **So the process boundary is the correct seam rather than a compromise.** `-json` is how a test suite consumes the probe, with no import and no `go.mod` entry anywhere.
+
+The two are also not substitutable. `live_test.go` tests **install correctness**: registry keys gone after purge, a running binary refusing to delete itself, the stamp recording its scheme. `linkprobe` tests **delivery across fifteen routes**. Same mechanism, different questions, so both earn their place. It is the mechanism that is duplicated, not the purpose.
+
+#### 1. `linkprobe -json`
+
+One object on **stdout**, the human report moved to **stderr**, both always produced. A consumer gets the object; a human watching the same run still sees why.
+
+⚠️ **Exit 0 even with findings**, and that is the decision a consumer most needs to know. A finding is a measurement, not a crash: `explorer` is *expected* to drop the link and `chrome-no-gesture` is *expected* to deliver it. Non-zero is reserved for the probe failing to take a measurement at all. So a suite asserts on `findings` or a named route's `got`, never on the exit code.
+
+The JSON type is **separate from `Result`**, not tags on it: `Result` embeds the whole `Route` including its prose, and a consumer must not break when somebody rewords a comment. Two tests pin the shape, one of them listing every field name, because renaming a field silently breaks every consumer and nothing else here would notice.
+
+#### 2. `repocheck` can now see past a rename
+
+`SharedBodies` inverts the key: group by **body**, report when one body appears in two or more modules, and name the functions it is hiding behind. It also **reads `_test.go`**, which `Overlaps` does not, because a copied helper is likelier to live in a test than in shipped code.
+
+A floor of 5 significant lines, comments excluded, because without it the report is pure noise: counting comments would let a function clear the floor on the strength of its documentation.
+
+#### ⚠️ And it caught two things immediately, one of them mine
+
+1. **`itoa` in `chrome_sessions` and `repocheck`** -- I had hand-rolled one in the new file while `strconv.Itoa` exists. ⚠️ `Overlaps` had never reported it because the other copy lives in `caveats_test.go`, which it skips. So reading test files was vindicated on the first run. Mine is deleted.
+2. ⚠️ **The check did not work at all, and its own companion test found out.** `bodyOf()` starts at `func <name>(`, so the NAME sat inside the hashed text and two differently-named copies hashed differently. **A check built to find renamed copies could not find one.** It would have passed every run, green, for exactly the reason three earlier checks in this repo passed: it found nothing because it could not see. `afterSignature` strips the declaration line.
+
+That is the fourth time a check in this repo has been blind, and the second time the companion test is the only reason anybody knows.
+
+#### 3. A declared inventory for what nothing can find
+
+Two kinds of duplication, and only one is mechanically findable:
+
+| | |
+|---|---|
+| copy-paste-and-rename | `SharedBodies` finds it |
+| the same RECIPE twice | **nothing** finds it |
+
+The `live_test`/`linkprobe` cycle is the second kind: the same sequence of steps in genuinely different code. No body hash matches, no name matches, and no cheap structural check tells it from two unrelated functions doing similar work. Claiming otherwise would give a check that is green because it is blind.
+
+So `known_recipes.go` writes it down. ⚠️ And because a written list rots, every entry carries **markers** that must still be present in each named file, with `TestEveryRecipeIsStillReal` failing when an entry goes stale. Same discipline as `TestBaselineHasNoStaleEntries`, which caught seven fictional entries on its first run.
+
+⚠️ **It worked immediately**: the websocket entry claimed `remote_ai/ws.go` and the test refused to read it. remote_ai's client is inline in `main.go`. The entry was written on the strength of the *other* site's filename.
+
+Two recipes declared: the install cycle, and the websocket pair that s60 noticed and never recorded.

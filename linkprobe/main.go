@@ -19,9 +19,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,6 +50,15 @@ const arrivalPrefix = "click: "
 // could and the remainder genuinely needs a human. See excel_route.py.
 const exitCannotComplete = 3
 
+// progress is where the human-readable report goes.
+//
+// ⚠️ It becomes STDERR under -json, so stdout carries exactly one
+// JSON object and nothing else. A consumer piping stdout into a parser
+// must not have to strip progress lines out of it, and a harness that
+// mixed the two would be unusable from a test for a reason that looks
+// like a parse bug.
+var progress io.Writer = os.Stdout
+
 // Result is one route's run.
 type Result struct {
 	Route    Route
@@ -65,6 +76,34 @@ type Result struct {
 // AsExpected reports whether the route did what the table said it would.
 func (r Result) AsExpected() bool { return r.Got == r.Route.Expect }
 
+// jsonResult is the machine-readable shape of one route's run.
+//
+// ⚠️ A SEPARATE TYPE, not json tags on Result. Result embeds the whole Route
+// including its prose and its Because, and a consumer asserting on this must
+// not break when somebody rewords a comment. This is the published surface
+// and it is deliberately narrow.
+type jsonResult struct {
+	ID         string `json:"id"`
+	Kind       string `json:"kind"`
+	Expect     string `json:"expect"`
+	Got        string `json:"got"`
+	AsExpected bool   `json:"as_expected"`
+	SentBytes  int    `json:"sent_bytes"`
+	Sent       string `json:"sent"`
+	Received   string `json:"received,omitempty"`
+	Detail     string `json:"detail,omitempty"`
+}
+
+// jsonReport is what -json writes to stdout.
+type jsonReport struct {
+	Scheme   string       `json:"scheme"`
+	Routes   int          `json:"routes"`
+	Run      int          `json:"run"`
+	Findings int          `json:"findings"`
+	Manual   int          `json:"manual"`
+	Results  []jsonResult `json:"results"`
+}
+
 func main() {
 	list := flag.Bool("list", false, "print the route table and exit")
 	run := flag.Bool("run", false, "install an isolated scheme, run the routes, purge")
@@ -72,13 +111,16 @@ func main() {
 	keep := flag.Bool("keep", false,
 		"do NOT purge afterwards, for inspecting the log by hand. ⚠️ leaves a "+
 			"real registry claim in place")
+	asJSON := flag.Bool("json", false,
+		"write one JSON object to stdout instead of the human report, so a "+
+			"test suite can assert on the result. Progress goes to stderr")
 	flag.Parse()
 
 	switch {
 	case *list:
 		printTable()
 	case *run:
-		if code := doRun(*only, *keep); code != 0 {
+		if code := doRun(*only, *keep, *asJSON); code != 0 {
 			os.Exit(code)
 		}
 	default:
@@ -90,17 +132,21 @@ func main() {
 }
 
 func printTable() {
-	fmt.Printf("%d ways into a shimp:// link.\n\n", len(routes))
+	fmt.Fprintf(progress, "%d ways into a shimp:// link.\n\n", len(routes))
 	for _, r := range routes {
-		fmt.Printf("%-26s %-6s expect %-10s %s\n", r.ID, r.Kind, r.Expect, r.What)
+		fmt.Fprintf(progress, "%-26s %-6s expect %-10s %s\n", r.ID, r.Kind, r.Expect, r.What)
 		if r.Expect != Verbatim {
-			fmt.Printf("%-26s        because %s\n", "", r.Because)
+			fmt.Fprintf(progress, "%-26s        because %s\n", "", r.Because)
 		}
 	}
 }
 
 // doRun is the whole cycle: build, install, probe each route, report, purge.
-func doRun(only string, keep bool) int {
+func doRun(only string, keep bool, asJSON bool) int {
+	if asJSON {
+		progress = os.Stderr
+	}
+
 	if testScheme == "shimp" {
 		fmt.Fprintln(os.Stderr,
 			"REFUSED: testScheme is the production scheme. This program "+
@@ -149,7 +195,7 @@ func doRun(only string, keep bool) int {
 						"registry claim: %v\n%s\n", testScheme, err, out)
 				return
 			}
-			fmt.Printf("\npurged %s\n", testScheme)
+			fmt.Fprintf(progress, "\npurged %s\n", testScheme)
 		}()
 	}
 
@@ -167,22 +213,71 @@ func doRun(only string, keep bool) int {
 		if only != "" && r.ID != only {
 			continue
 		}
-		fmt.Printf("  %-26s ", r.ID)
+		fmt.Fprintf(progress, "  %-26s ", r.ID)
 		res := probe(r, shimpExe, python, logPath, root)
 		results = append(results, res)
 		verdict := "as expected"
 		if !res.AsExpected() {
 			verdict = "⚠️ FINDING"
 		}
-		fmt.Printf("%-10s %s\n", res.Got, verdict)
+		fmt.Fprintf(progress, "%-10s %s\n", res.Got, verdict)
 	}
 
 	if err := writeClickPage(page, linkFor("manual-click")); err == nil {
-		fmt.Printf("\nfor the human routes: %s\n", page)
+		fmt.Fprintf(progress, "\nfor the human routes: %s\n", page)
 	}
 
 	report(results, logPath, keep)
+
+	// ⚠️ EMITTED AFTER the human report, and on stdout while that went to
+	// stderr. Both are produced, always: a consumer gets the object and a
+	// human watching the same run still sees why.
+	if asJSON {
+		if err := emitJSON(os.Stdout, results); err != nil {
+			fmt.Fprintf(os.Stderr, "writing JSON failed: %v\n", err)
+			return 1
+		}
+	}
 	return 0
+}
+
+// emitJSON writes the machine-readable report.
+//
+// ⚠️ EXIT CODE 0 EVEN WITH FINDINGS, deliberately, and this is the decision
+// a consumer most needs to know. A finding is a measurement, not a crash:
+// `explorer` is EXPECTED to drop the link and `chrome-no-gesture` is
+// expected to deliver it, so "did the probe run" and "did the routes behave"
+// are different questions. Non-zero is reserved for the probe failing to
+// take a measurement at all -- no checkout, build failure, install refused.
+//
+// So a test suite asserts on `findings` or on a named route's `got`, never on
+// the process exit code.
+func emitJSON(w io.Writer, results []Result) error {
+	rep := jsonReport{Scheme: testScheme, Routes: len(routes)}
+	for _, r := range results {
+		if r.Got == Manual {
+			rep.Manual++
+		} else {
+			rep.Run++
+			if !r.AsExpected() {
+				rep.Findings++
+			}
+		}
+		rep.Results = append(rep.Results, jsonResult{
+			ID:         r.Route.ID,
+			Kind:       string(r.Route.Kind),
+			Expect:     string(r.Route.Expect),
+			Got:        string(r.Got),
+			AsExpected: r.AsExpected(),
+			SentBytes:  len(r.Sent),
+			Sent:       r.Sent,
+			Received:   r.Received,
+			Detail:     r.Detail,
+		})
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(rep)
 }
 
 // probe runs one route and classifies what happened.
@@ -362,7 +457,7 @@ func linkForPadded(id string, pad int) string {
 }
 
 func report(results []Result, logPath string, keep bool) {
-	fmt.Printf("\n%s\n", strings.Repeat("-", 72))
+	fmt.Fprintf(progress, "\n%s\n", strings.Repeat("-", 72))
 	var findings, manual int
 	for _, r := range results {
 		if r.Got == Manual {
@@ -379,7 +474,7 @@ func report(results []Result, logPath string, keep bool) {
 	// saying so once is worth more than thirteen false findings.
 	for _, r := range results {
 		if r.Route.ID == "shellexecute" && r.Got != Verbatim {
-			fmt.Printf("⚠️ THE BASELINE FAILED: shellexecute reported %s.\n"+
+			fmt.Fprintf(progress, "⚠️ THE BASELINE FAILED: shellexecute reported %s.\n"+
 				"   Every other row below is measuring a broken installation, "+
 				"not a route.\n   Fix this first and ignore the rest.\n\n", r.Got)
 		}
@@ -389,17 +484,17 @@ func report(results []Result, logPath string, keep bool) {
 		if r.AsExpected() {
 			continue
 		}
-		fmt.Printf("⚠️ %s: expected %s, got %s\n", r.Route.ID, r.Route.Expect, r.Got)
-		fmt.Printf("   %s\n", r.Route.What)
+		fmt.Fprintf(progress, "⚠️ %s: expected %s, got %s\n", r.Route.ID, r.Route.Expect, r.Got)
+		fmt.Fprintf(progress, "   %s\n", r.Route.What)
 		if r.Got == Mangled {
-			fmt.Printf("   sent     %d bytes: %s\n", len(r.Sent), r.Sent)
-			fmt.Printf("   received %d bytes: %s\n", len(r.Received), r.Received)
-			fmt.Printf("   ⚠️ the identity of the received link is NOT the " +
-				"identity of the sent one, so this route cannot deliver a " +
+			fmt.Fprintf(progress, "   sent     %d bytes: %s\n", len(r.Sent), r.Sent)
+			fmt.Fprintf(progress, "   received %d bytes: %s\n", len(r.Received), r.Received)
+			fmt.Fprintf(progress, "   ⚠️ the identity of the received link is NOT the "+
+				"identity of the sent one, so this route cannot deliver a "+
 				"shimp link at all.\n")
 		}
 		if r.Detail != "" {
-			fmt.Printf("   said: %s\n", firstLine(r.Detail))
+			fmt.Fprintf(progress, "   said: %s\n", firstLine(r.Detail))
 		}
 	}
 
@@ -414,31 +509,31 @@ func report(results []Result, logPath string, keep bool) {
 			continue
 		}
 		if !spoke {
-			fmt.Printf("\nwhat the non-delivering routes reported:\n")
+			fmt.Fprintf(progress, "\nwhat the non-delivering routes reported:\n")
 			spoke = true
 		}
-		fmt.Printf("  %s (%s), sent %d bytes\n", r.Route.ID, r.Got, len(r.Sent))
+		fmt.Fprintf(progress, "  %s (%s), sent %d bytes\n", r.Route.ID, r.Got, len(r.Sent))
 		for _, line := range strings.Split(r.Detail, "\n") {
 			if line = strings.TrimSpace(line); line != "" {
-				fmt.Printf("    %s\n", line)
+				fmt.Fprintf(progress, "    %s\n", line)
 			}
 		}
 	}
 
-	fmt.Printf("\n%d run, %d finding(s), %d awaiting a human.\n",
+	fmt.Fprintf(progress, "\n%d run, %d finding(s), %d awaiting a human.\n",
 		len(results)-manual, findings, manual)
 	if manual > 0 {
-		fmt.Println("⚠️ The manual routes are UNANSWERED, not passed. " +
+		fmt.Fprintln(progress, "⚠️ The manual routes are UNANSWERED, not passed. "+
 			"Named below so the matrix has no invisible holes:")
 		for _, r := range results {
 			if r.Got == Manual {
-				fmt.Printf("   %-26s %s\n", r.Route.ID, r.Route.What)
+				fmt.Fprintf(progress, "   %-26s %s\n", r.Route.ID, r.Route.What)
 			}
 		}
 	}
 	if keep {
-		fmt.Printf("\n-keep: the installation is STILL IN PLACE. Log: %s\n", logPath)
-		fmt.Printf("   purge it with: shimp uninstall -purge -scheme %s\n", testScheme)
+		fmt.Fprintf(progress, "\n-keep: the installation is STILL IN PLACE. Log: %s\n", logPath)
+		fmt.Fprintf(progress, "   purge it with: shimp uninstall -purge -scheme %s\n", testScheme)
 	}
 }
 

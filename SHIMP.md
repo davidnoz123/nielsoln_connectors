@@ -54,7 +54,7 @@
 | s52 | The startup timeout is 120s, and our own measurement rules out any short value | **DECIDED** 12 Oct 2026 | nothing |
 | s53 | The named pipe IS the lock, and on Unix it is not | **DECIDED** 12 Oct 2026, with the platform asymmetry reported | nothing |
 | s54 | Caveats live in the SOURCE and are checked, because silence must not read as safety | **DECIDED** and BUILT for chrome_sessions, 14 Oct 2026 | rolling it to the other four connectors, and the AGENTS entry |
-| s55 | Sharing code across SHAs: the mechanism, the invariant, and what 100% means | **DECIDED** 14 Oct 2026: TWO maxims, provenance and no indirection. Mechanism not yet proven | one throwaway push to prove the three untested parts |
+| s55 | Sharing code across SHAs: the mechanism, the invariant, and what 100% means | **DECIDED and PROVED** 15 Oct 2026: two maxims, and the three untested parts all hold | nothing |
 | s56 | NOTHING in the audit payload may be an assertion | **DECIDED** 14 Oct 2026, and four earlier decisions already follow from it | nothing |
 | s57 | remote_chrome_cdp is a hand-rolled shimp, and three of its four invented pieces become unnecessary | OBSERVED 14 Oct 2026, no change proposed yet | shimp's dispatch half, before any conversion |
 | s58 | `vscode:` is already registered, so s40's first capability already exists | **ANSWERED** 14 Oct 2026 by s61 | nothing |
@@ -67,6 +67,7 @@
 | s65 | linkprobe consumable by a test suite, and the duplication check that can see past a rename | **BUILT** 15 Oct 2026 | nothing |
 | s66 | The second axis: link SHAPES and the handler's verdict, after a human found what the harness could not | **BUILT and MEASURED** 15 Oct 2026, 8 shapes, 0 findings | nothing |
 | s67 | A refused click is VISIBLE: the lazy console, wired at last | **BUILT and CONFIRMED by the user** 15 Oct 2026 | nothing |
+| s68 | A hyperlink RAN something. And the consent gate was broken until somebody ran it | **WORKING end to end** 15 Oct 2026, confirmed by the user | nothing |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -932,6 +933,12 @@ This row has been described repeatedly as the largest remaining piece and as wha
 ⚠️ `shimp` has NO exec machinery at all. It derives the argv, logs `would run [...]`, and stops. A one-shot click needs only that last step, which is about fifty lines, and none of this row's lock, IPC or handshake.
 
 s67 records the correction. The keeper remains necessary for the resident class and for action delivery to a running instance, which is what it was always for.
+
+#### ⚠️ And a click now RUNS without it, 15 Oct 2026
+
+s68 ran `chrome_ready` from a pasted link. The keeper is still unbuilt and was not needed, because a one-shot needs no singleton and no action delivery.
+
+What remains for this row is exactly what it was always for: the **resident** class, and delivering an action to something already alive. A link carrying an action other than `ensure` is now refused **by name**, which is a better state than being refused generically: the message says the link is valid, names the action, and says the keeper is what is missing.
 
 ### s21. Two more descriptor fields the source froze, and s19's list is short
 
@@ -3026,6 +3033,21 @@ Skew becomes possible once depth exceeds 1, and a `go.work` build is where it wi
 
 s54 uses a third mechanism neither of those: not "the OS prevents it" and not "trust the declaration", but **a test proves the declaration complete against the code**. That is the only reason to expect our manifests to survive where P3P did not, and it is worth being clear about.
 
+#### ⚠️ PROVED, 15 Oct 2026, by the first real click
+
+This row waited on one throwaway push to settle three untested assumptions. s68's capability forced it, and all three hold:
+
+* a module in a **subdirectory** of a multi-module repo resolves by `@<sha>`
+* the **proxy** serves it, as `v0.0.0-20261015021557-4252cb9149e8`
+* **no checkout anywhere**: run from an empty temp directory, 24s cold
+
+```
+go: downloading github.com/davidnoz123/nielsoln_connectors/chrome_ready
+    v0.0.0-20261015021557-4252cb9149e8
+```
+
+So the module graph a link pins is fetchable exactly as the design assumed, and `go.sum` enumerating the closure is now a property of something that has actually run.
+
 ### s56. NOTHING in the audit payload may be an assertion
 
 Decided 14 Oct 2026, prompted by the suggestion that per-link caveats be pasted alongside a link.
@@ -3855,3 +3877,81 @@ NONE -- the handler has never run anything
 It logs `would run [...]` and then does not. **That** is the gap for a one-shot capability, and it is roughly fifty lines rather than s20's lock, IPC and handshake.
 
 ⚠️ **And the day it lands, s64 bites.** A permitted origin can fire a link with no gesture, measured. Today that is harmless because nothing runs. The moment exec exists, a visited page can make the machine run `go run <module>@<sha>`. The consent mechanism has to be designed in before exec, not after, and this row's lazy console is the obvious candidate: a click about to RUN something shows what it will run and waits.
+
+### s68. A hyperlink RAN something. And the consent gate was broken until somebody ran it
+
+15 Oct 2026. The protocol did its job for the first time.
+
+```
+15:58:09  click: shimp-try://.../chrome_ready@4252cb91.../-port/9333/-profile/demo_profile
+15:58:09  click: identity 9eed99a9074c66ef... over 151 bytes
+15:58:09  click: would run ["go" "run" ".../chrome_ready@4252cb91..." "-port" "9333" "-profile" "demo_profile"]
+15:58:13  click: consent given by a keypress on a console we own
+15:58:13  click: running [...]
+15:58:17  click: exited 0
+```
+
+A Chrome appeared on 9333 with a dedicated profile. ⚠️ **And it survives its launcher**, measured separately on 9555: `chrome_ready` exits, the browser stays. Without that, "ensure a CDP Chrome" would have been theatre.
+
+#### What that single click exercised
+
+| | |
+|---|---|
+| s7, s8 | the registry claim and the Office trusted-protocol key |
+| s44 | identity over 151 bytes, the fragment excluded |
+| s43 | the runner table: two segments consumed, the rest ARE the argv |
+| s55 | **all three untested parts**: a module in a subdirectory of a multi-module repo, resolved by BARE SHA, fetched by the proxy with no checkout anywhere |
+| s49 | `go run module@sha` cold, measured again at 24s |
+| s46 | the one-shot class, which needs no keeper |
+
+s55's proof push had been queued for days. The use case forced it, and it passed.
+
+#### ⚠️ THE CONSENT GATE WAS BROKEN, AND ONLY RUNNING IT FOUND OUT
+
+Asked to test before clicking, the first attempt dispatched a link, **pressed nothing**, and the handler logged *"consent given by keypress"* and launched a Chrome. **In the same second as the dispatch.**
+
+Two faults, the first structural:
+
+1. ⚠️ **`allocConsole` RETURNS EARLY IF A CONSOLE ALREADY EXISTS.** A handler launched from a shell INHERITS that shell's console, input buffer and all. Consent was read from the buffer holding the Enter key that had started the command. The user's answer was never involved.
+2. `STD_INPUT_HANDLE` follows whatever the process inherited, so even on a fresh console it is not reliably that console's input.
+
+⚠️ This is the worst defect this program has had, and it failed in the one direction that cannot be tolerated: it **granted** permission that was never given.
+
+#### The fix is structural
+
+```
+FreeConsole    detach from anything inherited
+AllocConsole   create one that is OURS, input buffer empty
+CONIN$         open the console's own input, never a std handle
+settle+flush   discard the arrival burst a new console emits
+minSettle      reject any key arriving too fast to have been typed
+```
+
+And `isKeyDown` now checks `EventType == KEY_EVENT` properly. A console emits focus, mouse, menu and buffer-size events, and a fresh one emits several at once; any of those counting as a keypress is how the first version authorised a run.
+
+**Measured both directions, which is the whole point:**
+
+| | |
+|---|---|
+| no keypress | `ABORTED` after 31s, nothing on 9444 |
+| a real keypress | `consent given by a keypress on a console we own`, 4s after the prompt |
+
+⚠️ The second could not be tested by me at all: `SHIMP_ASSUME_CONSENT` takes a different branch, so it proves nothing about reading a key. It needed a human, which is exactly what the question *"can you run it first"* produced.
+
+#### ⚠️ The lesson, and it is not "write more tests"
+
+The gate had a seam, a test file and a careful comment explaining that the timeout must abort. **None of that caught it**, because every test exercised the decision logic and the bug was in where the input came from.
+
+What caught it was dispatching a real link on a real machine and pressing nothing. The repo already says this, in AGENTS, about fakes: *"it can never show that the model matches reality, because the fake was written from the same belief the code was."* A seam is a fake of a console. The belief it encoded was that the console was ours.
+
+#### And a second thing found while fixing the first
+
+The hold check lived only in `showRefusal`, so the ABORTED path in `runLink` called `waitForKeyOrTimeout` directly and sat for 25 seconds. The suite went from 3s to 61s, and the variable meant to prevent exactly that had no effect there. `waitForKeyOrTimeout` honours it itself now: **13s**.
+
+⚠️ A guard every caller must remember is a guard one caller will forget.
+
+#### What this does NOT yet do
+
+* **no action delivery.** A link carrying an action other than `ensure` is refused by name, because that needs the keeper.
+* **no second capability.** `chatgpt_tools`' `full_update` is 8200 lines of Python in another repo, so s55 maxim 1 means a `go/run` link cannot name it. The decision recorded in s67 stands open: may shimp run code its audit does not cover, if it declares the boundary loudly?
+* ⚠️ **s64 is now live, not theoretical.** A permitted origin can fire a link with no gesture, and something now runs at the end of it. The keypress is the only thing between a visited page and `go run <module>@<sha>`, which is why it is in from the first commit that could execute anything.

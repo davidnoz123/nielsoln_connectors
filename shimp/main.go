@@ -151,6 +151,15 @@ var showRefusalFn = showRefusal
 // have to deliver does not.
 var runLinkFn = runLink
 
+// askConsentFn is the seam through which a human is asked to authorise a run.
+//
+// ⚠️ SEAMED BECAUSE THE FIRST VERSION WAS WRONG AND NOTHING CAUGHT IT. It
+// polled an inherited console's input buffer and reported consent that was
+// never given, which was found by running the thing rather than by any test.
+// With a seam, "a timeout aborts", "an unreadable console aborts" and "a key
+// too fast to be typed is discarded" are all assertable without a console.
+var askConsentFn = askConsent
+
 // logSuppressed stops _log recreating a home directory that has just been
 // purged. Set by `uninstall -purge` immediately before the removal.
 var logSuppressed bool

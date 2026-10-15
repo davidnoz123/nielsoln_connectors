@@ -127,7 +127,18 @@ const stdInputHandle = ^uintptr(10) + 1 // (DWORD)-10
 // was pressed must use waitForKeyPress, whose bool cannot be mistaken for
 // anything else. Consent is decided on that bool; this wrapper is for
 // holding a window open, where the distinction does not matter.
-func waitForKeyOrTimeout(d time.Duration) { _ = waitForKeyPress(d) }
+// ⚠️ AND IT HONOURS noHoldEnv ITSELF, rather than leaving each caller to
+// remember. The check used to live only in showRefusal, so the ABORTED path
+// in runLink called straight through and sat for 25 seconds: the test suite
+// went from 3s to 61s and the env var that was supposed to prevent exactly
+// that had no effect there. A guard every caller must remember is a guard
+// one caller will forget.
+func waitForKeyOrTimeout(d time.Duration) {
+	if os.Getenv(noHoldEnv) == "1" {
+		return
+	}
+	_ = waitForKeyPress(d)
+}
 
 // waitForKeyPress returns true if a key was pressed before d elapsed.
 func waitForKeyPress(d time.Duration) bool {

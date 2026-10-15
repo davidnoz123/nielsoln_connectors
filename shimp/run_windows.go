@@ -60,44 +60,42 @@ func runLink(u *URI) int {
 		return 1
 	}
 
-	// A console, because there is now certainly something to show.
-	if err := allocConsole(); err != nil {
-		// ⚠️ NO CONSOLE MEANS NO CONSENT MEANS NO RUN. Failing closed is the
-		// only safe direction: a handler that executed because it could not
-		// ask would be worse than one that does nothing.
-		reason := fmt.Sprintf("no console could be allocated, so consent "+
-			"cannot be asked for and nothing will be run: %v", err)
-		_log("click REFUSED: %s", reason)
-		// ⚠️ SHOWN as well as logged. Found by a test: this path logged and
-		// returned, so the one case where shimp declines to run something
-		// was the one case the user heard nothing about.
-		showRefusalFn(reason)
-		return 1
-	}
-
-	fmt.Fprintf(os.Stdout, "\n  %s:// wants to run\n\n", scheme)
-	fmt.Fprintf(os.Stdout, "    %s\n\n", strings.Join(argv, " "))
-	fmt.Fprintf(os.Stdout, "  identity  %s\n", u.Identity())
-	fmt.Fprintf(os.Stdout, "  over      %d bytes\n", len(u.Raw))
-	if u.HasAction {
-		fmt.Fprintf(os.Stdout, "  action    %s   (NOT part of the identity)\n",
-			u.Action)
+	// ⚠️ THE PROMPT IS A CLOSURE, and that is not a style choice. askConsent
+	// detaches from any inherited console and allocates its own, rebinding
+	// os.Stdout to it. Anything printed BEFORE that call goes to the console
+	// being abandoned, so the user would see an empty window and the prompt
+	// would land where nobody is looking.
+	show := func() {
+		fmt.Fprintf(os.Stdout, "\n  %s:// wants to run\n\n", scheme)
+		fmt.Fprintf(os.Stdout, "    %s\n\n", strings.Join(argv, " "))
+		fmt.Fprintf(os.Stdout, "  identity  %s\n", u.Identity())
+		fmt.Fprintf(os.Stdout, "  over      %d bytes\n", len(u.Raw))
+		if u.HasAction {
+			fmt.Fprintf(os.Stdout, "  action    %s   (NOT part of the identity)\n",
+				u.Action)
+		}
+		fmt.Fprintf(os.Stdout,
+			"\n  press any key to RUN it, or wait %ds to abort\n", consentSeconds)
 	}
 
 	if os.Getenv(assumeConsentEnv) == "1" {
+		if err := allocConsole(); err != nil {
+			_log("click: no console for the assumed-consent path: %v", err)
+		}
+		show()
 		_log("click: consent ASSUMED via %s, which a test harness sets and "+
 			"nothing else should", assumeConsentEnv)
 		fmt.Fprintf(os.Stdout, "\n  consent assumed via %s\n", assumeConsentEnv)
+	} else if !askConsentFn(show, consentSeconds*time.Second) {
+		// ⚠️ EVERY failure lands here and they all mean the same thing: no
+		// console of our own, input that cannot be read, a key too fast to
+		// have been typed, or the timeout. None of them means "run it".
+		_log("click ABORTED: consent was not given, so nothing ran")
+		fmt.Fprintf(os.Stdout, "\n  ABORTED. Nothing ran.\n")
+		waitForKeyOrTimeout(holdSeconds * time.Second)
+		return 1
 	} else {
-		fmt.Fprintf(os.Stdout,
-			"\n  press any key to RUN it, or wait %ds to abort\n", consentSeconds)
-		if !waitForConsent(consentSeconds * time.Second) {
-			_log("click ABORTED: no consent given within %ds, so nothing ran",
-				consentSeconds)
-			fmt.Fprintf(os.Stdout, "\n  ABORTED. Nothing ran.\n")
-			return 1
-		}
-		_log("click: consent given by keypress")
+		_log("click: consent given by a keypress on a console we own")
 	}
 
 	_log("click: running %q", argv)
@@ -127,14 +125,4 @@ func runLink(u *URI) int {
 	fmt.Fprintf(os.Stdout, "\n  press any key to close, or %ds\n", holdSeconds)
 	waitForKeyOrTimeout(holdSeconds * time.Second)
 	return code
-}
-
-// waitForConsent returns true ONLY on a real keypress.
-//
-// ⚠️ Separate from waitForKeyOrTimeout by RETURN VALUE, not by mechanism, and
-// that difference is the safety property: the caller cannot accidentally
-// treat a timeout as a yes, because a timeout returns false and there is
-// nothing else it could mean.
-func waitForConsent(d time.Duration) bool {
-	return waitForKeyPress(d)
 }

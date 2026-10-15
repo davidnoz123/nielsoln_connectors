@@ -71,7 +71,27 @@ var acknowledged = map[string]string{
 	// down one route and classifies what came back. Different signatures,
 	// different return types, no shared logic. The word is just the English
 	// for what both do.
-	"probe": "unrelated functions that happen to share a name: a CDP port query and a link-route runner.",
+	// ⚠️ THREE modules now, after chrome_ready landed 15 Oct 2026:
+	//
+	//	chrome_sessions  probe(port, timeout) Session   -- CDP port query
+	//	linkprobe        probe(Route, ...) Result       -- link-route runner
+	//	chrome_ready     probe(port, timeout) (version, error)
+	//
+	// ⓘ The first and third are genuinely CLOSE: both ask a CDP port what it
+	// is over HTTP. They are not shared because chrome_sessions returns a
+	// Session carrying an owner PID and an error STRING for rendering, while
+	// chrome_ready needs the websocket URL and a real error to retry on. A
+	// shared one would have to return the union and each caller would ignore
+	// half of it.
+	//
+	// Written down rather than extracted, and if a FOURTH appears that is
+	// the signal to reconsider. Two near-identical probes is a coincidence;
+	// three with one more coming is a leaf.
+	"probe": "three functions asking similar questions with different return needs. See the note above.",
+
+	// chrome_ready prints a CDP version block in 5 lines; linkprobe renders
+	// a route matrix with findings and detail in about 40.
+	"report": "different jobs behind one name: a version block and a result matrix.",
 }
 
 // Acknowledged reports whether an overlap has been written down.

@@ -486,9 +486,11 @@ func TestBothRefusalPathsReachTheUser(t *testing.T) {
 			"rejected their link", shown[0])
 	}
 
-	// -- path 2: the link is VALID and the keeper is not built.
+	// -- path 2: VALID, and carrying an ACTION the keeper would have to
+	// deliver. ⚠️ NOT "#ensure": that is a one-shot and now RUNS, which is
+	// what TestOneShotRunsAndActionDoesNot below pins.
 	good := scheme + "://v1/go/run/github.com/davidnoz123/nielsoln_connectors/" +
-		"x@" + strings.Repeat("a", 40) + "#ensure"
+		"x@" + strings.Repeat("a", 40) + "#open"
 	if rc := onClick(good); rc == 0 {
 		t.Fatal("a valid link returned success, but nothing can run it yet")
 	}
@@ -548,5 +550,86 @@ func TestRefusalTextWrapsWithoutLosingWords(t *testing.T) {
 	// these carry a 64-character identity as one token.
 	if got := wrap(strings.Repeat("x", 80), 40); !strings.Contains(got, "xxxx") {
 		t.Error("wrap discarded an unbreakable token")
+	}
+}
+
+// TestOneShotRunsAndActionDoesNot pins the routing s67 introduced.
+//
+// ⚠️ THE WHOLE POINT OF THE SEAM. The real runLink allocates a console, asks
+// a human and then executes a program, so this cannot test the running: it
+// tests the DECISION, which is the part that can be got wrong silently.
+//
+// A one-shot that refused would make the first capability unreachable. An
+// action-bearing link that RAN would execute a one-shot while the caller
+// believed an action had been delivered to a resident instance, which is
+// worse: it would look like it worked.
+func TestOneShotRunsAndActionDoesNot(t *testing.T) {
+	logTo = &bytes.Buffer{}
+	t.Cleanup(func() { logTo = nil })
+	var ran []string
+	var refused []string
+	runLinkFn = func(u *URI) int { ran = append(ran, u.Action); return 0 }
+	showRefusalFn = func(r string) { refused = append(refused, r) }
+	t.Cleanup(func() { runLinkFn = runLink; showRefusalFn = showRefusal })
+
+	base := scheme + "://v1/go/run/github.com/davidnoz123/nielsoln_connectors/" +
+		"x@" + strings.Repeat("a", 40)
+
+	for _, c := range []struct {
+		name  string
+		uri   string
+		wantR bool // expected to reach runLink
+	}{
+		{"no action at all", base, true},
+		{"#ensure is a one-shot", base + "#ensure", true},
+		{"#open needs the keeper", base + "#open", false},
+		{"an action with arguments needs the keeper",
+			base + "#open?file=x&line=1", false},
+	} {
+		ran, refused = nil, nil
+		onClick(c.uri)
+		if c.wantR && len(ran) != 1 {
+			t.Errorf("%s: did not reach runLink. The first capability would "+
+				"be unreachable.", c.name)
+		}
+		if !c.wantR {
+			if len(ran) != 0 {
+				t.Errorf("%s: RAN. An action-bearing link that runs a "+
+					"one-shot looks like it worked, which is worse than "+
+					"refusing.", c.name)
+			}
+			if len(refused) != 1 {
+				t.Errorf("%s: was neither run nor shown a refusal, so the "+
+					"user gets nothing at all", c.name)
+			}
+		}
+	}
+}
+
+// TestTheUsageTextDoesNotClaimClicksAreInert catches the doc going stale.
+//
+// ⚠️ The usage said "clicking works only once the DISPATCH half exists" for
+// as long as that was true, and then kept saying it after a one-shot began
+// to run. A program that misdescribes what it does is worse than one that
+// says nothing, because the reader stops checking.
+func TestTheUsageTextDoesNotClaimClicksAreInert(t *testing.T) {
+	var buf bytes.Buffer
+	old := out
+	out = &buf
+	t.Cleanup(func() { out = old })
+	usage()
+	got := buf.String()
+	for _, stale := range []string{
+		"works only once the DISPATCH half exists",
+		"click is logged and refused",
+	} {
+		if strings.Contains(got, stale) {
+			t.Errorf("the usage still says %q, which stopped being true when "+
+				"a one-shot began to run", stale)
+		}
+	}
+	if !strings.Contains(got, "RUNS") {
+		t.Error("the usage does not mention that a click now runs something, " +
+			"which is the most important thing a reader needs to know")
 	}
 }

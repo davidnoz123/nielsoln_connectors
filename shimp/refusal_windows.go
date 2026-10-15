@@ -123,11 +123,22 @@ const stdInputHandle = ^uintptr(10) + 1 // (DWORD)-10
 // those as the user's keypress would close the window before it was read,
 // which is the bug this whole file exists to fix, reintroduced one layer
 // down.
-func waitForKeyOrTimeout(d time.Duration) {
+// ⚠️ Returns nothing on purpose. A caller that needs to know WHETHER a key
+// was pressed must use waitForKeyPress, whose bool cannot be mistaken for
+// anything else. Consent is decided on that bool; this wrapper is for
+// holding a window open, where the distinction does not matter.
+func waitForKeyOrTimeout(d time.Duration) { _ = waitForKeyPress(d) }
+
+// waitForKeyPress returns true if a key was pressed before d elapsed.
+func waitForKeyPress(d time.Duration) bool {
 	h, _, _ := procGetStdHandle.Call(stdInputHandle)
 	if h == 0 || h == uintptr(syscall.InvalidHandle) {
+		// ⚠️ No input handle means no key can ever arrive, so this must
+		// report FALSE rather than sleeping and leaving the caller to guess.
+		// Consent depends on it: returning true here would execute code
+		// because nobody could be asked.
 		time.Sleep(d)
-		return
+		return false
 	}
 	procFlushConsoleInput.Call(h)
 
@@ -140,7 +151,7 @@ func waitForKeyOrTimeout(d time.Duration) {
 		if r, _, _ := procGetNumberOfConsole.Call(h,
 			uintptr(unsafe.Pointer(&n))); r == 0 {
 			time.Sleep(d)
-			return
+			return false
 		}
 		if n > 0 {
 			var read uint32
@@ -151,10 +162,11 @@ func waitForKeyOrTimeout(d time.Duration) {
 			for i := 0; i < int(read) && i < 16; i++ {
 				rec := buf[i*20:]
 				if rec[0] == 1 && rec[1] == 0 && rec[4] != 0 {
-					return
+					return true
 				}
 			}
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+	return false
 }

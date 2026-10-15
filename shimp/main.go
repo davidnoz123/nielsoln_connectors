@@ -5,23 +5,36 @@
 // design lives in the `shimp` slate in this repo, rendered to SHIMP.md, and
 // every sN reference in this package points at a row there.
 //
-// WHAT IS BUILT HERE, AND WHAT IS NOT. This is the INSTALL half:
+// WHAT IS BUILT HERE, AND WHAT IS NOT.
+//
+// The INSTALL half, complete:
 //
 //	install    place a permanent binary and claim the scheme        s7, s8
 //	uninstall  withdraw only what install created                   s20
 //	verify     report what is TRUE, never what was intended         s8
 //	version    the handler's own provenance, for the second audit   s23
+//	dispatch   hand a URI to the OS, for measurement                s36
 //
-// The DISPATCH half, which parses a shimp:// URI and runs a keeper, is not
-// built. The grammar it will implement is frozen: s43 the runner table, s44
-// the identity bytes with a test vector, s45 argv encoding, s41 the action in
-// the fragment. Clicking a link today logs the attempt and says so.
+// The DISPATCH half, PARTLY built as of 15 Oct 2026:
 //
-// Why this half first: it needs no open decision, it is the half that fails
-// INVISIBLY if done wrong (s8's modal held an Excel for two and a half hours
-// with no symptom but a read-only refusal), and running it produces the one
-// measurement s36 cannot get any other way, which is how much of a URI
-// survives the registry hop into os.Args[1].
+//	a ONE-SHOT link RUNS. The click parses, shows what it will execute,
+//	asks for a keypress and runs it with the output in front of you.
+//	⚠️ Nothing runs without that keypress, and the wait ABORTS rather than
+//	proceeding, because s64 measured that a web page can fire a link with
+//	no gesture at all once its origin is permitted.
+//
+//	an ACTION-BEARING link is refused by name, because delivering an action
+//	to an already-running instance needs the KEEPER: s20's lock, IPC and
+//	handshake, and s46's target-side client.
+//
+// The grammar is frozen: s43 the runner table, s44 the identity bytes with a
+// test vector, s45 argv encoding, s41 the action in the fragment.
+//
+// Why the install half came first: it needed no open decision, it is the half
+// that fails INVISIBLY if done wrong (s8's modal held an Excel for two and a
+// half hours with no symptom but a read-only refusal), and running it
+// produced the one measurement s36 cannot get any other way, which is how
+// much of a URI survives the registry hop into os.Args[1].
 //
 //	go run -ldflags "-H=windowsgui" \n//	    github.com/davidnoz123/nielsoln_connectors/shimp@<sha> install
 //
@@ -125,6 +138,18 @@ var logTo io.Writer
 // about to find. Here it was two -- an unassertable call and an accidental
 // pass.
 var showRefusalFn = showRefusal
+
+// runLinkFn is the seam through which a one-shot is executed.
+//
+// ⚠️ For the same reason showRefusalFn exists, and more urgently: the real
+// runLink allocates a console, asks a human for consent and then EXECUTES
+// A PROGRAM. A test that drove onClick down the run path without this would
+// either hang on the prompt or launch Chrome.
+//
+// It also makes the ROUTING assertable, which is the part that matters: that
+// a link with no action runs, and a link carrying an action the keeper would
+// have to deliver does not.
+var runLinkFn = runLink
 
 // logSuppressed stops _log recreating a home directory that has just been
 // purged. Set by `uninstall -purge` immediately before the removal.
@@ -296,8 +321,14 @@ func useScheme(s string) error {
 	return nil
 }
 
+// usage writes through the `out` seam, not to os.Stderr directly.
+//
+// ⚠️ It did not, and a test asserting the text could therefore capture
+// nothing while the real message went past it to the terminal. That is the
+// seam rule in miniature: `out` existed for `verify` and usage bypassed it,
+// so the one check on this text was silently measuring an empty buffer.
 func usage() {
-	fmt.Fprintf(os.Stderr, `shimp -- SHIMP/1 handler (install half only)
+	fmt.Fprintf(out, `shimp -- SHIMP/1 handler: install, plus one-shot dispatch
 
   shimp install [-replace] [-scheme NAME]
   shimp uninstall [-purge] [-scheme NAME]
@@ -309,8 +340,13 @@ is kept away from a working one: separate registry class, separate home,
 separate Office key, and a different identity hash per s44. Default %[1]s.
 -purge also removes the log and the home directory, for a test cycle.
 
-Clicking a %[1]s:// link works only once the DISPATCH half exists. Today a
-click is logged and refused, and the log says so.
+Clicking a %[1]s:// link now RUNS a one-shot capability: the click shows
+what it will execute, asks for a keypress, and runs it with the output in
+front of you. Nothing runs without that keypress, and the wait ABORTS rather
+than proceeding.
+
+A link carrying an ACTION to deliver to an already-running instance is still
+refused by name, because that needs the keeper.
 `, scheme)
 }
 
@@ -423,9 +459,11 @@ func main() {
 	}
 }
 
-// onClick is what the registry invokes. The dispatch half is not built, so
-// this does the one useful thing it can: it RECORDS the measurement s36 says
-// nothing else can produce.
+// onClick is what the registry invokes.
+//
+// It records the measurement s36 says nothing else can produce, and then, as
+// of 15 Oct 2026, it ROUTES: a one-shot runs, an action-bearing link is
+// refused because delivering an action needs the keeper.
 func onClick(uri string) int {
 	// ⚠️ THIS IS s36's MISSING NUMBER. How much of a URI survives the hop
 	// from the clicking application, through the registry's "%1", into
@@ -467,13 +505,27 @@ func onClick(uri string) int {
 		_log("click: no action, so this is ensure-running only")
 	}
 
-	keeperMsg := fmt.Sprintf("the KEEPER is not built, so there is nothing "+
-		"to hand this to yet. The link is VALID: identity %s over %d bytes. "+
-		"What remains is s20's lock, IPC and handshake, and s46's "+
-		"target-side client.", u.Identity(), len(u.Raw))
-	_log("click REFUSED: %s", keeperMsg)
-	showRefusalFn(keeperMsg)
-	return 1
+	// ⚠️ A ONE-SHOT RUNS. A RESIDENT STILL DOES NOT.
+	//
+	// s20's keeper guarantees one running instance per identity and delivers
+	// an action to it, which s46 calls the resident class. A one-shot needs
+	// none of that: it runs to completion and exits, so it can be the first
+	// thing a click actually executes while the keeper is still unbuilt.
+	//
+	// The distinction is the ACTION. No action means "ensure running", which
+	// for a one-shot is simply "run it". An action has to be delivered to
+	// something already alive, and there is nothing to deliver to yet.
+	if u.HasAction && u.Action != "ensure" {
+		keeperMsg := fmt.Sprintf("this link carries the action %q, and "+
+			"delivering an action needs the KEEPER, which is not built. The "+
+			"link is VALID: identity %s over %d bytes. What remains is "+
+			"s20's lock, IPC and handshake, and s46's target-side client.",
+			u.Action, u.Identity(), len(u.Raw))
+		_log("click REFUSED: %s", keeperMsg)
+		showRefusalFn(keeperMsg)
+		return 1
+	}
+	return runLinkFn(u)
 }
 
 func cmdVersion(audit bool) int {

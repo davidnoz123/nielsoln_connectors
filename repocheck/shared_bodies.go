@@ -36,6 +36,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -112,9 +113,21 @@ func SharedBodies(root string, modules []string) ([]SharedBody, error) {
 	byHash := map[string][]hit{}
 
 	for _, m := range modules {
-		files, err := filepath.Glob(filepath.Join(root, m, "*.go"))
-		if err != nil {
-			return nil, err
+		// ⚠️ GO AND PYTHON. The Go-only version was written one day and the
+		// gap bit the next: linkprobe grew 543 lines of Python doing real
+		// work -- a CDP client and a COM driver -- and a third copy of
+		// serve-a-page-and-click appeared, none of it visible to a check
+		// whose whole purpose is noticing duplication.
+		//
+		// A repo that mixes languages needs a duplication check that reads
+		// both, or the check quietly becomes a statement about one of them.
+		var files []string
+		for _, pat := range []string{"*.go", "*.py"} {
+			found, err := filepath.Glob(filepath.Join(root, m, pat))
+			if err != nil {
+				return nil, err
+			}
+			files = append(files, found...)
 		}
 		for _, f := range files {
 			raw, err := os.ReadFile(f)
@@ -122,17 +135,21 @@ func SharedBodies(root string, modules []string) ([]SharedBody, error) {
 				return nil, err
 			}
 			src := string(raw)
+			re := funcRe
+			if strings.HasSuffix(f, ".py") {
+				re = pyFuncRe
+			}
 			// Per module, the first copy of a given name wins, for
 			// Overlaps()'s reason: a _windows/_other build-tag pair inside
 			// ONE module is not duplication.
 			seenHere := map[string]bool{}
-			for _, mt := range funcRe.FindAllStringSubmatch(src, -1) {
+			for _, mt := range re.FindAllStringSubmatch(src, -1) {
 				name := mt[1]
 				if seenHere[name] {
 					continue
 				}
 				seenHere[name] = true
-				body := bodyOf(src, name)
+				body := bodyOfIn(f, src, name)
 				n := countSignificant(body)
 				if n < minBodyLines {
 					continue
@@ -177,11 +194,15 @@ func SharedBodies(root string, modules []string) ([]SharedBody, error) {
 // explanatory comments, and counting them would push trivial code over the
 // threshold on the strength of its documentation, which is the opposite of
 // what the floor is for.
+// ⚠️ BOTH comment syntaxes, since this now reads Python too. Counting `#`
+// lines would inflate a Python body on the strength of its documentation,
+// which is precisely what the floor exists to prevent, and this repo's
+// Python carries as much comment as its Go.
 func countSignificant(body string) int {
 	n := 0
 	for _, line := range strings.Split(body, "\n") {
 		t := strings.TrimSpace(line)
-		if t == "" || strings.HasPrefix(t, "//") {
+		if t == "" || strings.HasPrefix(t, "//") || strings.HasPrefix(t, "#") {
 			continue
 		}
 		n++
@@ -204,9 +225,70 @@ func countSignificant(body string) int {
 // name, where a changed SIGNATURE is itself a divergence worth seeing, and
 // this compares code across names, where the signature is the thing being
 // ignored.
+// ⚠️ AND IT BROKE AGAIN WHEN PYTHON ARRIVED, caught by the same companion
+// test a second time. The rule was "strip up to the first `{\n`", and Python
+// has no braces, so every Python signature stayed inside the hash and two
+// renamed copies hashed differently. The identical bug, in a new language,
+// one commit after fixing it in the old one.
+//
+// Both markers are tried, each being its language's end-of-signature: `{`
+// for Go and `:` for Python. Looking for the brace FIRST matters, because a
+// Go function can legally contain `:\n` and a Go body always contains `{\n`,
+// so the fallback is only ever reached for Python.
+//
+// Line-based stripping would be wrong for both: a signature can wrap across
+// lines in either language.
 func afterSignature(body string) string {
 	if i := strings.Index(body, "{\n"); i >= 0 {
 		return body[i+2:]
 	}
+	if i := strings.Index(body, ":\n"); i >= 0 {
+		return body[i+2:]
+	}
 	return body
+}
+
+// pyFuncRe matches a Python def at any indentation, so methods count too.
+//
+// ⚠️ Deliberately NOT anchored at column zero the way funcRe is. A copied
+// helper in Python is as likely to be a method on a class as a module-level
+// function, and `class CDP:` appearing twice with the same `send` method is
+// exactly the duplication this needs to see.
+var pyFuncRe = regexp.MustCompile(`(?m)^[ \t]*def ([a-zA-Z_][a-zA-Z0-9_]*)\(`)
+
+// bodyOfIn extracts a function body, choosing the rule for the language.
+func bodyOfIn(path, src, name string) string {
+	if strings.HasSuffix(path, ".py") {
+		return pyBodyOf(src, name)
+	}
+	return bodyOf(src, name)
+}
+
+// pyBodyOf extracts a Python def by INDENTATION, there being no closing brace.
+//
+// ⚠️ The body ends at the first non-blank line indented no further than the
+// `def` itself. That is what Python means by a block, and it is reliable for
+// the formatted source this repo has. Like bodyOf, the hash it feeds is a
+// divergence SIGNAL and not an identity proof.
+func pyBodyOf(src, name string) string {
+	re := regexp.MustCompile(`(?m)^([ \t]*)def ` + regexp.QuoteMeta(name) + `\(`)
+	loc := re.FindStringSubmatchIndex(src)
+	if loc == nil {
+		return ""
+	}
+	indent := src[loc[2]:loc[3]]
+	lines := strings.Split(src[loc[0]:], "\n")
+	out := []string{lines[0]}
+	for _, line := range lines[1:] {
+		if strings.TrimSpace(line) == "" {
+			out = append(out, line)
+			continue
+		}
+		if !strings.HasPrefix(line, indent+" ") &&
+			!strings.HasPrefix(line, indent+"\t") {
+			break
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }

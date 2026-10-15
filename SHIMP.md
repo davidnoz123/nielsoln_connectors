@@ -61,10 +61,11 @@
 | s59 | Cached attestations per module@sha: capabilities verified, exposure attributed | **DECIDED** and the first one WRITTEN, 14 Oct 2026 | one per module, as each is written or changed |
 | s60 | The leaf candidates, MEASURED, and the divergence nobody was looking for | **MEASURED** and the divergence CLOSED 14 Oct 2026 | nothing |
 | s61 | editor_open: the first capability, because NO editor but VS Code has a scheme | DESIGNED 14 Oct 2026, deliberately NOT built | a decision to build it, plus two measurements |
-| s62 | linkprobe: fourteen ways in, MEASURED, and two of them cannot carry a shimp link | **BUILT and MEASURED** 15 Oct 2026 | four human routes, which are unanswered rather than passed |
+| s62 | linkprobe: fourteen ways in, MEASURED, and two of them cannot carry a shimp link | **BUILT and MEASURED** 15 Oct 2026 | two human routes, which are unanswered rather than passed |
 | s63 | The browser route: Chrome keeps the link VERBATIM and refuses to fire it without a gesture | **SUPERSEDED** by s64, 15 Oct 2026. Its conclusion was wrong: an automated browser route exists | nothing |
 | s64 | The browser route AUTOMATED, and the security property turned out to be false | **MEASURED** 15 Oct 2026. 13 of 15 routes now run unattended | nothing. Two routes remain human by nature, not by limitation |
 | s65 | linkprobe consumable by a test suite, and the duplication check that can see past a rename | **BUILT** 15 Oct 2026 | nothing |
+| s66 | The second axis: link SHAPES and the handler's verdict, after a human found what the harness could not | **BUILT and MEASURED** 15 Oct 2026, 8 shapes, 0 findings | nothing |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -3672,3 +3673,90 @@ So `known_recipes.go` writes it down. ⚠️ And because a written list rots, ev
 ⚠️ **It worked immediately**: the websocket entry claimed `remote_ai/ws.go` and the test refused to read it. remote_ai's client is inline in `main.go`. The entry was written on the strength of the *other* site's filename.
 
 Two recipes declared: the install cycle, and the websocket pair that s60 noticed and never recorded.
+
+#### ⚠️ The Python gap bit within one turn, 15 Oct 2026
+
+This row widened the duplication check to see past a rename and noted that `repocheck` reads Go only. s66 then added 543 lines of Python to `linkprobe`, including a third copy of serve-a-page-and-click, and none of it was visible.
+
+⚠️ **The identical bug recurred too.** `afterSignature` strips to the first `{\n`, and Python has no braces, so the widening did not work for Python either, for the same reason it had not worked for Go. The same companion test caught it both times.
+
+The lesson this row drew, that writing down a blind spot and not acting is how it bites again, held on a one-turn timescale rather than a one-month one.
+
+### s66. The second axis: link SHAPES and the handler's verdict
+
+Built 15 Oct 2026, prompted by a question with four question marks: *do you not have what I have just done in the testing suite?*
+
+The answer was no, and measuring the gap was more useful than the feature.
+
+#### ⚠️ What a human did that the harness could not
+
+| | by hand | `linkprobe` before |
+|---|---|---|
+| link shapes sent | **6** | **1**, a single template |
+| parser refusals checked | **2**, with reasons | ⚠️ **zero** |
+| identity hash and derived argv read | yes | ⚠️ never, only sent-vs-received bytes |
+| handler built `windowsgui` | yes | ⚠️ never, console-subsystem only |
+| profile | the real one | throwaway only |
+
+`linkprobe` was **15 routes x 1 link**: it measured TRANSPORT. So s37's forty-character rule and s45's one-spelling rule had only ever been unit-tested, and the first real evidence they work through a browser came from a human clicking.
+
+⚠️ And the word `Refused` in the route table means *the route declined to try* (curl: "protocol not supported"), **not** *the handler refused the link*. A reader would assume the second. The harness could not express it at all.
+
+#### The corpus: one route, many shapes
+
+⚠️ **One route, not fifteen**, and the reason matters: the handler's verdict is a function of the bytes it receives, and `routes.go` already establishes which routes deliver bytes faithfully. Crossing the tables would run ninety combinations to learn nothing the two axes do not say separately. Eight dispatches down the baseline is the whole cost.
+
+All eight behaved as declared on the first run:
+
+| shape | verdict | |
+|---|---|---|
+| `plain` | ACCEPTED | identity over 124 bytes |
+| `argv-and-action` | ACCEPTED | the ChatGPT shape; argv derived exactly, action NOT in identity |
+| `action-with-arguments` | ACCEPTED | the `?` case, 135-byte identity under a 26-byte action |
+| `long` | ACCEPTED | 331-byte identity, past Excel's formula threshold |
+| `bad-sha-39` | HANDLER-REFUSED | *"must be exactly 40"* (s37) |
+| `double-encoded-colon` | HANDLER-REFUSED | *"second spelling of the same value"* (s45) |
+| `control-byte` | HANDLER-REFUSED | *"a NUL truncates a Windows command line"* |
+| `unknown-runner` | HANDLER-REFUSED | *"unknown runners fail closed"* (s43) |
+
+The last two were **predictions**, not observations, and the table says so per shape. Nobody has clicked them in a browser; they hold through `ShellExecuteW` and nowhere else.
+
+#### ⚠️ The one mistake that would have inverted everything
+
+A VALID link still ends in a refusal today, because the keeper is not built:
+
+```
+click REFUSED: the KEEPER is not built. The link is valid and its identity is above
+```
+
+So acceptance is decided by **the presence of an identity line**, never by the absence of the word REFUSED. Keying on "REFUSED" would classify every correct link as rejected and every rejection as correct: not merely blind but exactly inverted. `TestJudgeCatchesARejectedShapeThatActuallyParsed` is the companion that pins it.
+
+And a refusal must match a **declared reason**. Asserting only that a link was refused would pass for a link refused on unrelated grounds.
+
+#### ⚠️ The finding the harness could never have made
+
+The human clicked six links and saw **nothing at all**. Built `-H=windowsgui`, every click silent, every click correctly refused.
+
+He could not have distinguished that from: the scheme unregistered, the handler crashing before `_log` existed, Chrome blocking it, or the link being malformed. ⚠️ **That is this repo's cardinal sin, silent failure, appearing in the PRODUCT rather than the tooling.**
+
+It is a real tension, not an oversight. Measured: console-subsystem gives a visible foreground console on every click, which is intrusive and which s50 deliberately has no field for; `windowsgui` gives silence. **Both are wrong for a refusal.** A refused click needs a third thing: a tray balloon, a toast, a window that appears only on error.
+
+`-gui` is now a flag on the harness rather than a constant, so both cases can be measured. The design question stays open and is recorded here rather than rediscovered.
+
+#### One table, two consumers
+
+`-serve` renders the SAME shapes as a clickable page. A throwaway page of hand-written links was built one turn earlier and had already drifted from what the harness checked. Now a human clicking and a machine dispatching read one table by construction.
+
+#### ⚠️ And the hard-kill hole, measured
+
+`-serve` purges on Ctrl-C through `signal.Notify`. Nothing survives being killed outright, and then the temp build directory is gone too, so the user has a registered scheme and no obvious binary to withdraw it with.
+
+⚠️ The binary install PLACED in the home cannot do it either: Windows will not delete a running executable, so `uninstall -purge` from there withdraws the registry claim and then refuses to remove its own directory, which is exactly what `TestPurgeCannotDeleteItselfAndSaysSo` pins. `-purge` builds a fresh copy in a temp directory and sidesteps it. Measured both ways.
+
+#### repocheck now reads Python
+
+⚠️ Flagged one turn earlier and not acted on, then it bit: 543 lines of Python in `linkprobe` doing real work, a third copy of serve-a-page-and-click, none of it visible to a check whose purpose is noticing duplication.
+
+**And `afterSignature` broke again, in exactly the same way, one commit after being fixed.** The rule was "strip to the first `{\n`", and Python has no braces, so every Python signature stayed inside the hash and two renamed copies hashed differently. The same companion test caught it the second time.
+
+It reports nothing today, because both Python files live in one module and only cross-module sharing is reported. Covered for when that changes, which is the point.

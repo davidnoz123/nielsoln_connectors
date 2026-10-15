@@ -114,11 +114,35 @@ func main() {
 	asJSON := flag.Bool("json", false,
 		"write one JSON object to stdout instead of the human report, so a "+
 			"test suite can assert on the result. Progress goes to stderr")
+	corpus := flag.Bool("corpus", false,
+		"send every LINK SHAPE down the baseline route and judge the "+
+			"handler's verdict on each: identity, argv and refusal reason")
+	serve := flag.Int("serve", 0,
+		"serve the corpus as a clickable page on this port, install the "+
+			"handler, and purge on Ctrl-C. ⚠️ for a human to click")
+	purgeFlag := flag.Bool("purge", false,
+		"withdraw a leftover test installation. ⚠️ needed after a HARD KILL, "+
+			"which skips -serve's cleanup")
+	gui := flag.Bool("gui", false,
+		"build the handler -H=windowsgui. ⚠️ a click then shows NOTHING on "+
+			"screen, which is what a real user experienced")
 	flag.Parse()
 
 	switch {
 	case *list:
 		printTable()
+	case *purgeFlag:
+		if code := doPurge(); code != 0 {
+			os.Exit(code)
+		}
+	case *corpus:
+		if code := doCorpus(*only, *keep, *gui); code != 0 {
+			os.Exit(code)
+		}
+	case *serve > 0:
+		if code := doServe(*serve, *gui); code != 0 {
+			os.Exit(code)
+		}
 	case *run:
 		if code := doRun(*only, *keep, *asJSON); code != 0 {
 			os.Exit(code)

@@ -350,3 +350,77 @@ func TestTheRecipeStalenessCheckCanFail(t *testing.T) {
 		t.Fatal("the absent-marker fixture is present, so it proves nothing")
 	}
 }
+
+// TestPythonBodiesAreRead is the can-fail companion for the language widening.
+//
+// ⚠️ The Go-only version of SharedBodies was written one day and the gap bit
+// the next: linkprobe grew 543 lines of Python, including a third copy of
+// serve-a-page-and-click, invisible to a check whose purpose is noticing
+// duplication. This proves the widening works rather than assuming it.
+func TestPythonBodiesAreRead(t *testing.T) {
+	dir := t.TempDir()
+	body := "\n    n = 0\n    for c in s:\n        if c == 'x':\n            n += 1\n    return n\n"
+	for mod, fn := range map[string]string{"alpha": "count_eks", "beta": "tally_x"} {
+		md := filepath.Join(dir, mod)
+		if err := os.MkdirAll(md, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(md, "go.mod"),
+			[]byte("module x/"+mod+"\n\ngo 1.27\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		src := "def " + fn + "(s):" + body
+		if err := os.WriteFile(filepath.Join(md, "a.py"),
+			[]byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mods, err := modulesIn(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared, err := SharedBodies(dir, mods)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, sb := range shared {
+		if len(sb.Names()) == 2 && len(sb.Modules()) == 2 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("a Python body under two names in two modules was not seen, "+
+			"so the Python half of this repo is unchecked: %v", shared)
+	}
+}
+
+// TestPyBodyOfEndsAtTheDedent pins the rule, there being no closing brace.
+func TestPyBodyOfEndsAtTheDedent(t *testing.T) {
+	src := "def a(x):\n    return 1\n\n\ndef b(y):\n    return 2\n"
+	got := pyBodyOf(src, "a")
+	if strings.Contains(got, "def b") {
+		t.Errorf("pyBodyOf ran past the dedent and swallowed the next "+
+			"function, so every Python hash covers more than one body:\n%s", got)
+	}
+	if !strings.Contains(got, "return 1") {
+		t.Errorf("pyBodyOf stopped too early: %q", got)
+	}
+	// An indented method must be found too, since a copied Python helper is
+	// as likely to be a method as a module-level function.
+	cls := "class C:\n    def send(self, m):\n        self.n += 1\n        return self.n\n"
+	if g := pyBodyOf(cls, "send"); !strings.Contains(g, "self.n += 1") {
+		t.Errorf("an indented method was not extracted: %q", g)
+	}
+}
+
+func TestPythonCommentsDoNotInflateABody(t *testing.T) {
+	// ⚠️ Counting `#` lines would let a trivial function clear the floor on
+	// the strength of its documentation, which this repo's Python has in
+	// quantity.
+	body := "def f():\n    # one\n    # two\n    # three\n    # four\n    # five\n    return 1\n"
+	if n := countSignificant(body); n >= minBodyLines {
+		t.Errorf("a one-line Python body counted %d significant lines, at or "+
+			"above the floor of %d", n, minBodyLines)
+	}
+}

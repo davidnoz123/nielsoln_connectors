@@ -4058,58 +4058,15 @@ Two further corrections fell out of it: `SharedBodies` now flags single-name sha
 
 Mapped 16 Oct 2026, from a proposed four-part taxonomy: the handler, the leaf modules, the shimpable tools, the Python testing code. Measured against the repo, four of seven, and one of the four mislabelled.
 
-#### The seven
+#### The seven, and they live in their OWN SLATE now
 
-| | what it is, and where | measured state |
-|---|---|---|
-| 1 | **the handler** — `shimp/` | 4,105 lines. Install half complete. Dispatch runs a ONE-SHOT; an action-bearing link is refused BY NAME, because delivering an action needs the keeper (s20) |
-| 2 | **the leaf modules** | ⚠️ **ZERO. None exist.** No `require` block and no `go.sum` anywhere, so nothing depends on anything. s60 ranks the candidates; s13 decided `cdpcore` and it waits on a second consumer |
-| 3 | **the shimpable tools** — `chrome_ready/`, `chrome_sessions/`, `remote_ai/`, `remote_chrome_cdp/`, `pdf_view_server/` | all are `package main`, so a link MAY name any. **One is proven by a real click**: `chrome_ready` (s68). ⚠️ `pdf_view_server` and `remote_chrome_cdp` are RESIDENT and need the keeper |
-| 4 | **the link harness** — `linkprobe/` | 2,345 Go + 543 Python. 15 routes × 1 link, plus 8 link SHAPES × 1 route. Go orchestrator, Python drivers for Excel and Chrome |
-| 5 | **the instruments** — `probes/` | 598 Python + 274 Go. The programs behind the measured numbers. ⚠️ **A number quoted as measured must name its instrument** |
-| 6 | **the audit surface** — `*/caveats.go`, `attestations/`, `repocheck/` | ⚠️ **barely built: one caveats file (92 lines), one attestation.** Both on `chrome_sessions`, which nothing runs, and ABSENT from `chrome_ready`, the only module a link executes. `repocheck` (1,458 Go) belongs here rather than with the tests: it polices s55's maxims, which are the preconditions for an audit meaning anything |
-| 7 | **the design record** — the slate, `SHIMP.md`, `db/`, `patches/`, `transcripts/` | 4,054-line render, a 2MB db, 45 patches, 45 gitignored transcripts. The largest artefact in the repo, bigger than all the Go together, and where the corrections live |
+⚠️ 17 Oct 2026. The table that was here has moved to the **`repo` slate**, one row per category, because seven things that evolve independently are seven rows rather than one design cell.
 
-#### ⚠️ What the four-part version got wrong
+This row keeps the REASONING, which is what it was actually for:
 
-* **"the Python testing code" undersells it and misplaces a module.** The harness is mostly GO: `linkprobe` is 2,345 Go against 543 Python, and `repocheck` is 1,458 Go with no Python at all. Two different things were being collapsed: the LINK HARNESS, which drives routes and shapes, and the INSTRUMENTS, which take measurements.
-* ⚠️ **`repocheck` is neither tooling nor testing.** It polices s55's two maxims, which are the PRECONDITIONS for an audit meaning anything. It belongs with the audit surface rather than with the tests, and this row puts it there.
+* a four-part taxonomy was proposed: handler, leaf modules, shimpable tools, Python testing code
+* **four of seven**, and one of the four mislabelled
+* ⚠️ "the Python testing code" undersold a 2,345-line Go harness and swept `repocheck` into the wrong box. It splits into the LINK HARNESS, which drives routes and shapes, and the INSTRUMENTS, which measure
+* ⚠️ the two missing were the two that matter most: the **audit surface**, which is the point of the project and is barely built, and the **design record**, which is the largest artefact here
 
-#### ⚠️ The two categories that were missing matter most
-
-**The audit surface (6) is the point of the whole project.** s9's pitch is: paste the link, and validate all the code it can instantiate. That rests on s54's caveats declared in source and verified by an AST walk, and s59's per-`module@sha` attestations.
-
-⚠️ And it is **barely built**: 92 lines in `chrome_sessions`, two attestation files. Both attached to the module nothing runs, and **absent from `chrome_ready`**, which is the only module a link actually executes. The apparatus is on the wrong module.
-
-**The design record (7) is the largest artefact here**, bigger than all the Go together, and it is where the corrections live. It caught the 255-byte truncation that did not exist and the security property that was claimed twice and false. A taxonomy that omits it omits the thing doing the work.
-
-#### ⚠️ And the map was missing from the file an agent MUST read
-
-`AGENTS.project.md` has a "What this repo is" section, and six of nine modules appear nowhere in it: `chrome_ready`, `remote_ai`, `remote_chrome_cdp`, `linkprobe`, `repocheck`, `probes`.
-
-⚠️ So a new agent, reading the authoritative instruction file at session start exactly as the standards require, learns nothing about two thirds of the repo. Most of those modules were added in this session, so the gap is this session's making.
-
-Recorded here for the reasoning; the MAP goes in `AGENTS.project.md`, because that is where the standards say project structure lives and it is what gets read.
-
-#### Why this is a row rather than a note
-
-The categories are not a decision, so this row's value is the per-category STATE and the two gaps it names. ⚠️ Three of the seven are nearly empty: no leaf modules at all, one caveats file, one attestation. A taxonomy that reads as seven healthy pillars would be the most misleading thing in this slate.
-
-#### ⚠️ This table was the WEAKER of two, which is the wrong way round
-
-17 Oct 2026. The table above was written first and a better one was then
-written into `AGENTS.project.md`: it named the directory per category, flagged
-that `pdf_view_server` and `remote_chrome_cdp` are RESIDENT and therefore need
-the keeper, and put `repocheck` in row 6 rather than leaving it in the prose.
-
-Row 3 was also wrong as a category statement. It said "9 modules are `package
-main` so a link may name any", which is true of the repo and false of the
-category: only FIVE are tools. `shimp` is row 1 and `linkprobe`, `repocheck`
-and `probes/focus` are rows 4, 5 and 6. Counting them as shimpable tools
-inflates the one category that has a single proven member.
-
-⚠️ The design record held the weaker version while a generated-adjacent
-instruction file held the better one. That is backwards: this slate is the
-authority, and anything derived from it should be the lossy copy rather than
-the improved one. Corrected by bringing the table up, not by pointing at the
-other file.
+⚠️ And the state belongs in a table with a GAP column, not in prose. Three of the seven are nearly empty, and a flat list reads as seven healthy pillars. That is the whole reason the `repo` slate has that column.

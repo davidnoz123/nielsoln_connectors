@@ -57,11 +57,12 @@ func showRefusal(reason string) {
 	// ⚠️ The log already holds the authoritative record, so declining to
 	// DISPLAY a refusal loses nothing a harness needs. A human gets the
 	// window; an unattended run gets the log.
-	if os.Getenv(noConsoleEnv) == "1" {
-		_log("click: %s is set, so the refusal was logged and not shown",
-			noConsoleEnv)
+	if windowMode() == WindowNone {
+		_log("click: %s=none, so the refusal was logged and not shown",
+			windowEnv)
 		return
 	}
+	keeper := rememberFocus()
 
 	// A console only if there is something to say, which is now.
 	if err := allocConsole(); err != nil {
@@ -71,6 +72,7 @@ func showRefusal(reason string) {
 		_log("click: could not allocate a console to show the refusal: %v", err)
 		return
 	}
+	keeper.restore()
 
 	fmt.Fprintf(os.Stdout, "\n  %s:// REFUSED\n\n  %s\n\n", scheme, wrap(reason, 72))
 	fmt.Fprintf(os.Stdout, "  the full record is in %s\n",

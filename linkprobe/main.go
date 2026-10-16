@@ -46,6 +46,35 @@ const logName = "shimp.log"
 // was accepted.
 const arrivalPrefix = "click: "
 
+// quietEnv is the environment every probe child gets.
+//
+// ⚠️ ONE PLACE, because having it in two was the bug. corpus_run.go set
+// these and main.go's probe() set nothing, so `-corpus` was quiet and
+// measured while `-run` splattered fifteen console windows across the
+// desktop. Both now call this.
+//
+//	SHIMP_WINDOW           focus | background | none, from -window
+//	SHIMP_NO_HOLD          no waiting after something was shown
+//	SHIMP_CONSENT_SECONDS  a short gate that still ABORTS
+//
+// ⚠️ None of these can cause anything to RUN. The one that can is
+// SHIMP_ASSUME_CONSENT and it is deliberately absent here.
+//
+// ⚠️ AND IT CANNOT SILENCE EVERYTHING. Excel and Chrome are launched by the
+// Python drivers and AGENTS forbids starting either invisibly, because a
+// hidden window holding a modal is a process nobody can diagnose. Those
+// routes will always show something. This covers the handler, which is what
+// was multiplying.
+// windowMode is what -window asked for. Threaded into every child.
+var windowMode = "none"
+
+func quietEnv() []string {
+	return append(os.Environ(),
+		"SHIMP_WINDOW="+windowMode,
+		"SHIMP_NO_HOLD=1",
+		"SHIMP_CONSENT_SECONDS=1")
+}
+
 // exitCannotComplete is what a driver returns when it measured what it
 // could and the remainder genuinely needs a human. See excel_route.py.
 const exitCannotComplete = 3
@@ -123,12 +152,27 @@ func main() {
 	purgeFlag := flag.Bool("purge", false,
 		"withdraw a leftover test installation. ⚠️ needed after a HARD KILL, "+
 			"which skips -serve's cleanup")
+	window := flag.String("window", "none",
+		"what a click's console does: focus | background | none. "+
+			"`none` is the default here because an unattended run wants no "+
+			"windows. `focus` is what a REAL click does and is worth using "+
+			"when you want to watch. `background` shows the window without "+
+			"taking the keyboard, best effort")
 	gui := flag.Bool("gui", true,
 		"build the handler -H=windowsgui, which is the DEFAULT for -corpus "+
 			"so no window is created and nothing steals the desktop focus. "+
 			"-gui=false builds console-subsystem, where Windows grants a "+
 			"console per click and a human can watch it")
 	flag.Parse()
+
+	switch *window {
+	case "focus", "background", "none":
+		windowMode = *window
+	default:
+		fmt.Fprintf(os.Stderr,
+			"-window %q is not focus, background or none\n", *window)
+		os.Exit(2)
+	}
 
 	switch {
 	case *list:
@@ -197,18 +241,19 @@ func doRun(only string, keep bool, asJSON bool) int {
 	// live install test's own history is the reason. It once installed the
 	// `go test` binary as the handler, which "worked" and measured nothing,
 	// because a test binary handed a URI argument does not run the handler.
-	shimpExe := filepath.Join(work, "shimp.exe")
-	cmd := exec.Command("go", "build", "-o", shimpExe, ".")
-	cmd.Dir = filepath.Join(root, "shimp")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "building shimp failed: %v\n%s", err, out)
-		return 1
-	}
-
-	// -- install the isolated scheme
-	if out, err := exec.Command(shimpExe, "install", "-scheme", testScheme).CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "install -scheme %s failed: %v\n%s",
-			testScheme, err, out)
+	//
+	// ⚠️ WINDOWSGUI, AND THIS WAS THE BUG. doRun built its own copy of
+	// buildAndInstall's logic WITHOUT the ldflags, so every one of fifteen
+	// routes dispatched to a console-subsystem handler and Windows granted
+	// it a console window. Fifteen focus steals per run.
+	//
+	// The corpus was fixed and measured and `-run` was not, because the
+	// duplicated build hid the difference: two call sites, one of which got
+	// the fix. Collapsed onto buildAndInstall so there is one place to get
+	// this right, which is what repocheck's whole purpose is about.
+	shimpExe, err := buildAndInstall(root, work, testScheme, true)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 	if !keep {
@@ -344,6 +389,7 @@ func probe(r Route, shimpExe, python, logPath, root string) Result {
 		c = exec.CommandContext(ctx, python,
 			filepath.Join(root, "linkprobe", "excel_route.py"),
 			r.Argv[0], res.Sent)
+		c.Env = quietEnv()
 	} else if r.Kind == NeedsChrome {
 		if python == "" {
 			res.Got = Unrunnable
@@ -359,6 +405,7 @@ func probe(r Route, shimpExe, python, logPath, root string) Result {
 		c = exec.CommandContext(ctx, python,
 			filepath.Join(root, "linkprobe", "chrome_route.py"),
 			r.Argv[0], res.Sent)
+		c.Env = quietEnv()
 	} else {
 		argv := r.Fill(map[string]string{
 			"{{uri}}":    res.Sent,
@@ -366,6 +413,10 @@ func probe(r Route, shimpExe, python, logPath, root string) Result {
 			"{{python}}": python,
 		})
 		c = exec.Command(argv[0], argv[1:]...)
+		// ⚠️ THE LINE THAT WAS MISSING. Fifteen routes dispatched a link
+		// with no environment, so the handler allocated a console, held it
+		// open and took the focus, once per route.
+		c.Env = quietEnv()
 	}
 
 	out, err := c.CombinedOutput()

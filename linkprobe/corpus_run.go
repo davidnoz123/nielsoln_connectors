@@ -218,30 +218,7 @@ func dispatchViaBaseline(exe, link string) error {
 	// baseline route inherits it. A BROWSER click does not: that handler is
 	// a child of Chrome, which never saw this variable. So -run's chrome
 	// routes still hold, and that is measured rather than assumed.
-	// ⚠️ TWO VARIABLES, AND THEY DO DIFFERENT JOBS.
-	//
-	// SHIMP_NO_HOLD skips the wait AFTER something was shown. Cosmetic.
-	//
-	// SHIMP_CONSENT_SECONDS shortens the CONSENT window, which is the slow
-	// part the user spotted: four of the eight shapes are one-shots that
-	// reach the gate, nobody is at the keyboard, and each sat for the full
-	// thirty seconds. The corpus had gone from 28s to 82s and the handler
-	// was doing the waiting, not the harness.
-	//
-	// ⚠️ NEITHER IS SHIMP_ASSUME_CONSENT. That one skips the gate and then
-	// EXECUTES. A shortened window still ABORTS, so the real branch runs and
-	// nothing else does -- which is what verdict.go's `Ran` check now
-	// asserts for every shape.
-	c.Env = append(os.Environ(),
-		"SHIMP_NO_HOLD=1",
-		"SHIMP_CONSENT_SECONDS=1",
-		// ⚠️ NO WINDOWS AT ALL. A clicked console-subsystem handler is
-		// GIVEN a console that is visible and foreground, so eight shapes
-		// stole the keyboard eight times. A focus dance was tried first and
-		// half worked: AllocConsole activates the window before anything can
-		// be told not to. So no console is created, consent cannot be asked,
-		// and the click aborts -- which is what an unattended run wants.
-		"SHIMP_NO_CONSOLE=1")
+	c.Env = quietEnv()
 	out, err := c.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))

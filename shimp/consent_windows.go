@@ -102,19 +102,25 @@ func ownConsole() (syscall.Handle, error) {
 // user pressed a key there.
 func askConsent(show func(), d time.Duration) bool {
 	// ⚠️ NO CONSOLE MEANS NO CONSENT MEANS NO RUN, and that is the whole
-	// mechanism rather than a limitation. A harness that wants no windows
+	// mechanism rather than a limitation. A caller that wants no windows
 	// gets an abort, which is what it wanted anyway.
-	if os.Getenv(noConsoleEnv) == "1" {
-		_log("click ABORTED: %s is set, so no console was created, so "+
-			"consent could not be asked and nothing ran", noConsoleEnv)
+	if windowMode() == WindowNone {
+		_log("click ABORTED: %s=none, so no console was created, so consent "+
+			"could not be asked and nothing ran", windowEnv)
 		return false
 	}
+
+	// ⚠️ BEFORE the console exists, or the previous holder is unknowable.
+	// A no-op unless the mode is background.
+	keeper := rememberFocus()
 	h, err := ownConsole()
 	if err != nil {
 		_log("click REFUSED: no console of our own could be obtained, so "+
 			"consent cannot be asked for and nothing will run: %v", err)
 		return false
 	}
+
+	keeper.restore()
 
 	// Drain the arrival burst BEFORE the prompt is shown, then flush. A new
 	// console reports focus and buffer-size events immediately, and one of

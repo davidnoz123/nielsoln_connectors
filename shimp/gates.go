@@ -27,6 +27,8 @@
 // accident.
 package main
 
+import "os"
+
 // holdSeconds is how long a refusal or a finished run stays readable.
 const holdSeconds = 25
 
@@ -64,33 +66,66 @@ const consentSecondsEnv = "SHIMP_CONSENT_SECONDS"
 // anybody who can set this can already run programs. Every use is logged.
 const assumeConsentEnv = "SHIMP_ASSUME_CONSENT"
 
-// noConsoleEnv stops a click creating any window at all.
+// windowEnv chooses what a click's window does. One setting, three values,
+// because "no window", "a window that does not grab focus" and "a window
+// that does" are three different wants and were collapsed into one.
 //
-// ⚠️ WHY THIS REPLACED A FOCUS DANCE, which is worth recording because the
-// first attempt looked reasonable and did not work.
+//	focus       (default) a console appears and TAKES the foreground.
+//	            What a real click should do: the user clicked, so the thing
+//	            they asked for should come to them.
 //
-// A clicked console-subsystem handler is GIVEN a console by Windows that is
-// visible and foreground, so a corpus run stole the keyboard eight times.
-// The first fix remembered the previous foreground window, then called
-// ShowWindow(SW_SHOWNOACTIVATE) and handed the focus back.
+//	background  a console appears and does NOT take the foreground.
+//	            ⚠️ BEST EFFORT, and measured as such: AllocConsole activates
+//	            the window before anything can be told otherwise, so this
+//	            pushes it back afterwards. 5 of 8 dispatches kept the focus
+//	            where it was; the other 3 needed the minimise fallback.
 //
-// It half worked: 5 of 8 dispatches left the focus alone and 3 logged a
-// refusal. ⚠️ AllocConsole ACTIVATES the window before anything can be told
-// not to, and showing-without-activating does not deactivate something that
-// is already active. There was no ordering that fixed it, because the window
-// exists before our first instruction about it.
+//	none        no console at all. Consent therefore CANNOT be asked and the
+//	            click ABORTS, which is what an unattended run wants anyway.
+//	            A refusal is logged rather than shown.
 //
-// So the console is not created. Consent therefore CANNOT be asked, and
-// consent_windows.go already fails closed: no console means no consent means
-// no run. A refusal is logged and not displayed.
+// ⚠️ NONE OF THE THREE CAN CAUSE ANYTHING TO RUN. `none` fails closed by
+// construction. The setting that can is assumeConsentEnv, which is separate
+// and named so nobody reaches for it by accident.
 //
-// ⚠️ SAFE BECAUSE IT FAILS CLOSED. The only behaviour it can produce is
-// "nothing ran", which is what an unattended run must do anyway. Contrast
-// assumeConsentEnv, whose whole effect is to let something run.
-//
-// ⚠️ AND IT CHANGES WHICH BRANCH IS EXERCISED, stated rather than hidden:
-// the corpus now reaches the no-console abort rather than the key-polling
-// one. That is a real cost. The key-polling branch is covered by
-// TestAKeyTooFastIsNotTyped and by the real click a human made on 15 Oct,
-// which is weaker than a harness exercising it and is not nothing.
-const noConsoleEnv = "SHIMP_NO_CONSOLE"
+// ⚠️ It replaced SHIMP_NO_CONSOLE, which was a boolean that could only say
+// "window" or "no window" and so had no way to express the middle case --
+// the one a human watching a test run actually wants.
+const windowEnv = "SHIMP_WINDOW"
+
+// WindowMode is what the click's window should do.
+type WindowMode int
+
+const (
+	WindowFocus WindowMode = iota
+	WindowBackground
+	WindowNone
+)
+
+func (w WindowMode) String() string {
+	switch w {
+	case WindowBackground:
+		return "background"
+	case WindowNone:
+		return "none"
+	}
+	return "focus"
+}
+
+// windowMode reads the setting. ⚠️ An unrecognised value falls back to
+// `focus` and SAYS SO, rather than silently choosing the quietest option: a
+// typo must not turn a visible click into an invisible one.
+func windowMode() WindowMode {
+	switch v := os.Getenv(windowEnv); v {
+	case "", "focus":
+		return WindowFocus
+	case "background":
+		return WindowBackground
+	case "none":
+		return WindowNone
+	default:
+		_log("click: %s=%q is not focus, background or none. Using focus.",
+			windowEnv, v)
+		return WindowFocus
+	}
+}

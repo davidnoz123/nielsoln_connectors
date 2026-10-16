@@ -47,9 +47,30 @@ type HandlerSaw struct {
 	// which means the link PARSED. Distinguished so that building the keeper
 	// does not silently change every corpus result.
 	KeeperRefusal bool
+
+	// Aborted is true when the handler reached the CONSENT GATE and nobody
+	// answered. ⚠️ Added 17 Oct 2026 because s67 made a one-shot RUN, so
+	// the four accepted shapes stopped hitting the keeper refusal and
+	// started hitting the gate instead. readHandler could not see the line,
+	// so the corpus kept passing while measuring something else.
+	Aborted bool
+
+	// Ran is true when the handler EXECUTED something.
+	//
+	// ⚠️ THE INVARIANT THIS EXISTS FOR: an unattended corpus run must never
+	// execute anything. Nobody is at the keyboard, so consent cannot have
+	// been given, so a `click: running` line means the gate let something
+	// through without a human. That is the most serious thing this harness
+	// could discover and before today it had no way to notice it.
+	Ran bool
 }
 
 const keeperMarker = "the KEEPER is not built"
+
+// abortedPrefix and runningPrefix are the two lines s67 added. Both must be
+// read, because between them they say whether the consent gate held.
+const abortedPrefix = "click ABORTED: "
+const runningPrefix = "click: running "
 
 // readHandler parses every line written after off into one verdict.
 func readHandler(body string) HandlerSaw {
@@ -63,6 +84,10 @@ func readHandler(body string) HandlerSaw {
 			if strings.Contains(saw.Refusal, keeperMarker) {
 				saw.KeeperRefusal = true
 			}
+		case strings.Contains(line, abortedPrefix):
+			saw.Aborted = true
+		case strings.Contains(line, runningPrefix):
+			saw.Ran = true
 		case i < 0:
 			continue
 		default:
@@ -87,6 +112,10 @@ func readHandler(body string) HandlerSaw {
 
 	// ⚠️ The decision, and the order is the whole point. An identity line
 	// means the link parsed, whatever refusal followed it.
+	// ⚠️ An identity line means the link PARSED, whatever followed it: the
+	// keeper refusal, a consent abort, or a run. Keying on any of those
+	// instead would invert the result the day the handler's ending changed,
+	// which is exactly what happened on 17 Oct.
 	switch {
 	case saw.Identity != "":
 		saw.Verdict = Accepted
@@ -113,6 +142,17 @@ func (c CorpusResult) OK() bool { return len(c.Problems) == 0 }
 func judge(s Shape, saw HandlerSaw, scheme string) CorpusResult {
 	res := CorpusResult{Shape: s, Saw: saw}
 	add := func(f string) { res.Problems = append(res.Problems, f) }
+
+	// ⚠️ THE INVARIANT, CHECKED FOR EVERY SHAPE BEFORE ANYTHING ELSE.
+	// Nobody is at the keyboard during a corpus run, so consent cannot have
+	// been given. Anything that executed got through the gate without a
+	// human, and that matters more than whether the shape matched.
+	if saw.Ran {
+		add("⚠️ SOMETHING EXECUTED during an unattended run. Consent cannot " +
+			"have been given, so the gate in run_windows.go let a link " +
+			"through without a human. Treat this before any other finding.")
+		return res
+	}
 
 	if saw.Verdict != s.Expect {
 		add("verdict " + string(saw.Verdict) + ", expected " + string(s.Expect))

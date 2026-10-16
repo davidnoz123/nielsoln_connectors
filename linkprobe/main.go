@@ -123,9 +123,11 @@ func main() {
 	purgeFlag := flag.Bool("purge", false,
 		"withdraw a leftover test installation. ⚠️ needed after a HARD KILL, "+
 			"which skips -serve's cleanup")
-	gui := flag.Bool("gui", false,
-		"build the handler -H=windowsgui. ⚠️ a click then shows NOTHING on "+
-			"screen, which is what a real user experienced")
+	gui := flag.Bool("gui", true,
+		"build the handler -H=windowsgui, which is the DEFAULT for -corpus "+
+			"so no window is created and nothing steals the desktop focus. "+
+			"-gui=false builds console-subsystem, where Windows grants a "+
+			"console per click and a human can watch it")
 	flag.Parse()
 
 	switch {
@@ -136,7 +138,7 @@ func main() {
 			os.Exit(code)
 		}
 	case *corpus:
-		if code := doCorpus(*only, *keep, *gui); code != 0 {
+		if code := doCorpus(*only, *keep, !*gui); code != 0 {
 			os.Exit(code)
 		}
 	case *serve > 0:

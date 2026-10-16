@@ -1,4 +1,17 @@
+//go:build windows
+
 // consent_test.go -- the checks that should have existed before the gate did.
+//
+// ⚠️ WINDOWS-ONLY, and that is the right answer rather than the lazy one.
+// The third build-tag mistake in two days was `isKeyDown`, which parses a
+// Windows INPUT_RECORD and which this file referenced from an untagged test.
+//
+// The first two were fixed by moving the CODE out of a platform file, because
+// `wrap` and `noHoldEnv` had nothing to do with Windows. This one goes the
+// other way: consent_other.go always returns false, so there IS no consent
+// gate off Windows and a test of it on linux tests nothing. Tagging the test
+// states that, where untagging the code would have implied a gate that does
+// not exist.
 //
 // ⚠️ The first consent gate reported consent nobody gave and executed a
 // program. Nothing caught it; running the thing did. These are the checks

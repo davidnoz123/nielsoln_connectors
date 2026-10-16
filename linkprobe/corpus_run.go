@@ -113,7 +113,7 @@ func purge(exe, scheme string) {
 // function of the bytes it receives, and routes.go already establishes which
 // routes deliver bytes faithfully. Crossing the two tables would run ninety
 // combinations to learn nothing the axes do not say separately.
-func doCorpus(only string, keep, windowsGUI bool) int {
+func doCorpus(only string, keep, noGUI bool) int {
 	if testScheme == "shimp" {
 		fmt.Fprintln(os.Stderr, "REFUSED: testScheme is the production scheme.")
 		return 1
@@ -130,7 +130,24 @@ func doCorpus(only string, keep, windowsGUI bool) int {
 	}
 	defer os.RemoveAll(work)
 
-	exe, err := buildAndInstall(root, work, testScheme, windowsGUI)
+	// ⚠️ WINDOWSGUI BY DEFAULT HERE, which -gui=false turns off.
+	//
+	// SHIMP_NO_CONSOLE stops the handler ALLOCATING a console. It cannot
+	// stop Windows GRANTING one: a console-subsystem binary launched through
+	// the registry is given a window before any of its own code runs, and
+	// that grant is what a human sees flash and lose focus to.
+	//
+	// Only the subsystem decides that, so the corpus builds the handler
+	// windowsgui. Between the two, Windows grants nothing and shimp
+	// allocates nothing, which is the only combination that produces zero
+	// windows.
+	//
+	// ⚠️ And it costs something, stated rather than hidden: s66 noted the
+	// harness had only ever measured the console-subsystem build. With no
+	// console wanted either way the subsystem makes no difference to the
+	// gate, and -gui=false restores the old behaviour for anyone who wants
+	// to watch.
+	exe, err := buildAndInstall(root, work, testScheme, !noGUI)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -143,9 +160,9 @@ func doCorpus(only string, keep, windowsGUI bool) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	sub := "console-subsystem"
-	if windowsGUI {
-		sub = "windowsgui, so a click is SILENT to the user"
+	sub := "windowsgui + SHIMP_NO_CONSOLE, so NO window is created"
+	if noGUI {
+		sub = "console-subsystem, so Windows grants a console window per click"
 	}
 	fmt.Fprintf(progress, "%d shapes, handler built %s\n\n", len(shapes), sub)
 
@@ -201,7 +218,30 @@ func dispatchViaBaseline(exe, link string) error {
 	// baseline route inherits it. A BROWSER click does not: that handler is
 	// a child of Chrome, which never saw this variable. So -run's chrome
 	// routes still hold, and that is measured rather than assumed.
-	c.Env = append(os.Environ(), "SHIMP_NO_HOLD=1")
+	// ⚠️ TWO VARIABLES, AND THEY DO DIFFERENT JOBS.
+	//
+	// SHIMP_NO_HOLD skips the wait AFTER something was shown. Cosmetic.
+	//
+	// SHIMP_CONSENT_SECONDS shortens the CONSENT window, which is the slow
+	// part the user spotted: four of the eight shapes are one-shots that
+	// reach the gate, nobody is at the keyboard, and each sat for the full
+	// thirty seconds. The corpus had gone from 28s to 82s and the handler
+	// was doing the waiting, not the harness.
+	//
+	// ⚠️ NEITHER IS SHIMP_ASSUME_CONSENT. That one skips the gate and then
+	// EXECUTES. A shortened window still ABORTS, so the real branch runs and
+	// nothing else does -- which is what verdict.go's `Ran` check now
+	// asserts for every shape.
+	c.Env = append(os.Environ(),
+		"SHIMP_NO_HOLD=1",
+		"SHIMP_CONSENT_SECONDS=1",
+		// ⚠️ NO WINDOWS AT ALL. A clicked console-subsystem handler is
+		// GIVEN a console that is visible and foreground, so eight shapes
+		// stole the keyboard eight times. A focus dance was tried first and
+		// half worked: AllocConsole activates the window before anything can
+		// be told not to. So no console is created, consent cannot be asked,
+		// and the click aborts -- which is what an unattended run wants.
+		"SHIMP_NO_CONSOLE=1")
 	out, err := c.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
@@ -220,7 +260,15 @@ func waitForVerdict(logPath string, off int64) HandlerSaw {
 		raw, err := os.ReadFile(logPath)
 		if err == nil && int64(len(raw)) > off {
 			body := string(raw[off:])
-			if strings.Contains(body, "click REFUSED: ") {
+			// ⚠️ ANY terminal line, not just a refusal. s67 gave a
+			// one-shot two more endings -- ABORTED and exited -- and
+			// waiting only for REFUSED meant four shapes polled for the
+			// full 20s before falling through. Measured: the corpus went
+			// from 28s to 82s and still passed, which is how a harness
+			// drifts without failing.
+			if strings.Contains(body, "click REFUSED: ") ||
+				strings.Contains(body, "click ABORTED: ") ||
+				strings.Contains(body, "click: exited ") {
 				return readHandler(body)
 			}
 		}

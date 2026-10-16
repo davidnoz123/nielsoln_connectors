@@ -101,6 +101,14 @@ func ownConsole() (syscall.Handle, error) {
 // askConsent shows prompt on a console we own and returns true only if the
 // user pressed a key there.
 func askConsent(show func(), d time.Duration) bool {
+	// ⚠️ NO CONSOLE MEANS NO CONSENT MEANS NO RUN, and that is the whole
+	// mechanism rather than a limitation. A harness that wants no windows
+	// gets an abort, which is what it wanted anyway.
+	if os.Getenv(noConsoleEnv) == "1" {
+		_log("click ABORTED: %s is set, so no console was created, so "+
+			"consent could not be asked and nothing ran", noConsoleEnv)
+		return false
+	}
 	h, err := ownConsole()
 	if err != nil {
 		_log("click REFUSED: no console of our own could be obtained, so "+

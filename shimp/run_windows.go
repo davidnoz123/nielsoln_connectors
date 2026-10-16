@@ -27,28 +27,34 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
 
-// consentSeconds is how long a click waits for a human.
-//
-// Long enough to read an argv and decide, short enough that an unattended
-// machine does not sit with a window open for ever. It aborts at the end,
-// so erring long costs nothing but a window.
-const consentSeconds = 30
-
-// assumeConsentEnv skips the prompt. ⚠️ TEST HARNESSES ONLY.
-//
-// Named so that nobody can set it believing it makes anything safer, and
-// deliberately NOT the same variable as SHIMP_NO_HOLD. That one suppresses a
-// WAIT after a refusal has already been shown, which is cosmetic. This one
-// removes a human from the decision to execute code, which is not.
-//
-// It is honest about its own weakness: anybody who can set this can already
-// run programs. It exists so linkprobe can exercise the run path, and the
-// run log records when it was used.
-const assumeConsentEnv = "SHIMP_ASSUME_CONSENT"
+// consentWindow is how long to wait, honouring the override.
+func consentWindow() time.Duration {
+	if v := os.Getenv(consentSecondsEnv); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			// ⚠️ Floored at one second rather than allowing zero. At zero the
+			// prompt would be printed and the abort logged in the same
+			// instant, so a human who happened to be watching could not read
+			// what had been declined.
+			if n < 1 {
+				n = 1
+			}
+			if n > 600 {
+				n = 600
+			}
+			_log("click: consent window shortened to %ds by %s", n,
+				consentSecondsEnv)
+			return time.Duration(n) * time.Second
+		}
+		_log("click: %s=%q is not a number, using the default %ds",
+			consentSecondsEnv, v, consentSeconds)
+	}
+	return consentSeconds * time.Second
+}
 
 // runLink asks, then runs. It returns the process exit code to use.
 func runLink(u *URI) int {
@@ -59,6 +65,12 @@ func runLink(u *URI) int {
 		showRefusalFn("the link produced no command to run")
 		return 1
 	}
+
+	// ⚠️ COMPUTED ONCE. consentWindow() logs when the override is in play,
+	// and calling it for the prompt text and again for the wait logged the
+	// same line twice, which reads like two clicks in a log whose whole job
+	// is to say what happened.
+	window := consentWindow()
 
 	// ⚠️ THE PROMPT IS A CLOSURE, and that is not a style choice. askConsent
 	// detaches from any inherited console and allocates its own, rebinding
@@ -74,8 +86,13 @@ func runLink(u *URI) int {
 			fmt.Fprintf(os.Stdout, "  action    %s   (NOT part of the identity)\n",
 				u.Action)
 		}
+		// ⚠️ THE REAL WINDOW, not the default. With the override set this
+		// printed "wait 30s" while aborting after one second: a prompt lying
+		// about its own deadline, which is the same class of defect as the
+		// stale errno the focus probe used to print.
 		fmt.Fprintf(os.Stdout,
-			"\n  press any key to RUN it, or wait %ds to abort\n", consentSeconds)
+			"\n  press any key to RUN it, or wait %ds to abort\n",
+			int(window.Seconds()))
 	}
 
 	if os.Getenv(assumeConsentEnv) == "1" {
@@ -86,7 +103,7 @@ func runLink(u *URI) int {
 		_log("click: consent ASSUMED via %s, which a test harness sets and "+
 			"nothing else should", assumeConsentEnv)
 		fmt.Fprintf(os.Stdout, "\n  consent assumed via %s\n", assumeConsentEnv)
-	} else if !askConsentFn(show, consentSeconds*time.Second) {
+	} else if !askConsentFn(show, window) {
 		// ⚠️ EVERY failure lands here and they all mean the same thing: no
 		// console of our own, input that cannot be read, a key too fast to
 		// have been typed, or the timeout. None of them means "run it".

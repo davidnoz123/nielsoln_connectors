@@ -48,28 +48,21 @@ import (
 	"unsafe"
 )
 
-// holdSeconds is how long a refusal stays readable.
-//
-// ⚠️ A TIMEOUT AS WELL AS A KEYPRESS, not either alone. Waiting only for a
-// keypress hangs forever on an unattended run, and linkprobe's -corpus
-// dispatches eight links in a row with nobody watching. Waiting only on a
-// timer makes a human stare at a window they have already read.
-const holdSeconds = 25
-
-// noHoldEnv lets an automated run skip the WAIT without skipping the MESSAGE.
-//
-// ⚠️ The distinction is deliberate. An environment variable that suppressed
-// the reason itself would be a way to hide failures in production, which is
-// the opposite of this file's purpose. This one only declines to block: the
-// refusal is still written to the console and still written to the log.
-const noHoldEnv = "SHIMP_NO_HOLD"
-
 // showRefusal puts a refusal where a human will see it.
 //
 // Called on every refusal path and nowhere else. It never returns an error:
 // a failure to display must not change what the handler did, and the log
 // already holds the authoritative record either way.
 func showRefusal(reason string) {
+	// ⚠️ The log already holds the authoritative record, so declining to
+	// DISPLAY a refusal loses nothing a harness needs. A human gets the
+	// window; an unattended run gets the log.
+	if os.Getenv(noConsoleEnv) == "1" {
+		_log("click: %s is set, so the refusal was logged and not shown",
+			noConsoleEnv)
+		return
+	}
+
 	// A console only if there is something to say, which is now.
 	if err := allocConsole(); err != nil {
 		// Reported to the log rather than swallowed. If this fails the user

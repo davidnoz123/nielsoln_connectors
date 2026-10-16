@@ -114,3 +114,21 @@ func AcknowledgedBody(names []string) bool {
 	_, ok := acknowledgedBodies[strings.Join(names, "+")]
 	return ok
 }
+
+// ⚠️ Declared 16 Oct 2026, and it is the ONE real duplicate that survived
+// eleven Python name collisions when the body-keyed check was widened.
+//
+//	linkprobe/chrome_route.py   CDP.close()
+//	probes/cdp.py               CDP.close()
+//
+// Byte-identical, 5 lines: close the socket, log a warning if it fails.
+// Both belong to a CDP client, and the clients themselves are the real
+// duplication -- declared as a recipe in known_recipes.go, with the reason
+// they are not yet collapsed.
+//
+// Kept as an entry rather than fixed here because probes/ exists to stop
+// losing instruments, not to refactor linkprobe. ⚠️ If chrome_route.py ever
+// becomes importable, both this entry and the recipe should go.
+func init() {
+	acknowledgedBodies["close"] = "the CDP client's socket close, identical in two clients. See known_recipes.go."
+}

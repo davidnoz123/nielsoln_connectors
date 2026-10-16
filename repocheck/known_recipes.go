@@ -78,6 +78,31 @@ var recipes = []Recipe{
 			"the correct seam, and the two test different questions.",
 	},
 	{
+		Name: "a CDP client in Python: connect, send, match the reply by id",
+		Sites: []string{
+			"linkprobe/chrome_route.py",
+			"probes/cdp.py",
+		},
+		Markers: []string{
+			"suppress_origin", "websocket", "json.loads",
+		},
+		// ⚠️ NOT COLLAPSED, and the reason is mechanical rather than
+		// aesthetic. chrome_route.py binds `websocket` inside
+		// safe_local_imports rather than at module level, so importing its
+		// CDP class raises NameError on first use. It cannot be reused
+		// without changing it, and it is committed, tested and in
+		// linkprobe's loop.
+		//
+		// probes/ exists to stop losing measurement instruments, not to
+		// refactor working code, so the duplication is declared instead.
+		// ⚠️ Both this entry and acknowledgedBodies["close"] should go the
+		// day chrome_route.py's client becomes importable.
+		Why: "chrome_route.py's client is not importable: it binds websocket " +
+			"inside safe_local_imports, so using its class raises NameError. " +
+			"Collapsing it means changing committed tested code, which is " +
+			"not what probes/ is for.",
+	},
+	{
 		Name: "a hand-rolled websocket client for CDP",
 		Sites: []string{
 			"remote_chrome_cdp/ws.go",

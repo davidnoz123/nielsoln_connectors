@@ -55,6 +55,22 @@ var funcRe = regexp.MustCompile(`(?m)^func ([a-zA-Z_][a-zA-Z0-9_]*)\(`)
 // Returns nothing when run outside a checkout, which is correct rather than a
 // failure: a module fetched by `go run module@sha` has no siblings, and a
 // check that cannot see the repo should say so rather than pass.
+// modulesIn finds every code directory worth checking.
+//
+// ⚠️ IT USED TO MEAN "DIRECTORY WITH A go.mod", and that left two holes which
+// appeared the moment `probes/` was added on 16 Oct 2026:
+//
+//  1. a PYTHON-ONLY directory has no go.mod, so none of it was discovered.
+//     This is the third time the same blind spot has been found in two days:
+//     SharedBodies could not see test files, then could not see Python, and
+//     now the discovery step could not see a directory holding only Python.
+//  2. a NESTED module one level down was missed, because the scan read a
+//     single level. `probes/focus` is exactly that.
+//
+// So a directory counts if it holds a go.mod OR any .py file, and immediate
+// subdirectories are checked for go.mod too. Names may therefore contain a
+// separator, which the callers handle because they join rather than
+// concatenate.
 func modulesIn(root string) ([]string, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -65,12 +81,39 @@ func modulesIn(root string) ([]string, error) {
 		if !e.IsDir() {
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(root, e.Name(), "go.mod")); err == nil {
+		if isCodeDir(filepath.Join(root, e.Name())) {
 			out = append(out, e.Name())
+		}
+		// One level deeper, for a module nested inside a code directory.
+		// ⚠️ Deliberately NOT a full walk: a recursive scan would pick up
+		// vendored trees and build output, and the repo's layout is two
+		// levels by convention.
+		subs, err := os.ReadDir(filepath.Join(root, e.Name()))
+		if err != nil {
+			continue
+		}
+		for _, se := range subs {
+			if !se.IsDir() {
+				continue
+			}
+			p := filepath.Join(root, e.Name(), se.Name())
+			if _, err := os.Stat(filepath.Join(p, "go.mod")); err == nil {
+				out = append(out, filepath.ToSlash(
+					filepath.Join(e.Name(), se.Name())))
+			}
 		}
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// isCodeDir reports whether a directory holds code this repo should check.
+func isCodeDir(dir string) bool {
+	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+		return true
+	}
+	py, err := filepath.Glob(filepath.Join(dir, "*.py"))
+	return err == nil && len(py) > 0
 }
 
 // Overlap is one function name found in more than one module.
@@ -148,10 +191,34 @@ func shortHash(s string) string {
 func Overlaps(root string, modules []string) ([]Overlap, error) {
 	seen := map[string]map[string]string{}
 	for _, m := range modules {
-		files, err := filepath.Glob(filepath.Join(root, m, "*.go"))
+		// ⚠️ GO ONLY, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT.
+		//
+		// This was widened to read Python on 16 Oct 2026 and immediately
+		// reported ELEVEN new overlaps, of which one was real. The rest were
+		// names Python does not let you choose:
+		//
+		//	do_GET, log_message, handle_one_request   required overrides of
+		//	                                          BaseHTTPRequestHandler
+		//	_log, safe_local_imports                  mandated by AGENTS
+		//	__init__, send, close, drain              ordinary method names
+		//
+		// A NAME-keyed check assumes the name was chosen. In Python it is
+		// frequently dictated, by a framework, by a convention or by the
+		// language. So the check that UNDERSTATES duplication in Go
+		// massively OVERSTATES it in Python, and an allowlist of eleven
+		// forced names is exactly the rubber-stamp this file's own header
+		// warns about.
+		//
+		// Python is covered by SharedBodies instead, which keys on the BODY
+		// and does not care what anything is called. That is the right key
+		// for a language where the name is not a choice -- and it found the
+		// one true duplicate among the eleven.
+		var files []string
+		found, err := filepath.Glob(filepath.Join(root, m, "*.go"))
 		if err != nil {
 			return nil, err
 		}
+		files = append(files, found...)
 		for _, f := range files {
 			if strings.HasSuffix(f, "_test.go") {
 				continue
@@ -161,7 +228,11 @@ func Overlaps(root string, modules []string) ([]Overlap, error) {
 				return nil, err
 			}
 			src := string(raw)
-			for _, hit := range funcRe.FindAllStringSubmatch(src, -1) {
+			re := funcRe
+			if strings.HasSuffix(f, ".py") {
+				re = pyFuncRe
+			}
+			for _, hit := range re.FindAllStringSubmatch(src, -1) {
 				name := hit[1]
 				if seen[name] == nil {
 					seen[name] = map[string]string{}
@@ -171,7 +242,7 @@ func Overlaps(root string, modules []string) ([]Overlap, error) {
 				// _windows/_other pair would report as duplication and the
 				// signal would drown.
 				if _, had := seen[name][m]; !had {
-					seen[name][m] = shortHash(bodyOf(src, name))
+					seen[name][m] = shortHash(bodyOfIn(f, src, name))
 				}
 			}
 		}
@@ -272,10 +343,18 @@ func main() {
 	for _, sb := range shared {
 		names := sb.Names()
 		mark := "    "
-		// A body under ONE name in two modules is what Overlaps already
-		// reports, so it is not news here. A body under TWO OR MORE names is
-		// a copy somebody renamed, and that is this check's whole point.
-		if len(names) > 1 && !AcknowledgedBody(names) {
+		// ⚠️ EVERY undeclared shared body is flagged, whatever it is called.
+		//
+		// This used to skip single-name cases on the grounds that Overlaps
+		// covered them. It does not: Overlaps reads Go only, deliberately,
+		// so a Python body shared under one name was reported here and
+		// flagged nowhere. Tolerated-by-blindness is the state the baseline
+		// exists to prevent.
+		// ⚠️ And not flagged twice for ONE fact. `contained` is already
+		// declared by NAME in known_overlaps.go, and demanding a second
+		// declaration of the same duplication in acknowledgedBodies is how
+		// an allowlist becomes a formality people tick without reading.
+		if !allNamesAcknowledged(names) && !AcknowledgedBody(names) {
 			mark = "NEW "
 			bad++
 		}
@@ -294,4 +373,18 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println("\nall declared")
+}
+
+// allNamesAcknowledged reports whether every name a shared body hides behind
+// is already declared in the name baseline.
+func allNamesAcknowledged(names []string) bool {
+	if len(names) == 0 {
+		return false
+	}
+	for _, n := range names {
+		if !Acknowledged(n) {
+			return false
+		}
+	}
+	return true
 }

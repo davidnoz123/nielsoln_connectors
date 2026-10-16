@@ -123,7 +123,20 @@ conclusion is right: a full-SHA self-describing URI under 200 characters is
 nowhere near the limit, so **255 is not a constraint on our design**.
 
 The sharpest statement is the failure mode rather than the size: **the object
-refuses loudly at 2084, the formula truncates silently at 255.**
+refuses loudly at 2084.**
+
+> ⚠️ **CORRECTION, 16 October 2026.** This paragraph originally ended "the
+> formula truncates silently at 255", and that was wrong. Re-measured with
+> `probes/excel_hyperlink.py` on the same Excel build: `=HYPERLINK()` stores
+> 255, 256, 326, 1000, 2084, 2085 and 4000 bytes **unaltered**, and REFUSES
+> with a com_error by 6000. It does not truncate at 255, and where it fails
+> it refuses rather than truncating. The boundary is consistent with Excel's
+> 4096-character formula limit and nothing hyperlink-specific.
+>
+> The formula route is still unusable, for the reason that never depended on
+> 255: `Hyperlinks.Count` is **zero** after writing one, so there is no
+> Hyperlink object to follow and only a human click can complete it. s38's
+> rule stands.
 
 Your formula trap is the more valuable half and we had it filed as "a route
 with a smaller budget", which was wrong. It is not a route at all. Recorded as

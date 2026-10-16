@@ -48,9 +48,21 @@ with a COM error. It never truncates silently. A realistic shimp link is under
 ⚠️ **Also measured: do NOT reach for `=HYPERLINK()` instead.**
 A formula cell reads back as its *result*, so a slate `pull` stores the display
 text and the next `publish` writes that text as a plain value, destroying the
-link with nothing reported. And `=HYPERLINK()` truncates `link_location` at 255
-characters silently. The object route refuses loudly; the formula route
-corrupts quietly.
+link with nothing reported.
+
+> ⚠️ **CORRECTION, 16 October 2026.** This paragraph originally continued "and
+> `=HYPERLINK()` truncates `link_location` at 255 characters silently". That
+> was wrong, and if you acted on the number rather than the advice, the advice
+> still holds for a different reason.
+>
+> Re-measured with `probes/excel_hyperlink.py`: the formula stores up to 4000
+> bytes **unaltered** and then REFUSES with a com_error, consistent with
+> Excel's 4096-character formula limit. There is no silent truncation.
+>
+> Avoid `=HYPERLINK()` anyway, because of the half above that IS measured: a
+> formula cell reads back as its result, so pull/publish destroys the link.
+> And `Hyperlinks.Count` is zero afterwards, so nothing can follow it
+> programmatically.
 
 ## Working today, if you need something this week
 

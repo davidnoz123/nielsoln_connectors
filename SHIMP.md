@@ -68,6 +68,7 @@
 | s66 | The second axis: link SHAPES and the handler's verdict, after a human found what the harness could not | **BUILT and MEASURED** 15 Oct 2026, 8 shapes, 0 findings | nothing |
 | s67 | A refused click is VISIBLE: the lazy console, wired at last | **BUILT and CONFIRMED by the user** 15 Oct 2026 | nothing |
 | s68 | A hyperlink RAN something. And the consent gate was broken until somebody ran it | **WORKING end to end** 15 Oct 2026, confirmed by the user | nothing |
+| s69 | probes/: the instruments promoted, and the first re-run retired a quoted number | **BUILT and RUN** 16 Oct 2026 | nothing |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -1875,6 +1876,16 @@ s62 built `linkprobe` and ran one link down every entry point. This row asked wh
 
 The browser half remains open, and is now open BY NAME rather than by omission: `chrome-address-bar` and `chrome-link-click` are separate rows in the table because the href is resolved against the page's base URL first, which the address bar does not do.
 
+#### ⚠️ The 255 number is RETIRED, 16 Oct 2026
+
+s69 promoted the instrument and re-ran it. `=HYPERLINK()` stores 255, 256, 326, 1000, 2084, 2085 and 4000 bytes **unaltered**, and REFUSES with a com_error by 6000.
+
+⚠️ So "truncates at 255 silently" is wrong in both halves: not at 255, and not silently. The boundary is consistent with Excel's 4096-character formula limit and nothing hyperlink-specific.
+
+The 2084/2085 object boundary reproduced EXACTLY, which is the other half of the same run and the reason to trust it.
+
+The formula route remains unusable for the reason that never depended on 255: `Hyperlinks.Count` is zero, so there is no object to follow.
+
 ### s37. The SHA in the URI: exactly one legal length, and it should be 40
 
 Raised 7 Oct 2026, and it is a different question from s5 because the ground moved.
@@ -1972,6 +1983,16 @@ That is how 33 live hyperlinks were lost on 2 Oct.
 
 So shimp links belong in a column declared `set_format(..., hyperlink=True)`, which uses the object, and **never in a formula**.
 ⚠️ No shimp documentation may show `=HYPERLINK("shimp://...")`, because that example destroys itself on the next publish.
+
+#### ⚠️ One of this row's two reasons was false, 16 Oct 2026
+
+This row recorded that `=HYPERLINK()` must never appear in shimp documentation. The rule STANDS, and one of its supports has gone.
+
+* ⚠️ **"truncates at 255 silently" is FALSE.** Re-measured by `probes/excel_hyperlink.py`: 4000 bytes stored unaltered, refused by 6000.
+* **"a formula cell reads back as its result, so publish destroys the link" is TRUE** and was always the stronger half.
+* **And `Hyperlinks.Count` is ZERO afterwards**, measured 15 Oct, so nothing can follow one programmatically either.
+
+Two good reasons remain and the rule is unaffected. ⚠️ Recorded because the false one was sent to `slate_tools` and `dataannotation_tools`, and both notes now carry a correction.
 
 ### s39. The minimum SHAPE another tool may refuse a shimp URI on
 
@@ -3955,3 +3976,79 @@ The hold check lived only in `showRefusal`, so the ABORTED path in `runLink` cal
 * **no action delivery.** A link carrying an action other than `ensure` is refused by name, because that needs the keeper.
 * **no second capability.** `chatgpt_tools`' `full_update` is 8200 lines of Python in another repo, so s55 maxim 1 means a `go/run` link cannot name it. The decision recorded in s67 stands open: may shimp run code its audit does not cover, if it declares the boundary loudly?
 * ⚠️ **s64 is now live, not theoretical.** A permitted origin can fire a link with no gesture, and something now runs at the end of it. The keypress is the only thing between a visited page and `go run <module>@<sha>`, which is why it is in from the first commit that could execute anything.
+
+### s69. probes/: the instruments promoted, and the first re-run retired a quoted number
+
+16 Oct 2026, from the question *"have we captured a lot of Python from your scratchpad and are we using it?"*
+
+The answer was **no**, and git settled it: three `.py` files had ever been committed, two of them drivers written directly into `linkprobe` and one the pre-existing `update_agents.py`. Nothing had been promoted.
+
+#### ⚠️ The instruments behind the numbers were in a temp directory
+
+| instrument | the number it produced |
+|---|---|
+| `probe_2084.py` | "the object caps at 2084 and REFUSES at 2085" |
+| `measure_url_limits.py` | "=HYPERLINK() truncates at 255 silently" |
+| `click_diag.py` | the navigation-event diagnosis that overturned s63 |
+| `focusprobe` | yesterday's foreground measurements |
+
+Those figures are quoted in `linkprobe/routes.go`, in the slate, and in two notes delivered to OTHER repos. ⚠️ **The numbers survived. The instruments did not.** Every one had become a claim nobody could re-measure without rewriting the tool, which is the position s59 and s66 exist to prevent.
+
+`probes/` now holds them, with the rule stated in its README: **a number quoted as measured must name the instrument that produced it.** If there is no instrument, the number is a recollection.
+
+#### ⚠️ AND THE FIRST RE-RUN RETIRED A NUMBER
+
+`probes/excel_hyperlink.py`, on the same Excel build:
+
+```
+Hyperlinks.Add       2084 exact round-trip, 2085 REFUSED   <- reproduced exactly
+=HYPERLINK() stores  255, 256, 326, 1000, 2084, 2085, 4000  all UNALTERED
+                     6000, 8000, 32000                      REFUSED, com_error
+```
+
+So the 2084 boundary is confirmed by a freshly written instrument, which is exactly what this directory is for.
+
+⚠️ **And "=HYPERLINK() truncates at 255, SILENTLY" is wrong in BOTH halves.** It does not truncate at 255, and where it fails it REFUSES rather than truncating. The boundary sits between 4000 and 6000, consistent with Excel's 4096-character formula limit and nothing hyperlink-specific being involved at all.
+
+⚠️ That claim was recorded on 7 Oct and quoted for nine days, including outward to `slate_tools` and `dataannotation_tools`. Both notes now carry a correction naming the instrument.
+
+**It does not rescue the formula route**, and the reason it was always unusable is unchanged and stronger: `Hyperlinks.Count` is ZERO after writing `=HYPERLINK()`, so there is no object to follow and only a human click completes it. That objection never depended on 255.
+
+#### What each instrument owes, and why
+
+* **its own result in the docstring, with the date.** A probe whose output nobody recorded gets re-run to learn what is already known.
+* **a control.** Twice in one session a control caught a false positive that would have been written down as a finding.
+* ⚠️ **the distinction between measured and inferred.** `cdp_click.py` reports Chrome's navigation events rather than success or failure, because three outcomes look identical from outside and conflating two of them produced a wrong conclusion.
+* **no machine state left behind**, and `DispatchEx` rather than attaching: the original ran against the session's Excel, and attaching sets `DisplayAlerts = False` on somebody's live application, which outlives the script.
+
+#### ⚠️ Three defects in the instruments, found by running them
+
+1. **A probe died printing its own conclusion.** The console is cp1252 and a warning glyph raised `UnicodeEncodeError` AFTER the measurement had been taken. A probe that crashes while reporting buries the number it was run for. Both streams are reconfigured to UTF-8 now.
+2. **The formula loop let an exception escape**, so the run died at 8000 and discarded the six results it already had. Each case is caught separately: an instrument must survive the interesting case.
+3. ⚠️ **The focus probe printed a STALE ERRNO as a reason.** `SetForegroundWindow` returns 0 for "refused" and does NOT call `SetLastError`, so it reported "Invalid window handle" for a handle Windows had just confirmed valid, and two readings were written down as *"REFUSED, and it said so"* when it had said nothing. The return value and the before/after foreground are the whole evidence. **A stale errno dressed as a reason is worse than no reason, because it gets quoted.**
+
+#### ⚠️ And repocheck could not see any of it
+
+`modulesIn` meant "directory with a go.mod", which missed a Python-only directory entirely and missed `probes/focus` for being one level down. ⚠️ **The third instance of the same blind spot in two days**: SharedBodies could not see test files, then could not see Python, and then discovery could not see a directory holding only Python. Each was found after adding the code it could not see.
+
+A directory now counts if it holds a `go.mod` OR any `.py`, and immediate subdirectories are checked for a `go.mod` too.
+
+#### ⚠️ THE INTERESTING PART: name-matching is the WRONG check for Python
+
+Widening `Overlaps` to read Python reported **eleven** new overlaps, of which **one** was real. The rest were names Python does not let you choose:
+
+| | |
+|---|---|
+| `do_GET`, `log_message`, `handle_one_request` | required overrides of `BaseHTTPRequestHandler` |
+| `_log`, `safe_local_imports` | mandated by AGENTS |
+| `__init__`, `send`, `close`, `drain` | ordinary method names |
+
+⚠️ A name-keyed check assumes the name was CHOSEN. In Python it is frequently dictated, by a framework, a convention or the language. So the check that **understates** duplication in Go massively **overstates** it in Python, and an allowlist of eleven forced names is exactly the rubber-stamp `known_overlaps.go`'s own header warns about.
+
+So `Overlaps` stays Go-only, deliberately, and Python is covered by `SharedBodies`, which keys on the BODY and does not care what anything is called. **That is the right key for a language where the name is not a choice, and it found the one true duplicate among the eleven**: `CDP.close()`, byte-identical in two clients.
+
+Two further corrections fell out of it: `SharedBodies` now flags single-name shared bodies, because the old condition assumed `Overlaps` covered them and it does not; and it does NOT flag a body whose names are already acknowledged, because demanding two declarations for one fact is how an allowlist becomes a formality.
+
+#### Declared rather than collapsed
+
+`probes/cdp.py` and `linkprobe/chrome_route.py` both implement a CDP client. ⚠️ `chrome_route.py`'s is **not importable**: it binds `websocket` inside `safe_local_imports`, so using its class raises `NameError`. Collapsing it means changing committed, tested code in `linkprobe`'s loop, and `probes/` exists to stop losing instruments rather than to refactor. Declared as a recipe, with the note that both the recipe and `acknowledgedBodies["close"]` should go the day that client becomes importable.

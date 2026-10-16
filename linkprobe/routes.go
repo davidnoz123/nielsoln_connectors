@@ -112,10 +112,15 @@ type Route struct {
 	// Pad lengthens this route's probe link to at least this many bytes.
 	//
 	// ⚠️ Needed because a threshold nobody crosses is a threshold nobody
-	// measures. The default probe link is 183 bytes, and the Excel formula
-	// route truncates at 255, so the first run of that route could not have
-	// seen truncation even with a correct driver. Zero means the default
-	// length.
+	// measures. The default probe link is 183 bytes, and the first run of the
+	// Excel formula route used that, so it could not have crossed any
+	// threshold even with a correct driver. Zero means the default length.
+	//
+	// ⓘ This comment used to say "the Excel formula route truncates at 255".
+	// That claim was re-measured on 16 Oct by probes/excel_hyperlink.py and
+	// is false: the formula stores 4000 bytes unaltered and then REFUSES.
+	// The padding is still right, for the general reason rather than that
+	// particular number.
 	Pad int
 }
 
@@ -269,7 +274,7 @@ var routes = []Route{
 		// altogether. Recorded as open rather than quietly dropped: the
 		// claim is not disproved, it is unlocated.
 		Expect:  Unrunnable,
-		Because: "exposes NO Hyperlink object (Hyperlinks.Count is 0), so delivery is only answerable by a human clicking the cell. Also a formula cell reads back as its result, so a pull/publish cycle destroys the link. ⚠️ The 255-byte truncation is NOT where it was believed to be: 326 bytes stored unaltered",
+		Because: "exposes NO Hyperlink object (Hyperlinks.Count is 0), so delivery is only answerable by a human clicking the cell. Also a formula cell reads back as its result, so a pull/publish cycle destroys the link. ⚠️ And the 255-byte SILENT TRUNCATION DOES NOT EXIST: re-measured 16 Oct by probes/excel_hyperlink.py, it stores 4000 bytes unaltered and REFUSES by 6000, consistent with Excel's 4096 formula limit and nothing hyperlink-specific",
 	},
 	{
 		ID:   "chrome-link-click",

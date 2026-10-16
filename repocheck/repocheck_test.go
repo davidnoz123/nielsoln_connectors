@@ -424,3 +424,79 @@ func TestPythonCommentsDoNotInflateABody(t *testing.T) {
 			"above the floor of %d", n, minBodyLines)
 	}
 }
+
+// TestDiscoveryFindsPythonOnlyAndNestedDirs is the companion for the
+// discovery widening.
+//
+// ⚠️ Three times in two days the same blind spot: SharedBodies could not see
+// test files, then could not see Python, and then discovery itself could not
+// see a directory holding only Python. Each was found after adding the code
+// it could not see, never before.
+func TestDiscoveryFindsPythonOnlyAndNestedDirs(t *testing.T) {
+	dir := t.TempDir()
+	// a Go module, the case that always worked
+	mk := func(parts ...string) string {
+		p := filepath.Join(append([]string{dir}, parts...)...)
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	gomod := func(p, name string) {
+		if err := os.WriteFile(filepath.Join(p, "go.mod"),
+			[]byte("module "+name+"\n\ngo 1.27\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gomod(mk("alpha"), "x/alpha")
+	// a PYTHON-ONLY directory: no go.mod at all
+	pyDir := mk("probes")
+	if err := os.WriteFile(filepath.Join(pyDir, "thing.py"),
+		[]byte("def f():\n    return 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// a module NESTED inside it
+	gomod(mk("probes", "focus"), "x/probes/focus")
+	// a directory with neither, which must NOT be discovered
+	mk("notes")
+
+	got, err := modulesIn(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	has := func(s string) bool {
+		for _, g := range got {
+			if g == s {
+				return true
+			}
+		}
+		return false
+	}
+	for _, want := range []string{"alpha", "probes", "probes/focus"} {
+		if !has(want) {
+			t.Errorf("discovery missed %q, so its code is unchecked: %v",
+				want, got)
+		}
+	}
+	if has("notes") {
+		t.Errorf("a directory with no code was discovered: %v", got)
+	}
+}
+
+// TestTheRealRepoHasItsProbesDiscovered pins the live case.
+func TestTheRealRepoHasItsProbesDiscovered(t *testing.T) {
+	mods := skipIfNoCheckout(t)
+	for _, want := range []string{"probes", "probes/focus"} {
+		var found bool
+		for _, m := range mods {
+			if m == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%q is not discovered, so the instruments behind this "+
+				"repo's measured numbers are outside every check: %v",
+				want, mods)
+		}
+	}
+}

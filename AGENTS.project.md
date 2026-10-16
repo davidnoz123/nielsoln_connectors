@@ -29,6 +29,27 @@ The design the connectors exist to serve is `shimp`, and its decisions live in
 the `shimp` slate in this repo rather than in prose. `SHIMP.md` is a RENDER of
 that slate, like `PLAN.md` is of slate_tools' queue. Do not hand-edit it.
 
+### The map: seven kinds of thing, and three are nearly empty
+
+⚠️ **Read the right-hand column.** A list of seven categories reads as seven
+healthy pillars, and three of them are close to empty. Mapped 16 Oct 2026,
+recorded as s70.
+
+| | | state |
+|---|---|---|
+| 1 | **the handler** — `shimp/` | install half complete. Dispatch runs a ONE-SHOT; an action-bearing link is refused by name because the keeper (s20) is not built |
+| 2 | **the leaf modules** | ⚠️ **ZERO.** No `require` block and no `go.sum` anywhere, so nothing depends on anything. s60 ranks the candidates; s13 decided `cdpcore` and it waits on a second consumer |
+| 3 | **the shimpable tools** — `chrome_ready/`, `chrome_sessions/`, `remote_ai/`, `remote_chrome_cdp/`, `pdf_view_server/` | all are `package main`, so a link MAY name any. **One is proven by a real click**: `chrome_ready` (s68). `pdf_view_server` and `remote_chrome_cdp` are RESIDENT and need the keeper |
+| 4 | **the link harness** — `linkprobe/` | 15 routes × 1 link, plus 8 link SHAPES × 1 route. Go orchestrator, Python drivers for Excel and Chrome |
+| 5 | **the instruments** — `probes/` | the programs behind the measured numbers. ⚠️ **A number quoted as measured must name its instrument**; see `probes/README.md` |
+| 6 | **the audit surface** — `*/caveats.go`, `attestations/`, `repocheck/` | ⚠️ **barely built: one caveats file, one attestation.** Both on `chrome_sessions`, which nothing runs, and ABSENT from `chrome_ready`, which is the only module a link executes. `repocheck` belongs here rather than with the tests: it polices s55's maxims, which are the preconditions for an audit meaning anything |
+| 7 | **the design record** — the slate, `SHIMP.md`, `db/`, `patches/`, `transcripts/` | the largest artefact in the repo, bigger than all the Go together, and where the corrections live |
+
+⚠️ **The testing code is mostly GO, not Python.** `linkprobe` is 2,345 Go
+against 543 Python and `repocheck` is 1,458 Go with none. Calling it "the
+Python testing code" undersells the harness and puts `repocheck` in the wrong
+box, which is the mistake s70 was written to correct.
+
 ---
 
 ## ⚠️ THIS IS A GO REPO AND THE CENTRAL STANDARDS ARE WRITTEN FOR PYTHON

@@ -69,6 +69,7 @@
 | s67 | A refused click is VISIBLE: the lazy console, wired at last | **BUILT and CONFIRMED by the user** 15 Oct 2026 | nothing |
 | s68 | A hyperlink RAN something. And the consent gate was broken until somebody ran it | **WORKING end to end** 15 Oct 2026, confirmed by the user | nothing |
 | s69 | probes/: the instruments promoted, and the first re-run retired a quoted number | **BUILT and RUN** 16 Oct 2026 | nothing |
+| s70 | The seven top-level things, and the state of each | **MAPPED** 16 Oct 2026 | nothing |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -4052,3 +4053,44 @@ Two further corrections fell out of it: `SharedBodies` now flags single-name sha
 #### Declared rather than collapsed
 
 `probes/cdp.py` and `linkprobe/chrome_route.py` both implement a CDP client. ⚠️ `chrome_route.py`'s is **not importable**: it binds `websocket` inside `safe_local_imports`, so using its class raises `NameError`. Collapsing it means changing committed, tested code in `linkprobe`'s loop, and `probes/` exists to stop losing instruments rather than to refactor. Declared as a recipe, with the note that both the recipe and `acknowledgedBodies["close"]` should go the day that client becomes importable.
+
+### s70. The seven top-level things, and the state of each
+
+Mapped 16 Oct 2026, from a proposed four-part taxonomy: the handler, the leaf modules, the shimpable tools, the Python testing code. Measured against the repo, four of seven, and one of the four mislabelled.
+
+#### The seven
+
+| | what it is | measured state |
+|---|---|---|
+| 1 | **the shimp handler** | 4,105 lines. Install half complete; dispatch half runs a ONE-SHOT and refuses an action-bearing link by name |
+| 2 | **the leaf modules** | ⚠️ **ZERO. None exist.** No `require` block and no `go.sum` anywhere in the repo |
+| 3 | **the shimpable tools** | 9 modules are `package main` so a link may name any; **one** is proven by a real click |
+| 4 | **the link harness** | `linkprobe`, 2,345 Go + 543 Python. 15 routes, 8 link shapes |
+| 5 | **the instruments** | `probes`, 598 Python + 274 Go. The numbers, re-measurable |
+| 6 | **the audit surface** | ⚠️ caveats + attestations. **92 lines in one module, 2 files** |
+| 7 | **the design record** | the slate: 4,054-line render, a 2MB db, 45 patches, 45 transcripts |
+
+#### ⚠️ What the four-part version got wrong
+
+* **"the Python testing code" undersells it and misplaces a module.** The harness is mostly GO: `linkprobe` is 2,345 Go against 543 Python, and `repocheck` is 1,458 Go with no Python at all. Two different things were being collapsed: the LINK HARNESS, which drives routes and shapes, and the INSTRUMENTS, which take measurements.
+* ⚠️ **`repocheck` is neither tooling nor testing.** It polices s55's two maxims, which are the PRECONDITIONS for an audit meaning anything. It belongs with the audit surface rather than with the tests, and this row puts it there.
+
+#### ⚠️ The two categories that were missing matter most
+
+**The audit surface (6) is the point of the whole project.** s9's pitch is: paste the link, and validate all the code it can instantiate. That rests on s54's caveats declared in source and verified by an AST walk, and s59's per-`module@sha` attestations.
+
+⚠️ And it is **barely built**: 92 lines in `chrome_sessions`, two attestation files. Both attached to the module nothing runs, and **absent from `chrome_ready`**, which is the only module a link actually executes. The apparatus is on the wrong module.
+
+**The design record (7) is the largest artefact here**, bigger than all the Go together, and it is where the corrections live. It caught the 255-byte truncation that did not exist and the security property that was claimed twice and false. A taxonomy that omits it omits the thing doing the work.
+
+#### ⚠️ And the map was missing from the file an agent MUST read
+
+`AGENTS.project.md` has a "What this repo is" section, and six of nine modules appear nowhere in it: `chrome_ready`, `remote_ai`, `remote_chrome_cdp`, `linkprobe`, `repocheck`, `probes`.
+
+⚠️ So a new agent, reading the authoritative instruction file at session start exactly as the standards require, learns nothing about two thirds of the repo. Most of those modules were added in this session, so the gap is this session's making.
+
+Recorded here for the reasoning; the MAP goes in `AGENTS.project.md`, because that is where the standards say project structure lives and it is what gets read.
+
+#### Why this is a row rather than a note
+
+The categories are not a decision, so this row's value is the per-category STATE and the two gaps it names. ⚠️ Three of the seven are nearly empty: no leaf modules at all, one caveats file, one attestation. A taxonomy that reads as seven healthy pillars would be the most misleading thing in this slate.

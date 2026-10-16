@@ -70,6 +70,7 @@
 | s68 | A hyperlink RAN something. And the consent gate was broken until somebody ran it | **WORKING end to end** 15 Oct 2026, confirmed by the user | nothing |
 | s69 | probes/: the instruments promoted, and the first re-run retired a quoted number | **BUILT and RUN** 16 Oct 2026 | nothing |
 | s70 | The seven top-level things, and the state of each | **MAPPED** 16 Oct 2026 | nothing |
+| s71 | The harness drifted when the handler changed, and the click window is now a choice | **FIXED and MEASURED** 17 Oct 2026 | nothing |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -3822,6 +3823,14 @@ It is a real tension, not an oversight. Measured: console-subsystem gives a visi
 
 It reports nothing today, because both Python files live in one module and only cross-module sharing is reported. Covered for when that changes, which is the point.
 
+#### ⚠️ It drifted the day the handler changed, 17 Oct 2026
+
+This row built the corpus against a handler that ALWAYS refused. s67 then made a one-shot RUN, and nobody updated the corpus.
+
+It kept passing, 54 seconds slower, for a changed reason: four shapes were exercising the CONSENT GATE rather than the keeper refusal, `waitForVerdict` waited only for `click REFUSED:` and polled out, and `readHandler` could not see the new `ABORTED` line at all. The verdict came out right only because it keys on the identity line.
+
+⚠️ s71 fixed it and added the invariant this row should have had from the start: **nothing may EXECUTE during an unattended run.** Nobody is at the keyboard, so anything that ran got through the gate without a human.
+
 ### s67. A refused click is VISIBLE: the lazy console, wired at last
 
 Built 15 Oct 2026, from two reports by the user, both correct:
@@ -4070,3 +4079,79 @@ This row keeps the REASONING, which is what it was actually for:
 * ⚠️ the two missing were the two that matter most: the **audit surface**, which is the point of the project and is barely built, and the **design record**, which is the largest artefact here
 
 ⚠️ And the state belongs in a table with a GAP column, not in prose. Three of the seven are nearly empty, and a flat list reads as seven healthy pillars. That is the whole reason the `repo` slate has that column.
+
+### s71. The harness drifted when the handler changed, and the click window is now a choice
+
+17 Oct 2026, from two observations the harness could not make about itself.
+
+#### ⚠️ "Everything takes 30s per hit"
+
+The corpus had gone from 28s to 82s. I blamed the harness polling for a line that never came. **Wrong: the HANDLER was waiting.**
+
+s67 gave a one-shot a consent gate. Four of the eight shapes are one-shots, nobody is at the keyboard during a corpus run, and each sat for the full thirty seconds. ⚠️ `SHIMP_NO_HOLD`, which the harness already set, only suppresses the hold AFTER something is shown. It does nothing to the consent window.
+
+`SHIMP_CONSENT_SECONDS` shortens the wait and **cannot grant consent**: it still aborts, so the real branch runs and nothing executes. Deliberately not `SHIMP_ASSUME_CONSENT`, which skips the gate and then runs. **Shortening a refusal is safe; shortening a decision is not.**
+
+#### ⚠️ AND THE CORPUS HAD DRIFTED, PASSING FOR A CHANGED REASON
+
+This is the part worth keeping. s66 wrote the corpus against a handler that ALWAYS refused. s67 made a one-shot run. Nobody updated the corpus, and it kept passing:
+
+* `waitForVerdict` waited only for `click REFUSED: `, so the four one-shots polled the full 20s before falling through to a late read
+* `readHandler` could not SEE the new `click ABORTED: ` line, so it could not tell a keeper refusal from a consent abort
+* the four accepted shapes were silently exercising the **consent gate** instead of the keeper refusal they were written against
+* and the verdict still came out right, because it keys on the identity line, which survived the change
+
+⚠️ **A harness that passes 54 seconds slower is a harness telling you something and being ignored.** It now waits for any terminal line: REFUSED, ABORTED or exited.
+
+#### ⚠️ THE NEW INVARIANT, which matters more than any shape
+
+`judge()` now fails ANY shape where `click: running` appears in the log.
+
+Nobody is at the keyboard during an unattended run, so consent cannot have been given. Anything that executed got through the gate without a human. ⚠️ That is the most serious thing this harness could discover, and **before today it had no way to notice it**. Measured: zero.
+
+#### The window is a choice: focus, background or none
+
+A boolean could only say window or no window, so it had no way to express the case a human watching a run actually wants.
+
+| | |
+|---|---|
+| `focus` | **default.** A console appears and TAKES the foreground. What a real click should do: the user clicked, so the thing should come to them |
+| `background` | appears, does not take focus. ⚠️ **best effort**, and says what it managed |
+| `none` | no console. Consent cannot be asked, so the click ABORTS. A refusal is logged, not shown |
+
+⚠️ None of the three can cause anything to RUN. `none` fails closed by construction. An unrecognised value falls back to `focus` **and says so**: a typo must not turn a visible click into an invisible one.
+
+`linkprobe -window` defaults to `none`.
+
+#### ⚠️ `background` was deleted and then resurrected, and the reason is the lesson
+
+It was built, measured at 5 of 8 dispatches keeping the focus, and deleted as half-working. ⚠️ **Nothing was wrong with the mechanism.** What was wrong was that it was the SILENT DEFAULT and the code implied it always worked.
+
+`AllocConsole` creates and activates the window; there is no flag, ordering or prior call that prevents it, so the only move is to put it back afterwards and that is a race. It now has the fallback it lacked: `SW_MINIMIZE`, deterministic because a minimised window cannot be foreground, tried LAST because it hides output.
+
+A mechanism that works most of the time is fine when it is CHOSEN and says what it achieved. The same mechanism as a silent default is a lie.
+
+#### ⚠️ AND THE ACTUAL CAUSE OF THE SPLATTER WAS DUPLICATION
+
+The user reported command prompts still covering the desktop after I had "fixed" it and measured the fix. Both were true: **`-run` was never fixed.**
+
+`doRun` carried its **own copy** of `buildAndInstall`'s logic, without the `-ldflags`, and `probe()` set no environment at all. So fifteen routes each dispatched to a console-subsystem handler with nothing suppressed. The corpus was fixed and measured; `-run` was not; the duplicated build hid the difference.
+
+⚠️ **This is what `repocheck` exists for and it could not see it.** Two call sites where one gets a fix is the exact failure mode, but the duplication was a RECIPE -- the same sequence written twice -- rather than a shared body, which is the category `known_recipes.go` was created for and which this pair was never declared in. s65 wrote that nothing finds a recipe mechanically. Here is the cost of that being true.
+
+Collapsed onto one `buildAndInstall`, and the environment onto one `quietEnv()` every child path calls.
+
+#### Measured
+
+| | |
+|---|---|
+| corpus, 8 shapes | 82s → **12s**, then 5s warm |
+| unit tests, 9 modules | 27s |
+| repocheck | under 1s |
+| **the whole quiet suite** | **32s** |
+| focus | ⚠️ **held**: same window identity before and after |
+
+#### ⚠️ Two limits, stated rather than discovered
+
+* **Excel and Chrome will always show windows.** The Python drivers launch them and AGENTS forbids starting either invisibly, because a hidden window holding a modal is a process nobody can diagnose. 4 of 15 routes. `-window` covers the handler, which is what was multiplying fifteenfold.
+* ⚠️ **The conhost count is not a usable signal.** Sampled four times with nothing running: 15, 15, 15, 18. Every measurement call spawns its own console, so the measurement perturbs the thing measured. The reliable signal is the foreground window's IDENTITY, not a process count -- which is the third time today my own tooling produced a false reading, after the hwnd arithmetic and the stale errno.

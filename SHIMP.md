@@ -4060,15 +4060,15 @@ Mapped 16 Oct 2026, from a proposed four-part taxonomy: the handler, the leaf mo
 
 #### The seven
 
-| | what it is | measured state |
+| | what it is, and where | measured state |
 |---|---|---|
-| 1 | **the shimp handler** | 4,105 lines. Install half complete; dispatch half runs a ONE-SHOT and refuses an action-bearing link by name |
-| 2 | **the leaf modules** | ⚠️ **ZERO. None exist.** No `require` block and no `go.sum` anywhere in the repo |
-| 3 | **the shimpable tools** | 9 modules are `package main` so a link may name any; **one** is proven by a real click |
-| 4 | **the link harness** | `linkprobe`, 2,345 Go + 543 Python. 15 routes, 8 link shapes |
-| 5 | **the instruments** | `probes`, 598 Python + 274 Go. The numbers, re-measurable |
-| 6 | **the audit surface** | ⚠️ caveats + attestations. **92 lines in one module, 2 files** |
-| 7 | **the design record** | the slate: 4,054-line render, a 2MB db, 45 patches, 45 transcripts |
+| 1 | **the handler** — `shimp/` | 4,105 lines. Install half complete. Dispatch runs a ONE-SHOT; an action-bearing link is refused BY NAME, because delivering an action needs the keeper (s20) |
+| 2 | **the leaf modules** | ⚠️ **ZERO. None exist.** No `require` block and no `go.sum` anywhere, so nothing depends on anything. s60 ranks the candidates; s13 decided `cdpcore` and it waits on a second consumer |
+| 3 | **the shimpable tools** — `chrome_ready/`, `chrome_sessions/`, `remote_ai/`, `remote_chrome_cdp/`, `pdf_view_server/` | all are `package main`, so a link MAY name any. **One is proven by a real click**: `chrome_ready` (s68). ⚠️ `pdf_view_server` and `remote_chrome_cdp` are RESIDENT and need the keeper |
+| 4 | **the link harness** — `linkprobe/` | 2,345 Go + 543 Python. 15 routes × 1 link, plus 8 link SHAPES × 1 route. Go orchestrator, Python drivers for Excel and Chrome |
+| 5 | **the instruments** — `probes/` | 598 Python + 274 Go. The programs behind the measured numbers. ⚠️ **A number quoted as measured must name its instrument** |
+| 6 | **the audit surface** — `*/caveats.go`, `attestations/`, `repocheck/` | ⚠️ **barely built: one caveats file (92 lines), one attestation.** Both on `chrome_sessions`, which nothing runs, and ABSENT from `chrome_ready`, the only module a link executes. `repocheck` (1,458 Go) belongs here rather than with the tests: it polices s55's maxims, which are the preconditions for an audit meaning anything |
+| 7 | **the design record** — the slate, `SHIMP.md`, `db/`, `patches/`, `transcripts/` | 4,054-line render, a 2MB db, 45 patches, 45 gitignored transcripts. The largest artefact in the repo, bigger than all the Go together, and where the corrections live |
 
 #### ⚠️ What the four-part version got wrong
 
@@ -4094,3 +4094,22 @@ Recorded here for the reasoning; the MAP goes in `AGENTS.project.md`, because th
 #### Why this is a row rather than a note
 
 The categories are not a decision, so this row's value is the per-category STATE and the two gaps it names. ⚠️ Three of the seven are nearly empty: no leaf modules at all, one caveats file, one attestation. A taxonomy that reads as seven healthy pillars would be the most misleading thing in this slate.
+
+#### ⚠️ This table was the WEAKER of two, which is the wrong way round
+
+17 Oct 2026. The table above was written first and a better one was then
+written into `AGENTS.project.md`: it named the directory per category, flagged
+that `pdf_view_server` and `remote_chrome_cdp` are RESIDENT and therefore need
+the keeper, and put `repocheck` in row 6 rather than leaving it in the prose.
+
+Row 3 was also wrong as a category statement. It said "9 modules are `package
+main` so a link may name any", which is true of the repo and false of the
+category: only FIVE are tools. `shimp` is row 1 and `linkprobe`, `repocheck`
+and `probes/focus` are rows 4, 5 and 6. Counting them as shimpable tools
+inflates the one category that has a single proven member.
+
+⚠️ The design record held the weaker version while a generated-adjacent
+instruction file held the better one. That is backwards: this slate is the
+authority, and anything derived from it should be the lossy copy rather than
+the improved one. Corrected by bringing the table up, not by pointing at the
+other file.

@@ -1,6 +1,25 @@
 // pdf_view_server -- serve one folder over loopback, and tell the page which
 // item to show.
 //
+// ⚠️⚠️ PARKED, 18 October 2026. NO IMMEDIATE PLANS TO DEVELOP OR USE THIS.
+//
+// It builds, its tests pass, and it is kept in the repo's loop so it does not
+// rot. It is NOT on the shimp path and nobody should treat it as the next
+// thing to work on.
+//
+// What that means concretely:
+//
+//   - it is a RESIDENT capability (it binds a listener), so a shimp:// link
+//     cannot usefully name it until the keeper exists (s20). That is not the
+//     reason it is parked, but it means parking costs nothing.
+//   - the priority shimpable tool is the ChatGPT full-update capability, as
+//     recorded in the `repo` slate's r3 and in the shimp slate.
+//   - do not spend effort here on the strength of a stale plan. If this is
+//     revived, the `repo` slate is where to say so.
+//
+// ⚠️ Said loudly in the file rather than only in a slate, because the file is
+// what somebody opens first.
+//
 //	go run github.com/davidnoz123/nielsoln_connectors/pdf_view_server@<sha> \
 //	    -root . -host 127.0.0.1 -port 8790 -token K7M2XQ4P
 //

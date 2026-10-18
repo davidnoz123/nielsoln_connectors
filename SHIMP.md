@@ -71,6 +71,7 @@
 | s69 | probes/: the instruments promoted, and the first re-run retired a quoted number | **BUILT and RUN** 16 Oct 2026 | nothing |
 | s70 | The seven top-level things, and the state of each | **MAPPED** 16 Oct 2026 | nothing |
 | s71 | The harness drifted when the handler changed, and the click window is now a choice | **FIXED and MEASURED** 17 Oct 2026 | nothing |
+| s72 | The ChatGPT full update is the priority capability, and it must be written HERE | **DECIDED** 18 Oct 2026: the priority. Not built | a decision on how much of chatgpt_session.py's job to reimplement |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -3909,6 +3910,16 @@ It logs `would run [...]` and then does not. **That** is the gap for a one-shot 
 
 ⚠️ **And the day it lands, s64 bites.** A permitted origin can fire a link with no gesture, measured. Today that is harmless because nothing runs. The moment exec exists, a visited page can make the machine run `go run <module>@<sha>`. The consent mechanism has to be designed in before exec, not after, and this row's lazy console is the obvious candidate: a click about to RUN something shows what it will run and waits.
 
+#### ⚠️ The open decision is WITHDRAWN, 18 Oct 2026
+
+This row left a question open: may shimp run code its audit does not cover, if it declares the boundary loudly?
+
+⚠️ **It should not have been left open.** The answer is no, and the reason is the pin rather than taste: `go run module@sha` pins code by CONTENT, while a `py/run` link would name a path whose contents change between clicks, so s44's identity would hash a link that means something else tomorrow.
+
+And the escape clause this row floated -- declare the boundary in caveats -- is an ASSERTION dressed as a disclosure. s56 forbids it.
+
+s72 carries the priority capability and the shape it must take instead.
+
 ### s68. A hyperlink RAN something. And the consent gate was broken until somebody ran it
 
 15 Oct 2026. The protocol did its job for the first time.
@@ -4155,3 +4166,48 @@ Collapsed onto one `buildAndInstall`, and the environment onto one `quietEnv()` 
 
 * **Excel and Chrome will always show windows.** The Python drivers launch them and AGENTS forbids starting either invisibly, because a hidden window holding a modal is a process nobody can diagnose. 4 of 15 routes. `-window` covers the handler, which is what was multiplying fifteenfold.
 * ⚠️ **The conhost count is not a usable signal.** Sampled four times with nothing running: 15, 15, 15, 18. Every measurement call spawns its own console, so the measurement perturbs the thing measured. The reliable signal is the foreground window's IDENTITY, not a process count -- which is the third time today my own tooling produced a false reading, after the hwnd arithmetic and the stale errno.
+
+### s72. The ChatGPT full update is the priority capability, and it must be written HERE
+
+18 Oct 2026. Asked which shimpable tool matters, the answer is the ChatGPT full update. Recorded as the priority, and the shape it has to take is already settled by earlier rows.
+
+#### ⚠️ The sibling-Python route is WITHDRAWN, not open
+
+s67 left it as a decision: may shimp run code its audit does not cover, if it declares the boundary loudly? ⚠️ **That was the wrong question to leave open, and it is withdrawn.**
+
+| | |
+|---|---|
+| **the pin does not exist** | `go run module@sha` pins code BY CONTENT through `go.sum`. A `py/run` link would name a PATH ON THIS MACHINE, whose contents differ between clicks. s44's identity would hash a link that means something else tomorrow, and ⚠️ **an identity that is a lie is worse than no identity** |
+| **the escape was an assertion** | a Go shim whose caveats say "this execs code the audit does not cover" is "trust `chatgpt_tools`" wearing a disclosure's clothes. The auditor cannot check it. s56 forbids exactly that |
+| **the closure is unbounded** | 8,200 lines in one file, no dependency manifest, and `win32com` and `websocket` arrive from elsewhere |
+| ⚠️ **s64 makes it unwise** | a permitted origin can fire a link with NO GESTURE. A link that exports 34,488 personal messages does not belong behind a mechanism that can fire without a click |
+
+#### What was never actually the problem
+
+Asked originally for "ensure a CDP Chrome, then scrape the incremental update", only ONE half was friction:
+
+* **ensure the session** -- was a wish, and `chrome_ready` now does it from a click
+* **the scrape** -- already works. `chatgpt_session.py` attaches to 9222, and its `sync_state` table sits beside 1,904 conversations and 34,488 messages
+
+⚠️ So the link bought nothing for the second half **at the time**. Making it a capability is a new and different want: one click, pinned and auditable, rather than a REPL invocation.
+
+#### The shape it must take
+
+**A Go capability in this repo**, in the closure, pinned by SHA like every other. Not a shim.
+
+What that means, stated before anybody starts:
+
+* ⚠️ **it is a reimplementation, not a wrapper.** `full_update` is three steps -- pull from peers, capture from ChatGPT, push -- over a sqlite schema with `conversations`, `messages`, an FTS index and `sync_state`. Go has `database/sql` but **no stdlib sqlite driver**, and this repo takes no third-party dependencies. That is the first real obstacle and it is not small.
+* **it needs a CDP client**, which is s13's `cdpcore` finally acquiring a second consumer that is not projected.
+* ⚠️ **it reads a human's private corpus.** Its caveats file and its attestation are the most consequential in the repo, and its attestation can only ever be CONDITIONAL.
+* **it is a one-shot**, so it does NOT need the keeper. It syncs and exits, like `chrome_ready`.
+
+#### ⚠️ The honest cost
+
+This is the largest capability yet proposed and the sqlite question may dominate it. The alternatives are each worth naming rather than discovering:
+
+1. reimplement the sync in Go against the same schema, with a hand-rolled sqlite reader or writer
+2. narrow the capability: have the link do the CAPTURE only, writing raw sessions somewhere the existing Python later ingests
+3. accept a third-party sqlite driver for this one module and declare it, which ⚠️ breaks the zero-dependency rule the whole audit story leans on
+
+⚠️ Option 2 is the one that preserves every invariant and delivers something clickable soonest, and it is recorded here rather than chosen, because narrowing a capability is the user's call and not mine.

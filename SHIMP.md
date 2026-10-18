@@ -71,7 +71,7 @@
 | s69 | probes/: the instruments promoted, and the first re-run retired a quoted number | **BUILT and RUN** 16 Oct 2026 | nothing |
 | s70 | The seven top-level things, and the state of each | **MAPPED** 16 Oct 2026 | nothing |
 | s71 | The harness drifted when the handler changed, and the click window is now a choice | **FIXED and MEASURED** 17 Oct 2026 | nothing |
-| s72 | The ChatGPT full update is the priority capability, and it must be written HERE | **DECIDED** 18 Oct 2026: the priority. Not built | a decision on how much of chatgpt_session.py's job to reimplement |
+| s72 | The ChatGPT full update is the priority capability, and it must be written HERE | **DECIDED** 18 Oct 2026: the priority. Not built | a decision to start, plus the small Python-side JSONL intake it needs |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -4211,3 +4211,51 @@ This is the largest capability yet proposed and the sqlite question may dominate
 3. accept a third-party sqlite driver for this one module and declare it, which ⚠️ breaks the zero-dependency rule the whole audit story leans on
 
 ⚠️ Option 2 is the one that preserves every invariant and delivers something clickable soonest, and it is recorded here rather than chosen, because narrowing a capability is the user's call and not mine.
+
+#### ⚠️ THE SEED REQUIREMENT, and it decides the shape. 19 Oct 2026
+
+Added requirement: the capability must be able to **seed from the .zip dump OpenAI provides**, not only capture incrementally from a live session.
+
+Measured, in `chatgpt_tools`:
+
+| | |
+|---|---|
+| the export zip | **470 MB**, 727 entries |
+| the data | `conversations-000.json` ... sharded, largest shard seen 18 MB |
+| also inside | `chat.html` at 79 MB, which is the human render and is not needed |
+| the existing path | `import_from_zip()` opens the zip, `json.load`s each shard, upserts |
+| and it is **idempotent** | *"returns True if inserted/updated, False if unchanged"*, with a fast skip on an unchanged `update_time`. Built for repeated exports |
+
+#### The good news: the seed half is pure Go stdlib
+
+`archive/zip` and `encoding/json` are both standard library, and both stream. So reading a 470 MB export in bounded memory needs **zero dependencies** and is auditable by reading a couple of hundred lines. ⚠️ Arguably better than the Python, which `json.load`s a whole shard at a time.
+
+#### ⚠️ AND FTS5 RULES OUT OPTION 1 OUTRIGHT
+
+The three options this row listed were not comparable, and one is now eliminated rather than merely expensive.
+
+`messages_fts` is a **virtual table using FTS5**, with `messages_fts_data` holding BLOB segments, `messages_fts_idx` keyed on `(segid, term, pgno)`, plus `_docsize` and `_config`.
+
+⚠️ Maintaining that from hand-rolled Go means reimplementing the internal segment format of a sqlite EXTENSION. That is not a hard job, it is the wrong job. **Option 1, "reimplement the sync in Go including the sqlite write", is OUT.**
+
+Option 3, a third-party driver, is still out for the reason it always was: it breaks the zero-dependency property the audit story leans on, and the drivers that support FTS5 bring cgo.
+
+#### So there is one shape, not three
+
+**Go produces a normalised intermediate; the existing Python ingests it.**
+
+* Go side: zip or CDP → normalised records → a file. Stdlib only, pinned by SHA, in the closure, auditable by reading.
+* Python side: that file → sqlite, including FTS5, using the code that already does it.
+
+⚠️ **The intake does not exist yet.** `_migrate_scraped_jsonl` is a one-time migration for `session_list.jsonl` into `scraped_sessions`, and `net_live.jsonl` is the network capture log. Neither is a general conversations intake, so this needs a small addition on the Python side: one function from JSONL to `import_conversations_json`, which already holds the upsert logic.
+
+#### ⚠️ Where the link earns its keep, and where it does not
+
+Worth separating before anything is built, because the two halves are not alike:
+
+| | does a link help? |
+|---|---|
+| **the CDP capture** | ⚠️ **yes.** It drives an authenticated browser session against a live account. Pinning what runs is exactly what the protocol is for |
+| **the zip seed** | ⚠️ **barely.** It reads a file the user already downloaded from OpenAI, on their own disk, occasionally. A pin adds ceremony and removes no risk the user did not already accept by downloading it |
+
+So the seed belongs in the capability because the capability should handle both inputs. It is **not** an argument for a second link. ⓘ And it is the same shape of observation as the original one: only one half of what was asked for was ever friction.

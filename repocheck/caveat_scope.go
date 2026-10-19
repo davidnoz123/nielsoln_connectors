@@ -47,6 +47,26 @@ var caveatExempt = map[string]string{
 		"as pdf_view_server. ⚠️ It reaches further than most -- net, " +
 		"net/http, os/exec, syscall -- so if it is ever unparked this is the " +
 		"first debt to settle.",
+
+	// ⚠️ A DIFFERENT KIND OF EXEMPTION FROM THE FOUR ABOVE, and the
+	// difference is the point. Those say a link CANNOT NAME the module. This
+	// one says nothing about reachability: it says the module is not ours to
+	// touch at the moment.
+	"remote_ai": "OUT OF BOUNDS, 19 Oct 2026, by the repo owner's decision: " +
+		"it belongs to work being undertaken in the sibling `nielsoln_bridge` " +
+		"repo, so a caveats file written here would be guessing at a design " +
+		"being settled elsewhere.\n" +
+		"⚠️ THIS EXEMPTION HIDES THE LARGEST REACH IN THE REPO, and says so " +
+		"rather than reading like the others. Its own header describes it as " +
+		"\"the connector that ships to participants\", built with -ldflags " +
+		"into nielsoln-bridge.exe, speaking newline-delimited JSON over TCP " +
+		"so fifteen people can run it on their own laptops -- and exec.go " +
+		"runs exec.Command(shell, flag, a.Command), which is arbitrary shell " +
+		"execution by design, across 5,549 lines, with a path traversal " +
+		"defence carrying the weight.\n" +
+		"⚠️ WHAT WOULD RETIRE IT: the bridge work settling, OR anyone making " +
+		"this module reachable from a shimp:// link. It is exempt from being " +
+		"DOCUMENTED here, not from mattering.",
 }
 
 // CaveatExempt reports whether a module is declared as owing no caveats.go,
@@ -61,6 +81,13 @@ func CaveatExempt(module string) (string, bool) {
 // The full text stays in caveat_scope.go, which is where somebody deciding
 // whether an exemption still holds should be reading anyway.
 func firstSentence(s string) string {
+	// ⚠️ A NEWLINE ENDS IT TOO. Without this a multi-paragraph reason printed
+	// its second paragraph on an unindented line, which looked deliberate and
+	// was not -- and output that is accidentally readable breaks the next time
+	// somebody edits the text above it.
+	if i := strings.IndexByte(s, '\n'); i > 0 {
+		s = s[:i]
+	}
 	if i := strings.Index(s, ". "); i > 0 {
 		return s[:i+1]
 	}

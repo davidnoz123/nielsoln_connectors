@@ -48,11 +48,11 @@ type version struct {
 
 func main() {
 	port := flag.Int("port", 9222, "the CDP port to require")
-	profile := flag.String("profile", "chrome_debug_profile",
-		"the user-data-dir leaf name, under the system temp directory. ⚠️ a "+
-			"DEDICATED profile, never the default one: Chrome allows one "+
-			"process per user-data-dir, so pointing this at a profile "+
-			"already open would fail to bind or open a tab in the other")
+	profile := flag.String("profile", "default",
+		"the Chrome user-data-dir. A PATH is used exactly as given; a bare "+
+			"name resolves under <user config dir>/chrome_ready/<name>. ⚠️ "+
+			"NEVER the temp directory, and never Chrome's own default "+
+			"profile: see profileDir()")
 	launch := flag.Bool("launch", true,
 		"launch Chrome if nothing answers. -launch=false only reports")
 	wait := flag.Duration("wait", 25*time.Second,
@@ -86,7 +86,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	dir := filepath.Join(os.TempDir(), *profile)
+	dir, err := profileDir(*profile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  FAILED: %v\n", err)
+		os.Exit(1)
+	}
+	// Whether the profile already exists decides whether a sign-in is
+	// needed, so it must be read BEFORE MkdirAll creates it.
+	fresh := !dirExists(dir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "  FAILED: cannot create the profile "+
 			"directory %s: %v\n", dir, err)
@@ -95,6 +102,16 @@ func main() {
 
 	fmt.Printf("  launching %s\n", exe)
 	fmt.Printf("  profile    %s\n", dir)
+	if fresh {
+		// ⚠️ SAID ON THE RUN THAT CREATES IT, not buried in a doc. A fresh
+		// profile is signed in to NOTHING, so a capability that expects an
+		// authenticated account gets a blank browser and no explanation.
+		fmt.Println("  ⚠️ THIS PROFILE IS NEW, so it is signed out of " +
+			"everything. Sign in once in the window that opens; the")
+		fmt.Println("     profile is durable and the session persists across " +
+			"runs. It is NOT in the temp directory, so a disk")
+		fmt.Println("     cleanup will not silently sign you out again.")
+	}
 	cmd := exec.Command(exe,
 		"--remote-debugging-port="+strconv.Itoa(*port),
 		"--user-data-dir="+dir,

@@ -32,13 +32,24 @@ var Caveats = map[string]string{
 		"evidence of authority: a browser answering on a port is not a " +
 		"browser signed in to anything.",
 
-	"[os.MkdirAll]": "creates ONE directory, {os.TempDir()}/{-profile}, mode " +
-		"0755, to hold the browser profile. It writes nothing else, deletes " +
-		"nothing and reads no file. ⚠️ A DEDICATED profile, not the user's " +
-		"main Chrome profile, so the first run is signed out of everything. " +
-		"The directory persists under its name between runs, which is what " +
-		"makes a sign-in stick -- and it lives in TEMP, so a disk cleanup " +
-		"silently signs the user out again.",
+	"[os.MkdirAll]": "creates ONE directory to hold the browser profile, " +
+		"mode 0755: the path the caller declared via -profile, or " +
+		"{user config dir}/chrome_ready/{name} for a bare name. It writes " +
+		"nothing else, deletes nothing and reads no file.\n" +
+		"⚠️ A DEDICATED profile, never the user's main Chrome profile, for " +
+		"the two reasons in profile.go: Chrome allows one process per " +
+		"user-data-dir, and recent Chrome restricts remote debugging on the " +
+		"default profile precisely because a process that can enable " +
+		"debugging on a signed-in profile can read its cookies.\n" +
+		"⚠️ SO THE FIRST RUN IS SIGNED OUT OF EVERYTHING, and the program " +
+		"says so on the run that creates the profile. A sign-in then " +
+		"persists, because the directory is DURABLE -- it was under " +
+		"os.TempDir() until 19 Oct 2026, where a disk cleanup would remove " +
+		"it and the only symptom was a capture finding an empty account. A " +
+		"temp path is now REFUSED rather than warned about.\n" +
+		"⚠️ AND IT DOES NOT COPY AN EXISTING PROFILE. Copying a signed-in " +
+		"one would copy its cookie jar and token store: credential copying, " +
+		"by a program a link can invoke. Refused on purpose.",
 }
 
 // CaveatsNotReached is the other half of the claim, and the more useful one.

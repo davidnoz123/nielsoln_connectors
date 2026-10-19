@@ -24,6 +24,16 @@ import "strings"
 var acknowledged = map[string]string{
 	"main": "every connector is a program. Nothing to share.",
 
+	// ⚠️ DECLARED IN BOTH BASELINES, and that is not redundancy. The name
+	// check and the body check are different questions: one asks "is this
+	// name in two modules", the other "is this code in two modules whatever
+	// it is called". `wsDial` answers yes to both, so both must say so, and
+	// repocheck's own test failed until this entry existed. The full reason
+	// is on acknowledgedBodies["wsDial"] below.
+	"wsDial": "the CDP websocket, copied verbatim from the PARKED " +
+		"remote_chrome_cdp into chatgpt_capture for -port. s13's extraction " +
+		"trigger, third firing.",
+
 	// ⚠️ THE ONE THAT MATTERS, and the reason this check exists at all.
 	//
 	// `contained` is the path-containment check: it decides whether a
@@ -156,6 +166,26 @@ func init() {
 // in a commit that happened to notice. Until then: two copies, one declared
 // reason, and a check that will say so again if a third appears.
 func init() {
+	// ⚠️ Declared 20 Oct 2026. The CDP websocket, COPIED VERBATIM from
+	// remote_chrome_cdp into chatgpt_capture when `-port` needed one.
+	// Reported twice and correctly: by NAME (wsDial, identical hashes) and by
+	// BODY, which is the check agreeing with itself rather than noise.
+	//
+	// ⚠️ AND THE SOURCE IS PARKED. remote_chrome_cdp carries a PARKED banner
+	// (r3), so the copy in chatgpt_capture is now the LIVE one: a fix made in
+	// the parked module would never reach the module a link executes. Whoever
+	// extracts the leaf should treat chatgpt_capture's copy as the survivor.
+	//
+	// ⚠️ s13'S TRIGGER HAS NOW FIRED THREE TIMES IN TWO DAYS: the canonical
+	// JSON escaper, the port-to-owner lookup R2 wanted, and this websocket.
+	// Three is enough to stop calling it coincidence. The fix is a leaf
+	// module, which would be this repo's first require and first go.sum, and
+	// that is a slate decision rather than something a capability commit
+	// should take on its way past.
+	acknowledgedBodies["wsDial"] = "the CDP websocket, copied verbatim from " +
+		"the PARKED remote_chrome_cdp into chatgpt_capture for -port. s13's " +
+		"extraction trigger, third firing. See the comment above."
+
 	acknowledgedBodies["canonString+pythonString"] = "CPython's " +
 		"ensure_ascii=False string escaper. The probe MEASURES the rule and " +
 		"must stay independent of the code that uses it; rowpatch applies " +

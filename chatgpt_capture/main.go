@@ -73,15 +73,34 @@ const (
 
 func main() {
 	zipPath := flag.String("zip", "", "an OpenAI export .zip")
+	port := flag.Int("port", 0,
+		"capture from a signed-in ChatGPT tab on this CDP port instead of a "+
+			"zip. Run chrome_ready first")
+	since := flag.Float64("since", 0,
+		"with -port: only conversations whose update_time is newer than this "+
+			"Unix time. ⚠️ 0 means EVERY conversation, which is a full sweep")
 	out := flag.String("out", "", "where to write the JSONL, or - for stdout")
 	max := flag.Int("max", 0,
 		"stop after this many conversations, for a quick check. 0 means all")
 	flag.Parse()
 
-	if *zipPath == "" || *out == "" {
+	// ⚠️ EXACTLY ONE SOURCE. Both would be ambiguous about which produced a
+	// line, and neither leaves nothing to do.
+	switch {
+	case *zipPath == "" && *port == 0:
 		flag.Usage()
 		fmt.Fprintln(os.Stderr,
-			"\n-zip and -out are both required. -out - writes to stdout.")
+			"\nOne of -zip or -port is required, and -out always.\n"+
+				"  -zip <export.zip>   the OpenAI export, offline\n"+
+				"  -port 9655          a signed-in browser, incremental")
+		os.Exit(2)
+	case *zipPath != "" && *port != 0:
+		fmt.Fprintln(os.Stderr,
+			"-zip and -port are both set. Pick one: a line's provenance "+
+				"should not depend on reading the flags.")
+		os.Exit(2)
+	case *out == "":
+		fmt.Fprintln(os.Stderr, "-out is required. Use - for stdout.")
 		os.Exit(2)
 	}
 
@@ -94,6 +113,29 @@ func main() {
 		}
 		defer f.Close()
 		w = f
+	}
+
+	if *port != 0 {
+		n, seen, err := runLive(*port, *since, w, *max)
+		if err != nil {
+			fmt.Fprintf(os.Stderr,
+				"FAILED after %d conversation(s): %v\n", n, err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr,
+			"%d conversation(s) captured, from %d that had changed\n", n, seen)
+		if *since == 0 {
+			// ⚠️ A full sweep reads as an incremental one unless it says so.
+			fmt.Fprintln(os.Stderr,
+				"ⓘ -since was 0, so this was a FULL sweep. Pass the previous "+
+					"run's newest update_time to make the next one incremental.")
+		}
+		if *max > 0 && n >= *max {
+			fmt.Fprintf(os.Stderr,
+				"⚠️ STOPPED AT THE -max LIMIT OF %d. This is NOT everything "+
+					"that changed.\n", *max)
+		}
+		return
 	}
 
 	n, shards, err := run(*zipPath, w, *max)

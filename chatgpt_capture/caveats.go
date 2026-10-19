@@ -38,6 +38,39 @@ var Caveats = map[string]string{
 		"that path is `-`. It appends nothing elsewhere, creates no " +
 		"directories and removes nothing.",
 
+	"[net/http]": "⚠️ ADDED 20 Oct 2026 WITH -port, and the absence this " +
+		"replaces said it would be. ONE loopback request: GET " +
+		"http://127.0.0.1:<port>/json/list, to find a tab already on " +
+		"chatgpt.com. It forms no other address and reaches no remote host.",
+
+	"[net, net.Dial: the websocket to 127.0.0.1]": "opens a CDP websocket to that tab and sends " +
+		"Runtime.evaluate. ⚠️ ws:// ON LOOPBACK ONLY, checked rather than " +
+		"assumed: a wss:// would silently skip TLS and the only symptom " +
+		"would be a connection that worked. " +
+		"⚠️ EVERY NETWORK CALL TO CHATGPT IS MADE BY THE BROWSER, NOT BY " +
+		"THIS PROGRAM. It sends JavaScript; the page does the fetching with " +
+		"the session it already has. So this program never speaks to " +
+		"openai.com and never holds a cookie.",
+
+	"[the access token]": "⚠️ READ AND SPENT INSIDE THE PAGE, NEVER RETURNED. " +
+		"/backend-api/* needs Authorization: Bearer <accessToken>, and the " +
+		"response carrying that token says in its own payload that sharing " +
+		"it is like sharing your password. One expression fetches the " +
+		"session, builds the header, makes the call and returns only the " +
+		"conversation JSON. The token is never sent across the websocket, " +
+		"never held in a Go variable and never written anywhere. " +
+		"⚠️ THIS IS A FIX FOR A MISTAKE MADE THE SAME DAY. A probe answering " +
+		"\"is this signed in\" mis-parsed the CDP reply, fell through to a " +
+		"diagnostic that printed the raw response, and put a token prefix in " +
+		"a transcript. The lesson was to reduce inside the page so there is " +
+		"nothing to leak, not to be careful with output.",
+
+	"[the conversation list]": "the ONE place this program interprets " +
+		"anything, and it reads TWO FIELDS: `id` and `update_time`, to " +
+		"decide which conversations to fetch. Bodies still pass through " +
+		"uninterpreted. ⓘ It stops at the first page whose entries are all " +
+		"older than -since, which is what makes it incremental.",
+
 	"[encoding/json]": "decodes each conversation as a RawMessage and " +
 		"compacts it. ⚠️ It does not interpret the contents: no field is " +
 		"read, no value is transformed, and the bytes written are the bytes " +
@@ -50,9 +83,22 @@ var Caveats = map[string]string{
 // Saying what is ABSENT answers that in a way a list of present reaches
 // cannot, and the test pins each of these as genuinely unreachable.
 var CaveatsNotReached = []string{
-	"no network of any kind. No http, no net, no websocket, no CDP. ⚠️ The " +
-		"CDP capture half of this capability is NOT BUILT; when it is, this " +
-		"line must change and the attestation must be re-issued.",
+	"⚠️ no network BEYOND LOOPBACK, which is a narrower claim than the one " +
+		"this replaces. Until -port landed this read \"no network of any " +
+		"kind ... when it is built, this line must change and the " +
+		"attestation must be re-issued\". It was built on 20 Oct 2026, so " +
+		"the line changed and ⚠️ THE ATTESTATION IS NOW OWED. The only " +
+		"addresses formed are 127.0.0.1: one HTTP GET and one websocket.",
+	"no request to openai.com or chatgpt.com FROM THIS PROCESS. The browser " +
+		"makes those, with the session it already had. ⚠️ Which is the " +
+		"distinction that matters for an audit: this program cannot " +
+		"authenticate to anything, because it holds no credential to do it " +
+		"with.",
+	"no cookie jar, no token store, no password store, and no reading of " +
+		"any profile directory. It does not know where the profile is.",
+	"⚠️ no navigation and no tab creation. If no chatgpt.com tab is open it " +
+		"REFUSES with a reason rather than opening one: moving somebody's " +
+		"tabs is not this program's business.",
 	"no exec. It starts no process and shells out to nothing.",
 	"no registry, no COM, no syscall. It is portable Go with no build tags.",
 	"no sqlite. It stops at a file, which is forced rather than chosen: " +
@@ -69,8 +115,9 @@ var CaveatsNotReached = []string{
 // a value, which was its package's primary reach. Listing the import paths
 // catches what a function-name list does not.
 var CaveatSurfaces = []string{
-	"archive/zip", "os.Create", "encoding/json",
+	"archive/zip", "os.Create", "encoding/json", "net/http", "wsDial",
+	"Runtime.evaluate",
 	// The ones that must stay absent. Named here so the checker can assert
 	// their absence rather than nobody noticing they arrived.
-	"net/http", "net", "os/exec", "syscall", "database/sql",
+	"os/exec", "syscall", "database/sql", "os.Remove", "Page.navigate",
 }

@@ -116,7 +116,25 @@ func runLink(u *URI) int {
 	}
 
 	_log("click: running %q", argv)
-	fmt.Fprintf(os.Stdout, "\n  running...\n\n")
+	// ⚠️ SAY WHAT IS HAPPENING AND HOW LONG IT MAY BE SILENT. `running...`
+	// alone was followed by up to 27 seconds of nothing: s49 measured
+	// `go run module@sha` at 24-27s cold and 1.1-4.8s warm, and `go` speaks
+	// only during the DOWNLOAD half ("go: downloading ...") -- the compile
+	// and link that follow are silent.
+	//
+	// The capability cannot help here, because its main() does not exist yet.
+	// This is the last thing that runs before the toolchain takes over, so it
+	// is the only place the wait can be explained.
+	//
+	// ⓘ No ticking heartbeat, deliberately: the child inherits this stdout,
+	// so a tick could land in the middle of a line the capability was
+	// writing, and nothing here can see when the child starts to speak.
+	fmt.Fprintf(os.Stdout, "\n  running  %s\n", strings.Join(argv, " "))
+	fmt.Fprintf(os.Stdout,
+		"  ⓘ the Go toolchain fetches and compiles first. A first run of a "+
+			"given SHA was measured at 24-27s and\n"+
+			"    a repeat at about 1-5s. It is silent while compiling, so a "+
+			"pause here is expected, not a hang.\n\n")
 
 	cmd := exec.Command(argv[0], argv[1:]...)
 	// ⚠️ INHERITED, so the user watches it work. The alternative is capturing

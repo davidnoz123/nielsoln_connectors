@@ -1,8 +1,14 @@
 // caveats.go -- what this program can reach, declared in source.
 //
-// s54: a caveat is declared here and VERIFIED by an AST walk in the test, so
-// a reach the code has and this file does not mention fails the build. The
-// declaration is not documentation; it is a claim with a checker behind it.
+// s54: a caveat declared here is CHECKED by `repocheck`, which walks every
+// module's imports and fails if an outward reach is not named in this file.
+//
+// ⚠️ THIS HEADER USED TO SAY "verified by an AST walk in the test", and there
+// was no such test in this module -- only `chrome_sessions` had one. So the
+// audit file asserted its own enforcement, which is exactly what s56 forbids:
+// nothing in the audit payload may be an assertion. Corrected 19 Oct 2026 to
+// name the checker that actually runs. The check is import-level, so it is a
+// floor rather than a ceiling; `repocheck/caveats.go` states its limits.
 //
 // ⚠️ WRITTEN WITH THE MODULE, not afterwards. The `repo` slate's r6 records
 // the state this is correcting: one caveats file and one attestation in the

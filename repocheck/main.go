@@ -361,6 +361,27 @@ func main() {
 		fmt.Printf("  %s%s\n", mark, sb)
 	}
 
+	// ⚠️ s54, moved here from one module's own test. See caveats.go for why:
+	// an in-module test only runs if somebody wrote it, so it cannot see a
+	// MISSING caveats.go, which is the failure that actually occurred.
+	fmt.Println("\nCAVEATS (s54): every outward reach is declared in caveats.go")
+	caveats, err := Caveats(root, modules)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+	if len(caveats) == 0 {
+		fmt.Println("  no module reaches outward at all")
+	}
+	for _, c := range caveats {
+		mark := "    "
+		if !c.OK() {
+			mark = "GAP "
+			bad++
+		}
+		fmt.Printf("  %s%s\n", mark, c)
+	}
+
 	fmt.Println("\nDECLARED RECIPES: the same sequence of steps, written twice")
 	fmt.Println("  (nothing finds these mechanically, so they are written down)")
 	for _, r := range recipes {

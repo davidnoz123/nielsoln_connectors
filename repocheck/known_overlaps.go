@@ -132,3 +132,33 @@ func AcknowledgedBody(names []string) bool {
 func init() {
 	acknowledgedBodies["close"] = "the CDP client's socket close, identical in two clients. See known_recipes.go."
 }
+
+// ⚠️ Declared 19 Oct 2026, and SharedBodies found it under TWO DIFFERENT
+// NAMES, which is exactly the blind spot the body-keyed check exists for:
+//
+//	probes/canonjson   pythonString
+//	rowpatch           canonString
+//
+// Thirty lines, same body: CPython's string escaping under
+// ensure_ascii=False, which Go's own escaper cannot be configured to produce
+// because encoding/json always escapes U+2028 and U+2029.
+//
+// ⚠️ THE TWO COPIES HAVE DIFFERENT JOBS, and that is why this is declared
+// rather than collapsed. probes/canonjson MEASURES whether Go can match
+// Python and must keep its own copy to stay an independent instrument -- an
+// instrument that imported the thing it measures would only ever confirm
+// itself. rowpatch USES the rule in anger.
+//
+// ⚠️ AND THIS IS s13'S TRIGGER FIRING FOR THE SECOND TIME. s13 decided
+// extraction happens at SECOND USE, and this is a second use. The fix is a
+// leaf module holding the canonical encoder, which would be this repo's first
+// `require` block and first go.sum -- a decision belonging on the slate, not
+// in a commit that happened to notice. Until then: two copies, one declared
+// reason, and a check that will say so again if a third appears.
+func init() {
+	acknowledgedBodies["canonString+pythonString"] = "CPython's " +
+		"ensure_ascii=False string escaper. The probe MEASURES the rule and " +
+		"must stay independent of the code that uses it; rowpatch applies " +
+		"it. s13's extraction trigger has now fired twice -- see the comment " +
+		"above."
+}

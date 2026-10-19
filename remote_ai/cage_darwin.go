@@ -110,10 +110,22 @@ func cageWrap() []string {
 // boundary that forces participants to abandon it is not a boundary. What
 // this denies is the thing that matters: everything under the participant's
 // home, with the shared folder allowed back.
-func profileFor(workspace string) (string, error) {
+// deniedHome is the directory the profile refuses, and the SAME directory
+// applyCage proves the refusal against. One function, because two spellings
+// of "the home directory" that happened to agree would make the proof test a
+// path the profile never mentioned, and it would pass.
+func deniedHome() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("no home directory to deny: %v", err)
+	}
+	return home, nil
+}
+
+func profileFor(workspace string) (string, error) {
+	home, err := deniedHome()
+	if err != nil {
+		return "", err
 	}
 	dir, err := os.MkdirTemp("", "nielsoln-cage-")
 	if err != nil {
@@ -159,7 +171,11 @@ func applyCage(workspace string) (int, bool, error) {
 	// workspace, and certain to be readable without a sandbox. If reading it
 	// under the profile SUCCEEDS, the profile is not holding and exec must
 	// stay shut.
-	witness := filepath.Join(os.Getenv("HOME"), ".CFUserTextEncoding")
+	home, err := deniedHome()
+	if err != nil {
+		return 0, false, err
+	}
+	witness := filepath.Join(home, ".CFUserTextEncoding")
 	if _, err := os.Stat(witness); err != nil {
 		// No witness, no proof. Refusing to guess is the point.
 		return 0, false, fmt.Errorf(

@@ -136,3 +136,33 @@ func TestApplyCageProvesTheBoundaryAndThenOpensTheGate(t *testing.T) {
 		t.Fatalf("the wrapper is not a sandbox-exec invocation: %v", w)
 	}
 }
+
+func TestTheProofAndTheProfileNameTheSameHome(t *testing.T) {
+	// MEASURED THE HARD WAY, 20 Oct 2026. The profile denied
+	// os.UserHomeDir() and the proof read os.Getenv("HOME"). They agree on a
+	// normal Mac, so nothing was wrong, and nothing made them agree either: a
+	// proof that reads a path the profile never mentions is refused for the
+	// wrong reason and opens the gate anyway.
+	home, err := deniedHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if home == "" || home == "/" {
+		t.Fatalf("the denied home is %q, which would deny nothing or "+
+			"everything", home)
+	}
+	ws := t.TempDir()
+	profile, err := profileFor(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(filepath.Dir(profile))
+	body, err := os.ReadFile(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), home) {
+		t.Errorf("the profile does not mention %s, so proving a refusal "+
+			"there proves nothing about it: %s", home, string(body))
+	}
+}

@@ -14,10 +14,9 @@ var Caveats = map[string]string{
 	"[exec.Command]": "LAUNCHES CHROME, visibly, and never detached. The " +
 		"executable is discovered from PROGRAMFILES, PROGRAMFILES(X86) and " +
 		"LOCALAPPDATA; it is not taken from PATH and not configurable, so a " +
-		"link cannot name an arbitrary binary to run. It passes exactly seven " +
+		"link cannot name an arbitrary binary to run. It passes exactly SIX " +
 		"flags and nothing else: --remote-debugging-port, --user-data-dir, " +
-		"--remote-allow-origins=*, --no-first-run, " +
-		"--no-default-browser-check, --disable-sync and " +
+		"--no-first-run, --no-default-browser-check, --disable-sync and " +
 		"--allow-browser-signin=false. The process is left RUNNING on " +
 		"purpose: that is the capability.",
 
@@ -38,13 +37,24 @@ var Caveats = map[string]string{
 		"attempted against the flags, so the claim is that Chrome records " +
 		"sign-in as disallowed, not that sync has been proven unreachable.",
 
-	"[--remote-allow-origins=*]": "⚠️ THE ONE AN AUDITOR SHOULD STOP ON. It " +
-		"tells Chrome to accept CDP websocket connections from ANY origin, " +
-		"so any page able to reach the port can drive the browser. The port " +
-		"is bound to loopback, so this is a same-machine exposure rather than " +
-		"a network one, but on a shared or multi-user machine it is real. It " +
-		"is here because CDP clients are otherwise refused by origin, and it " +
-		"is declared rather than defended.",
+	"[lockfile, read]": "reads one filename inside the profile directory, " +
+		"`lockfile`, to answer whether a Chrome already holds it. s73's R6. " +
+		"⚠️ Chrome removes it on a clean close, measured 20 Oct 2026, so its " +
+		"presence is the signal. It is STATTED, never opened or written. " +
+		"ⓘ A crashed Chrome can leave it behind, which makes a busy report a " +
+		"probably rather than a certainly; the refusal says so and names the " +
+		"file, so a stale lock is a warning nobody needed rather than a " +
+		"clash nobody saw coming.",
+
+	"[-list: filepath.Walk]": "under `-list` ONLY, totals the file sizes " +
+		"under each profile in the default base. s73's R3, because 3.9 GB of " +
+		"user-data-dirs accumulated on one machine without anybody deciding " +
+		"to spend it. It reads sizes and never contents, skips what it " +
+		"cannot read, and ⚠️ never runs on the path a click takes: walking a " +
+		"3 GB tree would add seconds to the thing a link is waiting for.\n" +
+		"⚠️ AND THERE IS DELIBERATELY NO -remove. This binary is invocable " +
+		"BY A LINK, and a link able to delete a directory tree is a " +
+		"capability nobody asked for. Reporting the path is enough.",
 
 	"[http.Client]": "probes ONE url: GET http://127.0.0.1:<port>/json/version, " +
 		"on loopback only, with a timeout. ⚠️ It is a liveness probe and not " +
@@ -111,8 +121,16 @@ var CaveatsNotReached = []string{
 		"19 Oct 2026. R4's flags are the defence. The old wording here said " +
 		"only that the profile starts empty, which was true of the code and " +
 		"misleading about the outcome -- s56's failure shape in a new place.",
-	"no deletion, no writing outside the one profile directory, and no " +
-		"registry or COM.",
+	"⚠️ no --remote-allow-origins. s73's R5, REMOVED 20 Oct 2026 after " +
+		"measuring that it was never needed: launched without it, a CDP " +
+		"client that SUPPRESSES its Origin header connects and answers " +
+		"normally, while a client sending a page-like Origin is refused with " +
+		"403 Forbidden. probes/cdp.py already passes suppress_origin=True. " +
+		"⚠️ So the exposure an auditor was previously told to stop on is " +
+		"GONE: a web page can no longer drive this browser, because Chrome " +
+		"refuses any connection carrying an origin.",
+	"no deletion of anything, no -remove verb, and no writing outside the " +
+		"one profile directory. No registry and no COM.",
 	"no sqlite, and no reading of the user's main Chrome profile.",
 	"no choice of binary. ⚠️ This is the one that stops a link being an " +
 		"arbitrary code path: the executable comes from a fixed list of " +
@@ -131,6 +149,8 @@ var CaveatSurfaces = []string{
 	// that says nothing. Any surface added to the code must be moved here in
 	// the same change.
 	"exec.Command", "http.Client", "os.MkdirAll", "os.WriteFile",
+	"os.Stat", "filepath.Walk", "os.ReadDir",
 	// must stay absent
-	"database/sql", "syscall", "os.Remove", "websocket",
+	"database/sql", "syscall", "os.Remove", "os.RemoveAll", "websocket",
+	"remote-allow-origins",
 }

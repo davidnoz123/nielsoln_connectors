@@ -62,11 +62,20 @@ func main() {
 		"launch Chrome if nothing answers. -launch=false only reports")
 	wait := flag.Duration("wait", 25*time.Second,
 		"how long to wait for a launched Chrome to answer")
+	list := flag.Bool("list", false,
+		"list the profiles under the default base, with sizes, and exit. "+
+			"Read-only: there is deliberately no -remove, since a link can "+
+			"invoke this binary")
 	acceptUnverified = flag.Bool("accept-unverified", false,
 		"proceed when an already-running browser cannot be verified as this "+
 			"profile's own. ⚠️ s73's R2 exists because the unverified case "+
 			"silently drove the wrong browser")
 	flag.Parse()
+
+	if *list {
+		// Before any probe or launch: -list changes nothing and needs no port.
+		os.Exit(reportProfiles(os.Stdout))
+	}
 
 	fmt.Printf("chrome_ready: requiring CDP on 127.0.0.1:%d\n", *port)
 
@@ -133,6 +142,24 @@ func main() {
 		os.Exit(1)
 	}
 
+	// ⚠️ s73's R6. Chrome writes `lockfile` into a user-data-dir it owns and
+	// removes it on a clean close (measured 20 Oct 2026), so this turns a
+	// 25-second timeout with a vague message into an immediate accurate one.
+	if profileBusy(dir) {
+		fmt.Fprintf(os.Stderr,
+			"⚠️ REFUSED: a Chrome already holds this profile directory, and "+
+				"Chrome allows only one process per user-data-dir.\n"+
+				"  profile  %s\n"+
+				"  It is not answering on port %d, so it was started without "+
+				"a debugging port, and CDP cannot be added to a\n"+
+				"  running browser. Close that Chrome and run this again, or "+
+				"use a different profile.\n"+
+				"  ⓘ A crashed Chrome can leave the lock behind. If nothing "+
+				"is really running, delete %s from the profile.\n",
+			dir, *port, chromeLockName)
+		os.Exit(1)
+	}
+
 	fmt.Printf("  launching %s\n", exe)
 	fmt.Printf("  profile    %s\n", dir)
 	if fresh {
@@ -148,7 +175,16 @@ func main() {
 	cmd := exec.Command(exe,
 		"--remote-debugging-port="+strconv.Itoa(*port),
 		"--user-data-dir="+dir,
-		"--remote-allow-origins=*",
+		// ⚠️ --remote-allow-origins=* WAS HERE AND IS NOT NEEDED. s73's R5,
+		// measured 20 Oct 2026 by launching without it: a CDP client that
+		// SUPPRESSES its Origin header connects and answers normally, while a
+		// client sending a page-like Origin is refused with 403 Forbidden.
+		// probes/cdp.py already passes suppress_origin=True, so every CDP
+		// client in this repo works without the flag.
+		//
+		// Removing it closes the exposure an auditor would stop on: with `*`,
+		// any page that could reach the port could drive a browser holding a
+		// live account session.
 		"--no-first-run",
 		"--no-default-browser-check",
 		// ⚠️ s73's R4, and it is the rule that prevents the worst surprise.

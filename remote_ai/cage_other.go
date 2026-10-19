@@ -1,10 +1,10 @@
-//go:build !windows && !linux
+//go:build !windows && !linux && !darwin
 
 // cage_other.go -- there is no cage anywhere but Windows yet.
 //
-// Windows and Linux both have one now. macOS is what is left, and it is the
-// awkward one: Apple's supported model is entitlement-based, and sandbox_init
-// is deprecated.
+// Windows, Linux and macOS all have one now: AppContainer, Landlock and
+// Seatbelt. This is what is left over, which today is nothing anybody runs
+// the connector on.
 //
 // Saying so out loud matters more than it looks. The page tells participants
 // which platforms the cage covers, and a stub that quietly reported success
@@ -20,6 +20,13 @@ func inCage() bool { return false }
 // False here means the connector runs exactly as it did before: the file
 // operations, their path checking, and no exec.
 func cageSupported() bool { return false }
+
+// childrenConfinable reports whether a command this connector starts would
+// be held by the kernel. Nowhere here, so exec stays shut.
+func childrenConfinable() bool { return false }
+
+// cageWrap is the argv prefix that confines a child. Nothing to prepend.
+func cageWrap() []string { return nil }
 
 func applyCage(workspace string) (int, bool, error) {
 	panic("applyCage on a platform with no cage: guard with cageSupported()")

@@ -208,7 +208,7 @@ func opExec(root string, raw json.RawMessage) (any, error) {
 	// The gate. Asked of the kernel on every call rather than cached at
 	// startup, because a capability this program grants itself on its own
 	// say-so is not a capability anybody should trust.
-	if !inCage() {
+	if !inCage() && !childrenConfinable() {
 		return nil, refuse("not_allowed",
 			"Running commands is only offered when this session is confined "+
 				"by the operating system, and this one is not. The files in "+
@@ -247,7 +247,12 @@ func execRun(root string, a execArgs) (any, error) {
 	}
 
 	shell, flag := shellFor()
-	cmd := exec.Command(shell, flag, a.Command)
+	// WRAPPED WHERE THE CHILD CARRIES THE BOUNDARY. Nil on Windows and
+	// Linux, where this process is already confined and the child is
+	// born inside it; on macOS the sandbox-exec prefix that puts the
+	// child behind an SBPL profile.
+	argv := append(append([]string{}, cageWrap()...), shell, flag, a.Command)
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = root
 	cmd.Env = childEnv(root)
 

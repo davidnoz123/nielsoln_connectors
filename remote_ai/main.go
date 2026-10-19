@@ -121,7 +121,13 @@ func exePath() string {
 
 func capabilitiesNow() []string {
 	caps := []string{"utf8_text"}
-	if inCage() {
+	// EITHER boundary will do, because what exec needs is that a
+	// STARTED PROCESS is held. Windows and Linux confine this process
+	// and children inherit; macOS confines each child instead. The two
+	// are separate questions because inCage() also decides what the
+	// participant is TOLD, and on macOS this process is genuinely not
+	// confined.
+	if inCage() || childrenConfinable() {
 		caps = append(caps, "exec")
 	}
 	return caps
@@ -2720,9 +2726,13 @@ func main() {
 	// would take the connector away from every platform that has no cage yet
 	// and every Windows build where the container cannot be made, which is a
 	// working product traded for a claim. What the cage gates instead is what
-	// this program is ALLOWED TO DO: `exec` is offered only when inCage()
-	// says the kernel is holding the boundary, so the capability can never be
-	// on our own say-so.
+	// this program is ALLOWED TO DO: `exec` is offered only when the kernel
+	// is holding a boundary around the command, so the capability can never
+	// be on our own say-so. Which boundary differs by platform. Windows and
+	// Linux confine the connector and children inherit, so inCage() answers
+	// it; macOS cannot confine this process from a cross-compiled build and
+	// wraps each child in sandbox-exec instead, which childrenConfinable()
+	// answers only after applyCage has PROVEN a denial.
 	if cageSupported() && !inCage() {
 		if cageBlocksLoopback() && isLoopback(*host) {
 			// A Windows AppContainer cannot reach loopback. Lifting that means
@@ -2744,7 +2754,8 @@ func main() {
 				"(%s), and a confined process cannot reach it here", *host)
 		} else if code, done, err := applyCage(abs); err == nil {
 			// Windows relaunched into the cage and this copy is finished.
-			// Linux confined THIS process and carries on.
+			// Linux confined THIS process and carries on. macOS proved a
+			// profile it will wrap each command in, and also carries on.
 			if done {
 				os.Exit(code)
 			}
@@ -2776,6 +2787,18 @@ func main() {
 		// to look for.
 		logf("%s is holding this boundary: your other files are refused, "+
 			"not merely unasked for.", cageAuthority())
+	} else if childrenConfinable() {
+		// A DIFFERENT AND SMALLER PROMISE, said differently. On macOS the
+		// kernel holds any command Claude runs, and does NOT hold this
+		// process: its file access is checked by this program's own code.
+		// Claiming the stronger sentence here would be the exact lie
+		// cage_other.go warns about, on the one line a participant is asked
+		// to look for.
+		logf("%s is holding every command Claude runs: those are refused "+
+			"your other files, not merely incurious about them.",
+			cageAuthority())
+		logf("This connector's own reading is limited by its code rather " +
+			"than by the kernel.")
 	}
 	logf("Claude can read files here, and nowhere else. Close this window to stop.")
 

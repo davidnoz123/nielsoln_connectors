@@ -1,9 +1,9 @@
 // What exec must do, and what it must refuse.
 //
 // The gate and the machinery are deliberately in different functions so this
-// can test both: opExec holds the inCage() check, execRun holds the running.
-// A test process is never confined, so the gate test gets the real answer and
-// the machinery tests can still run.
+// can test both: opExec holds the confinement check, execRun holds the
+// running. A test process is never confined, so the gate test gets the real
+// answer and the machinery tests can still run.
 //
 //	go test ./...
 package main
@@ -27,7 +27,7 @@ func echoCmd(what string) string {
 func TestExecIsRefusedWhenNotConfined(t *testing.T) {
 	// The whole reason this file is allowed to exist. A test process is not in
 	// an AppContainer, so this is the real gate answering, not a stub.
-	if inCage() {
+	if inCage() || childrenConfinable() {
 		t.Skip("this test process is confined, so the refusal cannot be seen")
 	}
 	raw, _ := json.Marshal(execArgs{Command: echoCmd("hello")})

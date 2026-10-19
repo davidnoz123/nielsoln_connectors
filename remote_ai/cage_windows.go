@@ -522,3 +522,14 @@ func isLoopback(host string) bool {
 // cageAuthority names whatever is enforcing the boundary, for the one line a
 // participant is told to look for. The appcontainer.
 func cageAuthority() string { return "Windows" }
+
+// childrenConfinable reports whether a command this connector starts would
+// be held by the kernel. Here the answer is simply whether THIS process is
+// confined, because the AppContainer token is inherited by everything it
+// starts. macOS cannot do that and wraps each child instead, which is why
+// the question exists separately at all.
+func childrenConfinable() bool { return inCage() }
+
+// cageWrap is the argv prefix that confines a child. None is needed: the
+// child is born inside the same boundary as its parent.
+func cageWrap() []string { return nil }

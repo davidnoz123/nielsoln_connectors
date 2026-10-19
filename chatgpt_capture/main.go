@@ -50,11 +50,11 @@ package main
 import (
 	"archive/zip"
 	"bufio"
-	"bytes"
+
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
+
 	"os"
 	"sort"
 	"strings"
@@ -76,9 +76,11 @@ func main() {
 	port := flag.Int("port", 0,
 		"capture from a signed-in ChatGPT tab on this CDP port instead of a "+
 			"zip. Run chrome_ready first")
-	since := flag.Float64("since", 0,
+	since := flag.Float64("since", -1,
 		"with -port: only conversations whose update_time is newer than this "+
-			"Unix time. ⚠️ 0 means EVERY conversation, which is a full sweep")
+			"Unix time. ⓘ The default of -1 ASKS THE STORE, which keeps a "+
+			"sidecar beside -out, so repeat runs are incremental with no "+
+			"bookkeeping by the caller. 0 forces a full sweep")
 	out := flag.String("out", "", "where to write the JSONL, or - for stdout")
 	max := flag.Int("max", 0,
 		"stop after this many conversations, for a quick check. 0 means all")
@@ -104,19 +106,18 @@ func main() {
 		os.Exit(2)
 	}
 
-	w := os.Stdout
-	if *out != "-" {
-		f, err := os.Create(*out)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "cannot write %s: %v\n", *out, err)
-			os.Exit(1)
-		}
-		defer f.Close()
-		w = f
+	// ⚠️ ONE STORE FOR BOTH HALVES. The zip and the live capture write the
+	// same thing, so they share the destination rather than each opening a
+	// file their own way. The Store seam is in store.go, with its own warning
+	// that it is unproven until a second implementation exists.
+	st, err := newHandoffStore(*out)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
 	}
 
 	if *port != 0 {
-		n, seen, err := runLive(*port, *since, w, *max)
+		n, seen, err := runLive(*port, *since, st, *max)
 		if err != nil {
 			fmt.Fprintf(os.Stderr,
 				"FAILED after %d conversation(s): %v\n", n, err)
@@ -127,8 +128,8 @@ func main() {
 		if *since == 0 {
 			// ⚠️ A full sweep reads as an incremental one unless it says so.
 			fmt.Fprintln(os.Stderr,
-				"ⓘ -since was 0, so this was a FULL sweep. Pass the previous "+
-					"run's newest update_time to make the next one incremental.")
+				"ⓘ -since was 0, so this was a FULL sweep, forced rather "+
+					"than asked of the store.")
 		}
 		if *max > 0 && n >= *max {
 			fmt.Fprintf(os.Stderr,
@@ -138,7 +139,7 @@ func main() {
 		return
 	}
 
-	n, shards, err := run(*zipPath, w, *max)
+	n, shards, err := runZip(*zipPath, st, *max)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAILED after %d conversation(s): %v\n", n, err)
 		os.Exit(1)
@@ -153,8 +154,10 @@ func main() {
 	}
 }
 
-// run streams the shards and returns how many conversations it wrote.
-func run(zipPath string, w io.Writer, max int) (int, int, error) {
+// runZip streams the shards into the store and returns how many it wrote.
+//
+// ⓘ Named runZip since -port arrived: `run` no longer said which half.
+func runZip(zipPath string, st Store, max int) (int, int, error) {
 	zr, err := zip.OpenReader(zipPath)
 	if err != nil {
 		return 0, 0, fmt.Errorf("opening the zip: %w", err)
@@ -180,21 +183,21 @@ func run(zipPath string, w io.Writer, max int) (int, int, error) {
 	// Sorted so a run is reproducible and a resume is conceivable.
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Name < shards[j].Name })
 
-	bw := bufio.NewWriterSize(w, 1<<20)
-	defer bw.Flush()
-
 	total := 0
 	for _, f := range shards {
-		n, err := streamShard(f, bw, max, total)
+		n, err := streamShard(f, st, max, total)
 		total += n
 		if err != nil {
-			return total, len(shards), fmt.Errorf("in %s: %w", f.Name, err)
+			// Partial results committed, as the live half does.
+			kept, _ := st.Commit()
+			return kept, len(shards), fmt.Errorf("in %s: %w", f.Name, err)
 		}
 		if max > 0 && total >= max {
 			break
 		}
 	}
-	return total, len(shards), bw.Flush()
+	kept, err := st.Commit()
+	return kept, len(shards), err
 }
 
 // streamShard writes one line per conversation in a single shard.
@@ -203,7 +206,7 @@ func run(zipPath string, w io.Writer, max int) (int, int, error) {
 // The shards are up to 18MB each and the export is 470MB; the Python reads a
 // whole shard at a time, which works but is not necessary. Decoding element
 // by element keeps memory bounded whatever OpenAI ships next.
-func streamShard(f *zip.File, w io.Writer, max, soFar int) (int, error) {
+func streamShard(f *zip.File, st Store, max, soFar int) (int, error) {
 	rc, err := f.Open()
 	if err != nil {
 		return 0, err
@@ -229,11 +232,6 @@ func streamShard(f *zip.File, w io.Writer, max, soFar int) (int, error) {
 	}
 
 	n := 0
-	// ⚠️ ONE buffer for the whole shard, Reset per conversation. json.Compact
-	// takes a concrete *bytes.Buffer rather than an io.Writer, so a custom
-	// appending writer does not fit: reusing this one is what keeps a
-	// 100-conversation shard to a single allocation.
-	var cbuf bytes.Buffer
 	for dec.More() {
 		if max > 0 && soFar+n >= max {
 			return n, nil
@@ -246,17 +244,9 @@ func streamShard(f *zip.File, w io.Writer, max, soFar int) (int, error) {
 		if err := dec.Decode(&raw); err != nil {
 			return n, fmt.Errorf("decoding conversation %d: %w", n, err)
 		}
-		// ⚠️ COMPACTED, because the shards are pretty-printed and JSONL
-		// cannot carry embedded newlines. json.Compact elides insignificant
-		// whitespace only: key order and number text survive.
-		cbuf.Reset()
-		if err := json.Compact(&cbuf, raw); err != nil {
-			return n, fmt.Errorf("compacting conversation %d: %w", n, err)
-		}
-		if _, err := w.Write(cbuf.Bytes()); err != nil {
-			return n, err
-		}
-		if _, err := w.Write([]byte{'\n'}); err != nil {
+		// ⓘ The compacting that used to be here now lives in the store, so
+		// both halves get it from one place rather than each doing its own.
+		if err := st.Put(raw); err != nil {
 			return n, err
 		}
 		n++

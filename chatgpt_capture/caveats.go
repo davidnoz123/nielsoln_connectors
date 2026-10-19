@@ -34,9 +34,25 @@ var Caveats = map[string]string{
 		"into the archive, and never looks outside it. chat.html, which is " +
 		"79MB of the measured export, is not read.",
 
-	"[os.Create]": "writes ONE file, the path given by -out, or stdout when " +
-		"that path is `-`. It appends nothing elsewhere, creates no " +
-		"directories and removes nothing.",
+	"[os.Create]": "writes the path given by -out, or stdout when that path " +
+		"is `-`. It appends nothing elsewhere, creates no directories and " +
+		"removes nothing. ⓘ Created on the FIRST conversation, not on " +
+		"startup, so a run that only asks the store's watermark and captures " +
+		"nothing leaves the previous output intact.",
+
+	"[os.WriteFile: <out>.state.json]": "writes ONE small sidecar beside the " +
+		"output, holding the newest update_time captured, the count, and a " +
+		"warning. ⓘ It is how a repeat run is incremental without the caller " +
+		"remembering a number.\n" +
+		"⚠️ THE WATERMARK IS WHAT GO CAPTURED, NOT WHAT THE DATABASE " +
+		"INGESTED, because the two processes never speak. After a failed or " +
+		"skipped ingest the sidecar claims ground the database does not " +
+		"hold, and the next run would skip exactly what never landed. The " +
+		"hazard is written INTO the file so a reader meets it without " +
+		"finding the source; deleting the sidecar forces a full sweep.\n" +
+		"⚠️ NO SIDECAR from the zip half: an export is a point-in-time dump " +
+		"with no watermark to report, and none on an empty run. It contains " +
+		"no conversation content.",
 
 	"[net/http]": "⚠️ ADDED 20 Oct 2026 WITH -port, and the absence this " +
 		"replaces said it would be. ONE loopback request: GET " +
@@ -104,7 +120,9 @@ var CaveatsNotReached = []string{
 	"no sqlite. It stops at a file, which is forced rather than chosen: " +
 		"maintaining the FTS5 index from Go would mean reimplementing a " +
 		"sqlite extension's segment format.",
-	"no deletion, and no writing outside the single -out path.",
+	"no deletion. It removes nothing, ever. ⓘ And it writes TWO paths rather " +
+		"than one, which the old wording here got wrong: -out, and -out plus " +
+		"`.state.json` beside it.",
 	"no credentials. It reads a file the caller already has and authenticates " +
 		"to nothing.",
 }
@@ -115,8 +133,8 @@ var CaveatsNotReached = []string{
 // a value, which was its package's primary reach. Listing the import paths
 // catches what a function-name list does not.
 var CaveatSurfaces = []string{
-	"archive/zip", "os.Create", "encoding/json", "net/http", "wsDial",
-	"Runtime.evaluate",
+	"archive/zip", "os.Create", "os.WriteFile", "encoding/json",
+	"net/http", "wsDial", "Runtime.evaluate",
 	// The ones that must stay absent. Named here so the checker can assert
 	// their absence rather than nobody noticing they arrived.
 	"os/exec", "syscall", "database/sql", "os.Remove", "Page.navigate",

@@ -38,8 +38,6 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -276,7 +274,19 @@ func (s *session) listChanged(since float64, pageSize, max int) ([]convSummary, 
 //
 // Returns how many were written and how many the list said had changed. The
 // two differ when -max cuts in, which main() then reports.
-func runLive(port int, since float64, w io.Writer, max int) (int, int, error) {
+// runLive captures into a Store. `since` of -1 means "ask the store".
+//
+// ⚠️ THE STORE OWNS THE WATERMARK, which is the point of the seam. Before
+// this, -since had to be supplied by the caller, so being incremental meant
+// somebody else remembering a number. A store that knows what it already has
+// makes the capture incremental without any external bookkeeping.
+func runLive(port int, since float64, st Store, max int) (int, int, error) {
+	if since < 0 {
+		var how string
+		since, how = st.Watermark()
+		fmt.Fprintf(os.Stderr, "  since %.0f -- %s\n", since, how)
+	}
+
 	t, err := chatgptPage(port)
 	if err != nil {
 		return 0, 0, err
@@ -296,9 +306,6 @@ func runLive(port int, since float64, w io.Writer, max int) (int, int, error) {
 	fmt.Fprintf(os.Stderr, "  %d conversation(s) newer than %.0f\n",
 		len(changed), since)
 
-	bw := bufio.NewWriterSize(w, 1<<20)
-	defer bw.Flush()
-
 	n := 0
 	for i, c := range changed {
 		if max > 0 && n >= max {
@@ -306,24 +313,24 @@ func runLive(port int, since float64, w io.Writer, max int) (int, int, error) {
 		}
 		raw, err := s.apiGet("/backend-api/conversation/"+c.ID, 60*time.Second)
 		if err != nil {
-			// ⚠️ PARTIAL RESULTS ARE KEPT AND THE COUNT IS RETURNED. Losing
-			// 200 fetched conversations because the 201st failed would make a
-			// transient error cost a whole run.
-			_ = bw.Flush()
-			return n, len(changed), fmt.Errorf(
+			// ⚠️ PARTIAL RESULTS ARE KEPT AND COMMITTED. Losing 200 fetched
+			// conversations because the 201st failed would make a transient
+			// error cost a whole run, and the watermark then covers only what
+			// actually landed.
+			kept, _ := st.Commit()
+			return kept, len(changed), fmt.Errorf(
 				"after %d of %d, conversation %s: %w", n, len(changed), c.ID, err)
 		}
-		// ⚠️ COMPACTED AND WRITTEN UNINTERPRETED, through the SAME discipline
-		// as the zip half: no field is read, nothing is transformed.
-		var cbuf bytes.Buffer
-		if err := json.Compact(&cbuf, raw); err != nil {
-			return n, len(changed), fmt.Errorf("conversation %s: %w", c.ID, err)
+		// ⚠️ HANDED TO THE STORE UNINTERPRETED. The store compacts and
+		// writes; nothing here reads a field of the conversation.
+		if err := st.Put(raw); err != nil {
+			kept, _ := st.Commit()
+			return kept, len(changed), fmt.Errorf("conversation %s: %w", c.ID, err)
 		}
-		if _, err := bw.Write(cbuf.Bytes()); err != nil {
-			return n, len(changed), err
-		}
-		if _, err := bw.Write([]byte{'\n'}); err != nil {
-			return n, len(changed), err
+		// The ONE field the watermark needs, and it comes from the LIST that
+		// was already parsed for exactly two fields -- not from the body.
+		if o, ok := st.(interface{ Observe(float64) }); ok {
+			o.Observe(c.UpdateTime)
 		}
 		n++
 		if (i+1)%25 == 0 {
@@ -333,7 +340,8 @@ func runLive(port int, since float64, w io.Writer, max int) (int, int, error) {
 		}
 		time.Sleep(fetchDelay)
 	}
-	return n, len(changed), bw.Flush()
+	kept, err := st.Commit()
+	return kept, len(changed), err
 }
 
 // listPageSize is what the API is asked for per list call.

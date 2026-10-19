@@ -19,6 +19,48 @@ import (
 )
 
 // buildZip writes a zip with the given entries and returns its path.
+
+// memStore is a Store that keeps everything in memory, for the tests.
+//
+// ⚠️ IT IS THE INTERFACE'S SECOND IMPLEMENTATION, and that is worth saying
+// plainly because store.go warns the seam is unproven until one exists. This
+// is a WEAK second: it is a buffer, not a backend, so it exercises the shape
+// of the interface without testing any storage decision. The warning in
+// store.go therefore still stands -- a real second store may still find the
+// seam wrong.
+//
+// What it does prove is narrower and still useful: that nothing in the
+// capture needs more from a Store than these three methods.
+type memStore struct {
+	buf       bytes.Buffer
+	cbuf      bytes.Buffer
+	n         int
+	watermark float64
+	how       string
+}
+
+func (m *memStore) Watermark() (float64, string) {
+	if m.how == "" {
+		return m.watermark, "memStore, set by the test"
+	}
+	return m.watermark, m.how
+}
+
+func (m *memStore) Put(raw json.RawMessage) error {
+	m.cbuf.Reset()
+	if err := json.Compact(&m.cbuf, raw); err != nil {
+		return err
+	}
+	m.buf.Write(m.cbuf.Bytes())
+	m.buf.WriteByte('\n')
+	m.n++
+	return nil
+}
+
+func (m *memStore) Commit() (int, error) { return m.n, nil }
+
+func (m *memStore) String() string { return m.buf.String() }
+
 func buildZip(t *testing.T, entries map[string]string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "export.zip")
@@ -66,8 +108,8 @@ func TestOneLinePerConversation(t *testing.T) {
 		"chat.html":                          "<html>not json at all</html>",
 		"conversation_asset_file_names.json": `{"not":"a shard"}`,
 	})
-	var out bytes.Buffer
-	n, shards, err := run(z, &out, 0)
+	var out memStore
+	n, shards, err := runZip(z, &out, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,8 +145,8 @@ func TestTheBytesPassThroughUNINTERPRETED(t *testing.T) {
 	// form a float round-trip would change.
 	const odd = `[{"zzz":1,"conversation_id":"x","create_time":1730000000.123456,"aaa":{"b":[1,2,3]}}]`
 	z := buildZip(t, map[string]string{"conversations-000.json": odd})
-	var out bytes.Buffer
-	if _, _, err := run(z, &out, 0); err != nil {
+	var out memStore
+	if _, _, err := runZip(z, &out, 0); err != nil {
 		t.Fatal(err)
 	}
 	got := strings.TrimSpace(out.String())
@@ -118,8 +160,8 @@ func TestTheBytesPassThroughUNINTERPRETED(t *testing.T) {
 
 func TestNoShardsIsAnErrorWithAReason(t *testing.T) {
 	z := buildZip(t, map[string]string{"chat.html": "<html></html>"})
-	var out bytes.Buffer
-	n, _, err := run(z, &out, 0)
+	var out memStore
+	n, _, err := runZip(z, &out, 0)
 	if err == nil {
 		t.Fatal("a zip with no conversation shards succeeded, reporting 0 " +
 			"conversations. That reads as an empty account.")
@@ -140,8 +182,8 @@ func TestAnObjectAtTheTopLevelIsRefused(t *testing.T) {
 	z := buildZip(t, map[string]string{
 		"conversations-000.json": `{"conversations": []}`,
 	})
-	var out bytes.Buffer
-	if _, _, err := run(z, &out, 0); err == nil {
+	var out memStore
+	if _, _, err := runZip(z, &out, 0); err == nil {
 		t.Fatal("an OBJECT at the top level was accepted. The real shards " +
 			"are arrays, so this would silently read nothing and look like " +
 			"an empty export.")
@@ -156,8 +198,8 @@ func TestShardsAreReadInOrder(t *testing.T) {
 		"conversations-000.json": `[{"conversation_id":"a"}]`,
 		"conversations-001.json": `[{"conversation_id":"b"}]`,
 	})
-	var out bytes.Buffer
-	n, shards, err := run(z, &out, 0)
+	var out memStore
+	n, shards, err := runZip(z, &out, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,8 +220,8 @@ func TestTheMaxLimitSaysItTruncated(t *testing.T) {
 	z := buildZip(t, map[string]string{
 		"conversations-000.json": `[{"conversation_id":"a"},{"conversation_id":"b"},{"conversation_id":"c"}]`,
 	})
-	var out bytes.Buffer
-	n, _, err := run(z, &out, 2)
+	var out memStore
+	n, _, err := runZip(z, &out, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,8 +252,8 @@ func TestAgainstTheRealExport(t *testing.T) {
 	if _, err := os.Stat(p); err != nil {
 		t.Fatalf("%s=%s cannot be read: %v", env, p, err)
 	}
-	var out bytes.Buffer
-	n, shards, err := run(p, &out, 250)
+	var out memStore
+	n, shards, err := runZip(p, &out, 250)
 	if err != nil {
 		t.Fatalf("the real export failed: %v", err)
 	}

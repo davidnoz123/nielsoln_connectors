@@ -139,11 +139,24 @@ func TestAnExemptModuleIsNotReportedAsAGap(t *testing.T) {
 	}
 	// ⚠️ And the check must still be able to FAIL. An exemption list that
 	// quietly covered everything would report a clean repo for ever.
-	if len(caveatExempt) >= len(reports) && len(reports) > 0 {
-		t.Errorf("EVERY reachable module is exempt (%d exemptions, %d "+
-			"modules reporting). The check can no longer fail, which means it "+
-			"is no longer a check.", len(caveatExempt), len(reports))
+	//
+	// ⚠️ COUNTED THROUGH CaveatExempt, not as len(caveatExempt). The map is no
+	// longer the whole answer: everything under probes/ is exempt by PREFIX,
+	// so the map undercounts and this guard would never have fired again. The
+	// first version of this test made exactly that mistake one commit after
+	// the prefix landed.
+	exempt := 0
+	for _, r := range reports {
+		if _, ok := CaveatExempt(r.Module); ok {
+			exempt++
+		}
 	}
+	if len(reports) > 0 && exempt >= len(reports) {
+		t.Errorf("EVERY reachable module is exempt (%d of %d reporting). The "+
+			"check can no longer fail, which means it is no longer a check.",
+			exempt, len(reports))
+	}
+	t.Logf("ⓘ %d of %d reporting modules are exempt", exempt, len(reports))
 }
 
 func TestTheOverlapCheckCanFail(t *testing.T) {

@@ -1,0 +1,32 @@
+9aa315ee7aad68fd6980cec540a3c501a3324f999bd7b9dd9d3c44ed898beccc	{"a": 2, "b": 1, "c": 3}
+0ca7c57ddb823ba39a105147a27270638a9fc5105c5fe71ea2af49d7c1b928a6	{"aaa": {"b": [1, 2, 3]}, "conversation_id": "x", "create_time": 1730000000.123456, "zzz": 1}
+ed4a5fb5f1008716d8e0fb08faae094bc0fbf44d99be881bbb6f6b16935e178a	{"whole_float_timestamp": 1700000000.0}
+72da7111ec6ef31e70264f9af8221dac3b4a7aee25c97d1a39598c402413a1c0	{"int_timestamp": 1700000000}
+0a130e72ef320686cb745bcd960aba2ff7bd4c609de46c0c87403c71f31e9a85	{"one_point_zero": 1.0}
+5db2c43f7f619653823b36c4c136a7c8577d2e9f518956fba268f85d3677c539	{"negative_zero": -0.0}
+bf9fac0d1aa482e370a189ec859ac9401f79b33b8466236ca337183697972853	{"tiny": 1e-07}
+9f02b1ca9c0fb92e8c523d4b8b20e8c77894c448a504b71fc47af39fef1eb6e5	{"huge": 1e+21}
+3d29bf65b1cf62442a0453fb477863c2128bc6184f05d3ee099c99d3fabea0ec	{"just_under_huge": 1e+20}
+776e7603282032729563c2c775f9b58d7688f0ccb5b4c203ee4c91834fcaad2a	{"many_digits": 0.1}
+d1edb98122a86cf54f3375669325f407be04dc95167fc37bdfdd45b136ad1ad3	{"third": 0.3333333333333333}
+d9366b548a73c934eddf05ce97739d8683dc1551fcda1e6df11337b88d360d20	{"big_int": 9007199254740993}
+90dd7f2689c3ce92c490d3a4b34f7cc91a2da7d36a7b3ebbaa950e2757a969d3	{"neg_exp": 2.5e-10}
+a51ba4e25eaef387f83d1b01a43eb22b718799f181eee826e05e854bf524189c	{"title": "Angles < 90 & brackets > here"}
+dbebc497a764e6d3537a3d0b768c14bb9edc9372a148d30cfac6e7a1cd527a18	{"ampersand_only": "a&b"}
+fa572edd5353229acd28fbfce440e4fb44513e5e9186cb5826523f145e324b66	{"unicode_nz": "Whanganui-a-Hei — kia ora"}
+aef6d6a0b853bdc60d964cbca6e5f520e1d47c3c674ba112432be4a48551f914	{"emoji": "a 🚀 b"}
+e2e9d32a380a4e2b86284d2721405ac417284cc580a2ecac9748785b976d66e3	{"control_chars": "tab\there\nnewline"}
+2386b4dd9aaf59c53f6c7ce8e0b02d0c27329b9fd94ee614b104a232ae418734	{"nul": "before\u0000after"}
+0689100a8d3863764022eef961bae6e75695cf2c79f88b23e7ded5ae19cec2de	{"quote_and_backslash": "he said \"hi\" c:\\path"}
+b8e7ae38880d24cdb458becc9851f4e73bc76117e8c516ccc768ca0e6d59edd2	{"empty_string": ""}
+fddb16341c3450557e0bb48c022b4264b81b157f30a5c22777671420c81f95e7	{"empty_obj": {}}
+46f1d2a5a75b373819d5033794764f33689735fea999f23d32db3b004baf2030	{"empty_arr": []}
+0f692449e0126d5f0d2e7a4b2f1774125b18f55dfbb46921ac4178be67a76cb5	{"null_value": null}
+e7eccefe807e284213c1f5bbc25dcb5c910ff20da2715ed64b012bff3084d42b	{"bools": [true, false]}
+fc1c709abae326a60c7e08e87f57f515b91f65e359e164b7201a50fbe5119bf0	{"nested": {"z": {"y": {"x": [{"a": 2, "b": 1}]}}}}
+0319463103040b24eece4d19c80a91f1e4355a8396a56439b7e6dd87b5a086a7	{"unicode_keys": {"Z": 4, "e": 2, "É": 3, "é": 1}}
+c1f072c5cd42675cb8bfc75bc947f13985d50baa7474c0a03cebd939ef50a321	{"key_sort_ascii": {"0": 6, "A": 3, "B": 1, "_": 5, "a": 2, "b": 4}}
+3bc82b1d3a48d7dafdd85018481a4800c75d8394e6aeecc75ec97b33d683b2cf	{"line_separator": "a b", "para_separator": "c d"}
+4dea79f647cf36b519a543059cb317d152cf2d714e0de42a4b829428dc65d1c4	{"del_char": "xy"}
+5ffceb0afda3539d3fb5be447c8f81166e800dc21dc3f540c0cc113d5a110337	{"short_escapes": "a\bb\fc\rd"}
+23566dd76223ad6ce73e0ace4f74812cb53496896634c856dd56b97bc151983d	{"blobs": [], "conversations": [{"create_time": 1700000000.0, "id": "c1", "model": null, "raw_json": "{\"a\":1}", "title": "x & y", "update_time": 1700000000.5}], "deleted_sessions": [], "exported_at": 1792373986.6971858, "machine_id": "laptop-hb3igvlu", "messages": [{"content": "hi", "conversation_id": "c1", "create_time": 1700000000.0, "id": "m1", "role": "user", "source": "zip", "turn_index": 0}], "schema_version": 1, "scraped_sessions": []}

@@ -32,10 +32,17 @@ var caveatExempt = map[string]string{
 		"it is not a capability. ⚠️ Lapses if it ever grows a verb a link " +
 		"could reach, which would make it a capability wearing a harness's name.",
 
-	"probes/focus": "a measurement instrument, AGENTS category 5. Exists to " +
-		"produce a number for a design decision and is run by hand. ⚠️ NOT " +
-		"exempt because it is harmless -- it foregrounds windows and starts " +
-		"processes -- but because no link can invoke it.",
+	// ⚠️ `probes/` IS HANDLED BY PREFIX, below, not by an entry each. The
+	// directory is DEFINED as the instruments in AGENTS category 5, so a
+	// link naming one would be a category error rather than a gap, and
+	// adding an entry per probe would mean the next instrument fails the
+	// build for a reason that was never about it.
+	//
+	// ⚠️ WHAT THE PREFIX GIVES UP, said plainly: a probe that somehow DID
+	// become link-nameable would be exempted silently, and nothing
+	// mechanical can notice that. The trade is accepted because the
+	// alternative -- a stale per-probe list -- fails in the same direction
+	// while also being noisy.
 
 	"pdf_view_server": "PARKED, 18 Oct 2026, recorded in the repo slate's r3 " +
 		"and in a banner in its own header. ⚠️ THE WEAKEST EXEMPTION HERE: " +
@@ -69,11 +76,23 @@ var caveatExempt = map[string]string{
 		"DOCUMENTED here, not from mattering.",
 }
 
+// probesPrefix is AGENTS category 5: everything under it is an instrument.
+const probesPrefix = "probes/"
+
 // CaveatExempt reports whether a module is declared as owing no caveats.go,
 // and why.
 func CaveatExempt(module string) (string, bool) {
-	why, ok := caveatExempt[module]
-	return why, ok
+	if why, ok := caveatExempt[module]; ok {
+		return why, true
+	}
+	if module == "probes" || strings.HasPrefix(module, probesPrefix) {
+		return "a measurement instrument, AGENTS category 5. Exists to " +
+			"produce a number for a design decision and is run by hand. " +
+			"⚠️ NOT exempt because it is harmless -- probes/focus " +
+			"foregrounds windows and starts processes -- but because no " +
+			"shimp:// link can invoke one.", true
+	}
+	return "", false
 }
 
 // firstSentence trims a reason to its first sentence for one-line reporting.

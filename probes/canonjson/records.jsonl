@@ -1,0 +1,32 @@
+{"b":1,"a":2,"c":3}
+{"zzz":1,"conversation_id":"x","create_time":1730000000.123456,"aaa":{"b":[1,2,3]}}
+{"whole_float_timestamp":1700000000.0}
+{"int_timestamp":1700000000}
+{"one_point_zero":1.0}
+{"negative_zero":-0.0}
+{"tiny":1e-07}
+{"huge":1e+21}
+{"just_under_huge":1e+20}
+{"many_digits":0.1}
+{"third":0.3333333333333333}
+{"big_int":9007199254740993}
+{"neg_exp":2.5e-10}
+{"title":"Angles < 90 & brackets > here"}
+{"ampersand_only":"a&b"}
+{"unicode_nz":"Whanganui-a-Hei \u2014 kia ora"}
+{"emoji":"a \ud83d\ude80 b"}
+{"control_chars":"tab\there\nnewline"}
+{"nul":"before\u0000after"}
+{"quote_and_backslash":"he said \"hi\" c:\\path"}
+{"empty_string":""}
+{"empty_obj":{}}
+{"empty_arr":[]}
+{"null_value":null}
+{"bools":[true,false]}
+{"nested":{"z":{"y":{"x":[{"b":1,"a":2}]}}}}
+{"unicode_keys":{"\u00e9":1,"e":2,"\u00c9":3,"Z":4}}
+{"key_sort_ascii":{"B":1,"a":2,"A":3,"b":4,"_":5,"0":6}}
+{"line_separator":"a\u2028b","para_separator":"c\u2029d"}
+{"del_char":"x\u007fy"}
+{"short_escapes":"a\bb\fc\rd"}
+{"schema_version":1,"machine_id":"laptop-hb3igvlu","exported_at":1792373986.6971858,"conversations":[{"id":"c1","title":"x & y","create_time":1700000000.0,"update_time":1700000000.5,"model":null,"raw_json":"{\"a\":1}"}],"messages":[{"id":"m1","conversation_id":"c1","role":"user","content":"hi","create_time":1700000000.0,"turn_index":0,"source":"zip"}],"scraped_sessions":[],"blobs":[],"deleted_sessions":[]}

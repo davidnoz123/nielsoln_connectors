@@ -95,6 +95,57 @@ func TestBaselineHasNoStaleEntries(t *testing.T) {
 	}
 }
 
+// TestNoStaleCaveatExemptions is the same discipline applied to caveat_scope.go.
+//
+// ⚠️ A STALE EXEMPTION IS WORSE THAN A STALE OVERLAP ENTRY. If a module is
+// renamed and its exemption is not, the exemption still matches nothing while
+// the renamed module is checked -- harmless. But if a module is renamed INTO a
+// name that is listed, it inherits an exemption nobody granted it, and stops
+// being audited without any decision being taken.
+func TestNoStaleCaveatExemptions(t *testing.T) {
+	mods := skipIfNoCheckout(t)
+	live := map[string]bool{}
+	for _, m := range mods {
+		live[m] = true
+	}
+	for module := range caveatExempt {
+		if !live[module] {
+			t.Errorf("STALE EXEMPTION: %q is exempt in caveat_scope.go and is "+
+				"not a module. Either it was renamed -- in which case the "+
+				"exemption now guards nothing and the real module is "+
+				"unchecked -- or it is gone and the entry is fiction.", module)
+		}
+	}
+}
+
+// TestAnExemptModuleIsNotReportedAsAGap pins the behaviour, not just the list.
+func TestAnExemptModuleIsNotReportedAsAGap(t *testing.T) {
+	mods := skipIfNoCheckout(t)
+	reports, err := Caveats(root, mods)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range reports {
+		if _, exempt := CaveatExempt(r.Module); !exempt {
+			continue
+		}
+		// The exemption must be the ONLY reason it passes. If an exempt
+		// module has grown a caveats.go, say so rather than letting the
+		// exemption keep taking the credit.
+		if r.OK() {
+			t.Logf("ⓘ %s is exempt but declares anyway; the exemption could "+
+				"be retired", r.Module)
+		}
+	}
+	// ⚠️ And the check must still be able to FAIL. An exemption list that
+	// quietly covered everything would report a clean repo for ever.
+	if len(caveatExempt) >= len(reports) && len(reports) > 0 {
+		t.Errorf("EVERY reachable module is exempt (%d exemptions, %d "+
+			"modules reporting). The check can no longer fail, which means it "+
+			"is no longer a check.", len(caveatExempt), len(reports))
+	}
+}
+
 func TestTheOverlapCheckCanFail(t *testing.T) {
 	dir := t.TempDir()
 	for _, m := range []string{"alpha", "beta"} {

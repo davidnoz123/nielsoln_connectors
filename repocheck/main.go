@@ -375,6 +375,17 @@ func main() {
 	}
 	for _, c := range caveats {
 		mark := "    "
+		if why, exempt := CaveatExempt(c.Module); exempt {
+			// ⚠️ PRINTED, not skipped. An exemption that scrolls past
+			// invisibly is how a module stops being audited without anybody
+			// deciding to stop auditing it.
+			if c.OK() {
+				fmt.Printf("  ⓘ   %-18s exempt, AND declares anyway\n", c.Module)
+			} else {
+				fmt.Printf("  ⓘ   %-18s exempt: %s\n", c.Module, firstSentence(why))
+			}
+			continue
+		}
 		if !c.OK() {
 			mark = "GAP "
 			bad++

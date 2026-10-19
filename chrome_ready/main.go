@@ -46,6 +46,11 @@ type version struct {
 	WSURL    string `json:"webSocketDebuggerUrl"`
 }
 
+// acceptUnverified is package-level because the already-running branch reads
+// it, and a flag that disables a safety check should be visible to anything
+// that might rely on that check.
+var acceptUnverified *bool
+
 func main() {
 	port := flag.Int("port", 9222, "the CDP port to require")
 	profile := flag.String("profile", "default",
@@ -57,6 +62,10 @@ func main() {
 		"launch Chrome if nothing answers. -launch=false only reports")
 	wait := flag.Duration("wait", 25*time.Second,
 		"how long to wait for a launched Chrome to answer")
+	acceptUnverified = flag.Bool("accept-unverified", false,
+		"proceed when an already-running browser cannot be verified as this "+
+			"profile's own. ⚠️ s73's R2 exists because the unverified case "+
+			"silently drove the wrong browser")
 	flag.Parse()
 
 	fmt.Printf("chrome_ready: requiring CDP on 127.0.0.1:%d\n", *port)
@@ -65,7 +74,31 @@ func main() {
 		// ⚠️ The already-running case comes FIRST and reports success
 		// without touching anything. That is what makes a second click
 		// harmless.
-		fmt.Printf("  ALREADY READY\n")
+		//
+		// ⚠️ BUT IT MUST BE THE PROFILE THAT WAS ASKED FOR. s73's R2: this
+		// used to report ALREADY READY on any answering port, so `-port 9333
+		// -profile chatgpt` succeeded against chrome_checks_profile. A link
+		// could therefore drive a browser holding somebody's working session.
+		dir, derr := profileDir(*profile)
+		if derr != nil {
+			fmt.Fprintf(os.Stderr, "  FAILED: %v\n", derr)
+			os.Exit(1)
+		}
+		verdict, m := verify(dir, v.WSURL, *port)
+		switch {
+		case verdict == Verified:
+			fmt.Printf("  ALREADY READY, and verified as this profile's own browser\n")
+		case *acceptUnverified:
+			// Said out loud every time. A flag that silences a safety check
+			// must not also silence the fact that it was silenced.
+			fmt.Printf("  ALREADY READY\n")
+			fmt.Printf("  ⚠️ UNVERIFIED, and accepted only because " +
+				"-accept-unverified was passed. This may not be the " +
+				"profile you named.\n")
+		default:
+			fmt.Fprintln(os.Stderr, explain(verdict, dir, v.WSURL, *port, m))
+			os.Exit(1)
+		}
 		report(v)
 		os.Exit(0)
 	}
@@ -118,6 +151,19 @@ func main() {
 		"--remote-allow-origins=*",
 		"--no-first-run",
 		"--no-default-browser-check",
+		// ⚠️ s73's R4, and it is the rule that prevents the worst surprise.
+		// MEASURED 19 Oct 2026: a profile this program created, one hour old,
+		// held 10 extensions and 106MB of them (Grammarly at 47.8MB), active
+		// Sync Data, 272KB of history and 184KB of autofill. Nothing read a
+		// credential: signing in to ChatGPT with "Continue with Google"
+		// signed the BROWSER in too, and sync pulled the account down into a
+		// directory a link had created.
+		//
+		// --disable-sync stops the data flowing; --allow-browser-signin=false
+		// stops the browser sign-in that starts it. Both, because the first
+		// alone still leaves an account attached to the profile.
+		"--disable-sync",
+		"--allow-browser-signin=false",
 	)
 	// ⚠️ VISIBLE, always, and not detached from the user's desktop. AGENTS is
 	// explicit: never start a browser invisibly, because a hidden window with
@@ -137,6 +183,22 @@ func main() {
 	for time.Now().Before(deadline) {
 		if v, err := probe(*port, 2*time.Second); err == nil {
 			fmt.Printf("  READY\n")
+			// R2's other half: record WHICH browser this profile owns, so a
+			// later run can tell it from any other browser on that port.
+			// ⚠️ A failure here is reported and NOT fatal. The browser is up
+			// and usable; the only loss is that the next run cannot verify it
+			// and will refuse rather than guess.
+			if werr := writeMarker(dir, marker{
+				Port:      *port,
+				BrowserID: browserID(v.WSURL),
+				PID:       cmd.Process.Pid,
+			}); werr != nil {
+				fmt.Fprintf(os.Stderr,
+					"  ⚠️ could not write %s into the profile: %v\n"+
+						"     The browser is fine. A later run will not be "+
+						"able to verify it and will refuse rather than "+
+						"assume.\n", markerName, werr)
+			}
 			report(v)
 			os.Exit(0)
 		}

@@ -14,10 +14,29 @@ var Caveats = map[string]string{
 	"[exec.Command]": "LAUNCHES CHROME, visibly, and never detached. The " +
 		"executable is discovered from PROGRAMFILES, PROGRAMFILES(X86) and " +
 		"LOCALAPPDATA; it is not taken from PATH and not configurable, so a " +
-		"link cannot name an arbitrary binary to run. ⚠️ It passes " +
-		"--remote-debugging-port, --user-data-dir, --remote-allow-origins=*, " +
-		"--no-first-run and --no-default-browser-check, and nothing else. " +
-		"The process is left RUNNING on purpose: that is the capability.",
+		"link cannot name an arbitrary binary to run. It passes exactly seven " +
+		"flags and nothing else: --remote-debugging-port, --user-data-dir, " +
+		"--remote-allow-origins=*, --no-first-run, " +
+		"--no-default-browser-check, --disable-sync and " +
+		"--allow-browser-signin=false. The process is left RUNNING on " +
+		"purpose: that is the capability.",
+
+	"[--disable-sync, --allow-browser-signin=false]": "⚠️ s73's R4, and the " +
+		"rule that prevents the worst surprise. MEASURED 19 Oct 2026: a " +
+		"profile this program created, ONE HOUR OLD, held 10 extensions and " +
+		"106MB of them (Grammarly at 47.8MB), active Sync Data, 272KB of " +
+		"history and 184KB of autofill. Nothing here read a credential: " +
+		"signing in to ChatGPT with \"Continue with Google\" signed the " +
+		"BROWSER in as well, and sync pulled the account into a directory a " +
+		"LINK had created.\n" +
+		"⚠️ SO THE HONEST WARNING TO A USER IS: an SSO sign-in can bring " +
+		"account data with it. These two flags are the defence -- signin.allowed " +
+		"was measured as False with them and True without -- and a later " +
+		"throwaway profile came to 88MB against the earlier 356MB, which is " +
+		"the same finding from the other end.\n" +
+		"⚠️ VERIFIED AS A SETTING, NOT AS AN OUTCOME. No Google sign-in was " +
+		"attempted against the flags, so the claim is that Chrome records " +
+		"sign-in as disallowed, not that sync has been proven unreachable.",
 
 	"[--remote-allow-origins=*]": "⚠️ THE ONE AN AUDITOR SHOULD STOP ON. It " +
 		"tells Chrome to accept CDP websocket connections from ANY origin, " +
@@ -30,7 +49,26 @@ var Caveats = map[string]string{
 	"[http.Client]": "probes ONE url: GET http://127.0.0.1:<port>/json/version, " +
 		"on loopback only, with a timeout. ⚠️ It is a liveness probe and not " +
 		"evidence of authority: a browser answering on a port is not a " +
-		"browser signed in to anything.",
+		"browser signed in to anything.\n" +
+		"⚠️ AND IT IS NOT EVIDENCE OF IDENTITY EITHER, which is s73's R2. " +
+		"Until 20 Oct 2026 an answering port was accepted whatever was behind " +
+		"it, so `-port 9333 -profile chatgpt` reported ALREADY READY against " +
+		"a different browser entirely -- and on the machine where that was " +
+		"found, port 9222 held live work sessions. The reply's browser GUID " +
+		"is now matched against a marker this program wrote into the profile " +
+		"it launched, and a mismatch or a missing marker REFUSES, naming both " +
+		"sides. -accept-unverified overrides it and says so on every run.",
+
+	"[os.WriteFile: the profile marker]": "writes one small JSON file, " +
+		"`.chrome_ready.json`, INSIDE the profile it launched, holding the " +
+		"port, the browser's own GUID and the pid. That is the whole of R2's " +
+		"mechanism. It contains no credential and nothing about the user, and " +
+		"it lives inside the profile so deleting the profile deletes the " +
+		"claim. ⓘ The alternative was port-to-pid-to-command-line, rejected " +
+		"because CDP refuses it without --enable-automation (which makes the " +
+		"browser announce itself as automated) and because the TCP-table " +
+		"route would mean copying syscall struct layouts AGENTS names as the " +
+		"dangerous part.",
 
 	"[os.MkdirAll]": "creates ONE directory to hold the browser profile, " +
 		"mode 0755: the path the caller declared via -profile, or " +
@@ -65,8 +103,14 @@ var CaveatsNotReached = []string{
 		"there: it opens no websocket, evaluates no script and reads no tab. " +
 		"⚠️ Driving the browser is a DIFFERENT module's reach, and whichever " +
 		"one does it must declare it.",
-	"no credentials. It reads no cookie jar, no token and no password store, " +
-		"and the profile it creates starts empty.",
+	"⚠️ no credentials ARE READ, and that is a narrower claim than it looks. " +
+		"This program reads no cookie jar, no token and no password store, " +
+		"and the profile it creates starts empty. ⚠️ BUT A USER SIGNING IN " +
+		"CAN FILL IT: with \"Continue with Google\" the browser signs in " +
+		"too and sync brings extensions, history and autofill, measured on " +
+		"19 Oct 2026. R4's flags are the defence. The old wording here said " +
+		"only that the profile starts empty, which was true of the code and " +
+		"misleading about the outcome -- s56's failure shape in a new place.",
 	"no deletion, no writing outside the one profile directory, and no " +
 		"registry or COM.",
 	"no sqlite, and no reading of the user's main Chrome profile.",
@@ -80,7 +124,13 @@ var CaveatsNotReached = []string{
 // The ones that must stay ABSENT are named so their absence is asserted
 // rather than nobody noticing they arrived.
 var CaveatSurfaces = []string{
-	"exec.Command", "http.Client", "os.MkdirAll",
+	// ⚠️ os.WriteFile MOVED FROM THE ABSENT LIST TO THIS ONE on 20 Oct 2026,
+	// when R2's marker started using it. Caught because the file then
+	// declared the same surface both present (in Caveats) and forbidden
+	// (here), and an audit document that contradicts itself is worse than one
+	// that says nothing. Any surface added to the code must be moved here in
+	// the same change.
+	"exec.Command", "http.Client", "os.MkdirAll", "os.WriteFile",
 	// must stay absent
-	"database/sql", "syscall", "os.Remove", "os.WriteFile", "websocket",
+	"database/sql", "syscall", "os.Remove", "websocket",
 }

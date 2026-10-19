@@ -72,6 +72,7 @@
 | s70 | The seven top-level things, and the state of each | **MAPPED** 16 Oct 2026 | nothing |
 | s71 | The harness drifted when the handler changed, and the click window is now a choice | **FIXED and MEASURED** 17 Oct 2026 | nothing |
 | s72 | The ChatGPT full update is the priority capability, and it must be written HERE | **DECIDED** 18 Oct 2026: the priority. Not built | a decision to start, plus the small Python-side JSONL intake it needs |
+| s73 | A CDP capability needs a Chrome user-data-dir, and that is where shimp leaks into the user's machine | ⚠️ RULES DECIDED 20 Oct 2026, R2 and R4 to build. Raised because deployment was imminent | R2 and R4 in chrome_ready, then the same rules applied to any future CDP capability |
 ### s1. shimp is a connector folder like any other
 
 No repo reorganisation, no separate trust-root repository. `shimp/` sits beside
@@ -4259,3 +4260,74 @@ Worth separating before anything is built, because the two halves are not alike:
 | **the zip seed** | ⚠️ **barely.** It reads a file the user already downloaded from OpenAI, on their own disk, occasionally. A pin adds ceremony and removes no risk the user did not already accept by downloading it |
 
 So the seed belongs in the capability because the capability should handle both inputs. It is **not** an argument for a second link. ⓘ And it is the same shape of observation as the original one: only one half of what was asked for was ever friction.
+
+### s73. The Chrome profile is where shimp touches the user's machine, and the rules were nearly learned the hard way
+
+Raised 20 Oct 2026, because the owner said plainly: *"I plan to deploy shimps into the wild and I don't want any nasty surprises once they're out there."*
+Everything below is measured on one machine on one day, which is the point: all of it was found by accident while doing something else.
+
+#### The physics, which is Chrome's and not negotiable
+
+| | |
+|---|---|
+| one Chrome process per `--user-data-dir` | so each CDP port needs its own directory |
+| a `--user-data-dir` is a whole Chrome STATE TREE, not a profile | ML models, Safe Browsing lists, component cache, WASM engines, re-downloaded per directory |
+| ⚠️ so storage scales with the number of PORTS, not accounts | and the part actually wanted is about 80 KB of cookies |
+
+Measured, four CDP user-data-dirs on one machine:
+
+| directory | size |
+|---|---|
+| `C:\Temp\chrome_debug_profile` | **3,015 MB**, and inside it `Default` 1,919, `Profile 2` 244, `Profile 5` 151 |
+| `C:\Temp\chrome_sandbox_profile` | 265 MB |
+| `C:\Temp\chrome_checks_profile` | 232 MB |
+| the one created for this row's investigation | 356 MB, since deleted |
+
+ⓘ And `C:\Temp` is NOT the Windows temp directory. It is a directory the owner made, so the cleanup risk that `chrome_ready` was carrying never applied to the working setup. `chrome_ready` used `os.TempDir()`, which genuinely is `%LocalAppData%\Temp`, and that was a real defect fixed the same day.
+
+#### The four surprises, each measured rather than imagined
+
+**1. ⚠️ A LINK NAMING A PROFILE CAN SILENTLY DRIVE A DIFFERENT BROWSER.**
+`chrome_ready` probes the PORT and never consults `-profile`.
+Demonstrated: `-port 9333 -profile chatgpt` reported `ALREADY READY` against `chrome_checks_profile`.
+In the wild a link saying `-port 9222` attaches to whatever the recipient already runs there, and the capability then drives their working browser.
+On the machine this was found, port 9222 held live dataannotation, ClickUp and Slack sessions.
+
+**2. ⚠️ GOOGLE SSO CONVERTS A MINIMAL PROFILE INTO AN ACCOUNT COPY.**
+A profile one hour old held 10 extensions and 106 MB of them, including Grammarly at 47.8 MB, plus active `Sync Data`, 272 KB of history and 184 KB of autofill.
+A recipient clicking "capture my ChatGPT" and signing in with Google gets their extensions and history pulled into a directory the capability created.
+⚠️ And `caveats.go` said the profile *"starts empty"* and the module *"reads no cookie jar, no token and no password store"*. Both are true of the CODE and both mislead about the OUTCOME, which is the s56 failure shape in a new place.
+
+**3. ⚠️ A PATH IN A LINK BREAKS THE LINK.**
+Identity is the sha256 of the URI bytes (s44), so `-profile C:\Users\<name>\...` makes one person's link a different capability from another's, and leaks a username into a payload meant to be pasted around.
+
+**4. ⚠️ `--remote-allow-origins=*`** means any page that can reach the port can drive that browser, on a machine where it holds a live account session.
+
+#### The rules
+
+| | rule |
+|---|---|
+| **R1** | A link carries a profile NAME, never a path. The capability declares the name-to-path mapping in `caveats.go`, so it is auditable even though the caller did not choose it. This is the honest reading of "declared, never allocated": the caller declares the name and the capability declares the mapping |
+| **R2** | ⚠️ VERIFY THE PROFILE, NOT JUST THE PORT. If something answers, confirm it is the directory asked for and REFUSE naming both if not |
+| **R3** | Report size and location when a profile is created, and provide a way to list and remove them. Nothing does this today, which is how 3.9 GB accumulated unnoticed |
+| **R4** | ⚠️ SUPPRESS SYNC AT LAUNCH, and state in the caveats that an SSO sign-in brings account data |
+| **R5** | Drop `--remote-allow-origins=*` or scope it to what needs it |
+| **R6** | Say plainly when the recipient's own Chrome holds the directory. That is a guaranteed failure mode, not an edge case |
+
+#### How R2 is actually implementable, which was not obvious
+
+The CDP route is closed. `Browser.getBrowserCommandLine` on a live instance returns:
+
+    {"error":{"code":-32000,"message":"Command line not returned because --enable-automation not set."}}
+
+⚠️ And passing `--enable-automation` is the wrong trade: it makes the browser announce itself as automated through `navigator.webdriver` and the infobar, which a site like ChatGPT may act on.
+
+So R2 is done LOCALLY: map the port to its owning process, then read that process's command line for `--user-data-dir`.
+ⓘ `chrome_sessions/owner_windows.go` already maps a port to an owning PID by reading the TCP table through `iphlpapi`, which it chose over parsing `netstat`.
+That makes R2 a SECOND CONSUMER of that code, so s13's extraction trigger has now fired a third time in two days.
+
+#### What this row does not settle
+
+⚠️ Whether modern Chrome refuses `--remote-debugging-port` on the DEFAULT profile. Chrome 155.0.8059.41 is installed and the restriction is believed to apply, for the sound reason that a process able to enable debugging on a signed-in profile can read its cookies. It could not be TESTED, because testing means launching Chrome against the live profile and disturbing the session being measured. Not to be quoted as measured until a machine with Chrome closed is available.
+
+⚠️ And the lifecycle question is open: the capability leaves Chrome RUNNING, which is the capability, and nothing closes it or removes a profile. s46's one-instance-per-session guarantee describes the handler, not the browsers a capability starts.

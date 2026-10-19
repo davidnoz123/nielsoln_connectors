@@ -29,4 +29,4 @@
 {"line_separator":"a\u2028b","para_separator":"c\u2029d"}
 {"del_char":"x\u007fy"}
 {"short_escapes":"a\bb\fc\rd"}
-{"schema_version":1,"machine_id":"laptop-hb3igvlu","exported_at":1792373986.6971858,"conversations":[{"id":"c1","title":"x & y","create_time":1700000000.0,"update_time":1700000000.5,"model":null,"raw_json":"{\"a\":1}"}],"messages":[{"id":"m1","conversation_id":"c1","role":"user","content":"hi","create_time":1700000000.0,"turn_index":0,"source":"zip"}],"scraped_sessions":[],"blobs":[],"deleted_sessions":[]}
+{"schema_version":1,"machine_id":"machine_example","exported_at":1792373986.6971858,"conversations":[{"id":"c1","title":"x & y","create_time":1700000000.0,"update_time":1700000000.5,"model":null,"raw_json":"{\"a\":1}"}],"messages":[{"id":"m1","conversation_id":"c1","role":"user","content":"hi","create_time":1700000000.0,"turn_index":0,"source":"zip"}],"scraped_sessions":[],"blobs":[],"deleted_sessions":[]}

@@ -137,7 +137,7 @@ func TestLiveInstallCycle(t *testing.T) {
 	}
 
 	// -- install, driven as a user would
-	if _, err := run(t, exe, "install", "-scheme", testScheme); err != nil {
+	if _, err := run(t, exe, "reinstall", "-scheme", testScheme); err != nil {
 		t.Fatalf("live install failed: %v", err)
 	}
 	st, err := readStamp()
@@ -267,7 +267,7 @@ func TestPurgeCannotDeleteItselfAndSaysSo(t *testing.T) {
 	if out, err := exec.Command("go", "build", "-o", exe, ".").CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
-	if _, err := run(t, exe, "install", "-scheme", sch); err != nil {
+	if _, err := run(t, exe, "reinstall", "-scheme", sch); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 

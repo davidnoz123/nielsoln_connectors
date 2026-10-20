@@ -47,3 +47,12 @@ func allocConsole() error {
 			"per-desktop-environment and is the work this would need",
 		runtime.GOOS)
 }
+
+// speakToTerminal is a no-op off Windows: a process there already has stdout.
+//
+// ⚠️ The catch-all file is not optional, and this is why: the Windows build
+// needs it for GUI-subsystem CLI verbs, and every other platform needs the
+// symbol to exist. It says what it cannot do rather than returning a value
+// that reads as an answer -- there is nothing to attach to and nothing
+// missing.
+func speakToTerminal() (allocated bool) { return false }

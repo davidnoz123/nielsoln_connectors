@@ -32,6 +32,9 @@ var (
 	// every symbol this program prints arrives mangled until this is called.
 	// Measured: codepage 437 on the machine this was written for.
 	procSetConsoleOutputCP = kernel32.NewProc("SetConsoleOutputCP")
+	// ⚠️ How a GUI-subsystem binary speaks into the terminal it was
+	// typed in, rather than a new window that flashes and vanishes.
+	procAttachConsole = kernel32.NewProc("AttachConsole")
 
 	user32                  = syscall.NewLazyDLL("user32.dll")
 	procIsWindowVisible     = user32.NewProc("IsWindowVisible")
@@ -106,3 +109,94 @@ func allocConsole() error {
 // like a handle or a flag. A console allocated without it shows this repo's
 // ⚠️ and ⓘ markers as mojibake, measured on a codepage-437 console.
 const cpUTF8 = 65001
+
+// attachParentConsole is -1, ATTACH_PARENT_PROCESS.
+//
+// ⚠️ Named because -1 passed to a syscall reads like an error return.
+const attachParentConsole = ^uintptr(0) // (DWORD)-1
+
+// speakToTerminal makes a GUI-subsystem process able to print.
+//
+// # ⚠️ THE DEFECT THIS FIXES, AND IT WAS FOUND THE HARD WAY
+//
+// The handler is installed with -ldflags "-H=windowsgui" so that a CLICK does
+// not raise a console window. That is right for clicks and WRONG for the
+// verbs a human types: `install`, `verify`, `uninstall`. A GUI-subsystem
+// process has no stdout, so those verbs were MUTE.
+//
+// Measured 20 Oct 2026: an install that refused -- correctly, because
+// replacing the trust root needs -replace -- printed a careful message naming
+// both versions and the exact flag to pass, and the user saw only:
+//
+//	exit status 1
+//
+// ⚠️ The message was good. It was invisible. And `install` is the one command
+// in this program always run from a terminal, so it is the worst possible
+// place to have no output.
+//
+// # WHY ATTACH BEFORE ALLOCATE
+//
+// AllocConsole would also make the process able to print, but into a NEW
+// WINDOW that appears and vanishes -- the flash problem this repo keeps
+// fixing. AttachConsole(ATTACH_PARENT_PROCESS) instead borrows the terminal
+// the user actually typed in, so output lands where they are looking.
+//
+// ⓘ Falls back to AllocConsole for the no-parent-console case (launched from
+// Explorer, say), because printing into a new window beats not printing.
+// Returns whether a NEW console was created, so a caller can decide to hold
+// it open rather than let the window vanish with the process.
+func speakToTerminal() (allocated bool) {
+	if hasConsole() {
+		return false // console-subsystem build, or already attached
+	}
+	if r, _, _ := procAttachConsole.Call(attachParentConsole); r != 0 {
+		bindStdio()
+		return false
+	}
+	if err := allocConsole(); err != nil {
+		return false
+	}
+	return true
+}
+
+// bindStdio points os.Stdout and os.Stderr at the console device.
+//
+// ⚠️ NOT OPTIONAL AFTER ATTACHING, for the same reason allocConsole says it is
+// not optional after allocating: attaching gives the process a console and
+// leaves the existing handles bound to whatever they pointed at before, which
+// for a GUI-subsystem binary is nothing. The result would be a program that
+// looks like it printed and did not.
+func bindStdio() {
+	procSetConsoleOutputCP.Call(uintptr(cpUTF8))
+
+	// ⚠️ PREFER THE INHERITED HANDLE OVER CONOUT$, AND THE ORDER MATTERS.
+	//
+	// CONOUT$ is the console DEVICE. Writing there reaches the console window
+	// and BYPASSES any redirection, so `shimp verify > log.txt` would leave
+	// an empty file while the text scrolled past in the terminal. Measured
+	// while testing this very fix: piping the output to `head` showed
+	// nothing, because there was nothing in the pipe.
+	//
+	// A GUI-subsystem process gets no standard handles of its own, but cmd.exe
+	// DOES pass them when the caller redirects. So: if a real handle was
+	// inherited, use it -- that makes `>` and `|` work. Only when there is
+	// none (a bare console invocation) fall back to the device.
+	if h, _, _ := procGetStdHandle.Call(uintptr(stdOutputHandle)); h != 0 &&
+		h != invalidHandle {
+		f := os.NewFile(h, "stdout")
+		os.Stdout, os.Stderr = f, f
+		return
+	}
+	if out, err := os.OpenFile("CONOUT$", os.O_WRONLY, 0); err == nil {
+		os.Stdout, os.Stderr = out, out
+	}
+}
+
+// stdOutputHandle is STD_OUTPUT_HANDLE, invalidHandle is INVALID_HANDLE_VALUE.
+//
+// ⓘ Both named, because -11 and -1 in a syscall are indistinguishable from
+// mistakes at a glance.
+const (
+	stdOutputHandle = ^uintptr(10) // (DWORD)-11
+	invalidHandle   = ^uintptr(0)  // (HANDLE)-1
+)

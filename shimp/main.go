@@ -339,10 +339,18 @@ func useScheme(s string) error {
 func usage() {
 	fmt.Fprintf(out, `shimp -- SHIMP/1 handler: install, plus one-shot dispatch
 
-  shimp install [-replace] [-scheme NAME]
+  shimp reinstall [-scheme NAME]
   shimp uninstall [-purge] [-scheme NAME]
   shimp verify [-scheme NAME]
   shimp version [-audit]
+
+reinstall is the only install verb, and it is idempotent: on a clean machine
+it installs, and over an existing handler it replaces and REPORTS the version
+transition. There is no "install" verb and no -replace flag. The old pair
+refused a different version unless a flag was passed, which stopped nobody --
+anyone who could run install could pass the flag -- and the refusal was
+invisible on a GUI-subsystem build. The verb name is the consent; verify is
+where the assurance lives, because it reports the installed sha256.
 
 -scheme installs under a DIFFERENT scheme, which is how a test installation
 is kept away from a working one: separate registry class, separate home,
@@ -398,19 +406,59 @@ func main() {
 				"Office key, and a different identity hash (s44)")
 	}
 
+	// ⚠️ MAKE THE TYPED VERBS ABLE TO PRINT, BEFORE ANY OF THEM RUNS.
+	//
+	// The handler is installed GUI-subsystem so a CLICK raises no console
+	// window. A GUI-subsystem process has no stdout, so every verb a human
+	// types was MUTE -- and `install` is the one always run from a terminal.
+	//
+	// Measured 20 Oct 2026: an install correctly refused to replace the trust
+	// root, printed a message naming both versions and the exact flag to
+	// pass, and the user saw `exit status 1` and nothing else. The message
+	// was good and invisible.
+	//
+	// ⓘ A click does NOT come through here: onClick has its own path, and
+	// consent allocates its own console deliberately. So this buys the typed
+	// verbs their output without giving a click a window.
+	if verb != "" {
+		if allocated := speakToTerminal(); allocated {
+			// A new window was created rather than the parent's borrowed, so
+			// it will vanish with the process unless held.
+			defer waitForKeyOrTimeout(holdSeconds * time.Second)
+		}
+	}
+
 	switch verb {
-	case "install":
-		fs := flag.NewFlagSet("install", flag.ExitOnError)
-		replace := fs.Bool("replace", false,
-			"replace an installation from a different version. Refused "+
-				"without this, because the handler is the trust root (s20)")
+	// ⚠️ ONE VERB, AND `install` AND `install -replace` ARE BOTH GONE.
+	//
+	// The refusal they existed for looked protective and was not. The handler
+	// IS the trust root, so "refuse to replace it" reads as a safeguard --
+	// but it stopped nobody: anyone who could type `install` could type
+	// `install -replace`. It bought an obstruction and no assurance.
+	//
+	// ⚠️ And on 20 Oct 2026 it bought an INVISIBLE obstruction. A
+	// GUI-subsystem handler has no stdout, so the refusal -- which named both
+	// versions and the exact flag to pass -- printed nowhere, and the user
+	// saw `exit status 1`. The flag was discoverable only in the message that
+	// could not be seen.
+	//
+	// ⓘ The assurance lives in `verify`, which prints the installed sha256 so
+	// a human can check WHAT is installed. That is a question worth
+	// answering; "may I replace it" was not, because the verb name is the
+	// consent. Nobody types `reinstall` by accident.
+	//
+	// It is idempotent: on a clean machine it is simply an install, and it
+	// says so. ⓘ The version transition the old refusal reported is KEPT and
+	// printed, because that was genuinely useful -- just not worth blocking.
+	case "reinstall":
+		fs := flag.NewFlagSet("reinstall", flag.ExitOnError)
 		s := withScheme(fs)
 		_ = fs.Parse(rest)
 		if err := useScheme(*s); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
 		}
-		os.Exit(cmdInstall(*replace))
+		os.Exit(cmdInstall(true))
 	case "uninstall":
 		fs := flag.NewFlagSet("uninstall", flag.ExitOnError)
 		purge := fs.Bool("purge", false,

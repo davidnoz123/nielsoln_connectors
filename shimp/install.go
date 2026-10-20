@@ -104,22 +104,37 @@ func cmdInstall(replace bool) int {
 
 	me := provenance()
 
-	// ⚠️ The handler is never silently replaced, s20, because it is the trust
-	// root. A DIFFERENT version is refused; the SAME version is allowed
-	// through, so that re-running the documented install line is idempotent
-	// rather than an error a user has to think about.
+	// ⚠️ THE TRANSITION IS REPORTED, NOT REFUSED, and that is a reversal.
+	//
+	// This used to refuse a DIFFERENT version unless -replace was passed, on
+	// the grounds that the handler is the trust root (s20). The refusal
+	// stopped nobody -- anyone who could run install could pass the flag --
+	// and on 20 Oct 2026 a GUI-subsystem handler made it INVISIBLE: the
+	// message named both versions and the flag to use, and the user saw only
+	// `exit status 1`.
+	//
+	// ⓘ So the verb became `reinstall`, whose NAME is the consent, and the
+	// information the refusal carried is printed instead. The assurance it
+	// pretended to give lives in `verify`, which reports the installed
+	// sha256 -- the question actually worth answering.
+	//
+	// `replace` is now always true from the only caller, kept as a parameter
+	// so the change is visible at the call site rather than silently welded
+	// shut here.
 	if old, err := readStamp(); err == nil {
-		if old.Version != me.Version && !replace {
-			msg := fmt.Sprintf("refusing to replace the installed handler. "+
-				"Installed: %s. This one: %s. The handler is the trust root, "+
-				"so pass -replace if that is what you mean.",
+		if old.Version != me.Version {
+			_log("reinstall: %s -> %s", old.Version, me.Version)
+			fmt.Fprintf(os.Stdout, "reinstall: %s\n        -> %s\n",
 				old.Version, me.Version)
-			_log("install REFUSED: %s", msg)
-			fmt.Fprintln(os.Stderr, msg)
-			return 1
+		} else {
+			_log("reinstall: same version %s, replacing in place", me.Version)
+			fmt.Fprintf(os.Stdout, "reinstall: same version %s\n", me.Version)
 		}
-		_log("install: replacing %s with %s", old.Version, me.Version)
+	} else {
+		_log("reinstall: nothing installed, so this is a first install")
+		fmt.Fprintln(os.Stdout, "reinstall: nothing was installed, so this is a first install")
 	}
+	_ = replace
 
 	// s7: what gets registered is a PERMANENT binary, never `go run`.
 	// Measured, same program, module already cached: go run 649ms and 653ms
@@ -197,7 +212,7 @@ func cmdInstall(replace bool) int {
 			msg := "this handler is " + subsystemName(sub) + "-subsystem, so " +
 				"Windows will raise a console window on EVERY click, in the " +
 				"foreground. To avoid it, reinstall with:\n  go run " +
-				"-ldflags \"-H=windowsgui\" <module>@<sha> install"
+				"-ldflags \"-H=windowsgui\" <module>@<sha> reinstall"
 			_log("install WARNING: %s", msg)
 			fmt.Fprintf(os.Stderr, "\nWARNING: %s\n", msg)
 		}
@@ -321,7 +336,7 @@ func cmdVerify() int {
 			note(false, "subsystem", fmt.Sprintf(
 				"%s. Windows gives a %s-subsystem handler a console on EVERY "+
 					"click, visible and in the foreground. Reinstall with: "+
-					"go run -ldflags \"-H=windowsgui\" <module>@<sha> install",
+					"go run -ldflags \"-H=windowsgui\" <module>@<sha> reinstall",
 				subsystemName(sub), subsystemName(sub)))
 		}
 	}

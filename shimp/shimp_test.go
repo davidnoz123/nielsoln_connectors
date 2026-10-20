@@ -291,7 +291,7 @@ func TestInstallClaimsEverythingItShould(t *testing.T) {
 	}
 }
 
-func TestInstallRefusesToReplaceSilently(t *testing.T) {
+func TestReinstallReplacesAndReports(t *testing.T) {
 	withTempHome(t)
 	f := newFake(t)
 	claimsFor = func() (claims, error) { return f, nil }
@@ -310,19 +310,27 @@ func TestInstallRefusesToReplaceSilently(t *testing.T) {
 			"documented one-line install non-idempotent", rc)
 	}
 
-	// A DIFFERENT version is refused, because the handler is the trust root.
+	// ⚠️ A DIFFERENT VERSION IS NOW REPLACED AND REPORTED, NOT REFUSED, and
+	// this test was defending the old behaviour until 20 Oct 2026.
+	//
+	// It used to assert that cmdInstall(false) FAILED on a version change,
+	// because the handler is the trust root (s20). The refusal stopped
+	// nobody -- anyone who could run install could pass -replace -- and on a
+	// GUI-subsystem build the message explaining the flag was invisible, so
+	// the user saw `exit status 1` and nothing else.
+	//
+	// ⓘ The verb is now `reinstall`, whose name is the consent, and the
+	// version transition is PRINTED. `verify` is where the assurance lives,
+	// because it reports the installed sha256 -- which is the question worth
+	// answering about a trust root.
 	st, _ := readStamp()
 	st.Version = "v0.0.0-some-other-handler"
 	if err := writeStamp(st); err != nil {
 		t.Fatal(err)
 	}
-	if rc := cmdInstall(false); rc == 0 {
-		t.Fatal("install replaced a different handler version without " +
-			"-replace. s20: the handler is never silently replaced.")
-	}
 	if rc := cmdInstall(true); rc != 0 {
-		t.Fatalf("install -replace returned %d, so there is no way to "+
-			"legitimately upgrade", rc)
+		t.Fatalf("reinstall over a different version returned %d, so there "+
+			"is no way to upgrade the handler at all", rc)
 	}
 }
 

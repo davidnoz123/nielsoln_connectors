@@ -48,10 +48,16 @@ var recipes = []Recipe{
 			"isolated scheme, trigger, poll the handler's log, purge",
 		Sites: []string{
 			"shimp/live_test.go",
-			"linkprobe/main.go",
+			// ⓘ corpus_run.go, NOT main.go. This said main.go and was wrong
+			// before the `install` -> `reinstall` rename, which is what
+			// surfaced it: the marker check looked for a verb in a file that
+			// had never contained one. A recipe naming the wrong site is a
+			// declaration nobody can check, which is the failure this whole
+			// baseline exists to prevent.
+			"linkprobe/corpus_run.go",
 		},
 		Markers: []string{
-			"go", "build", "install", "-purge", "-scheme",
+			"go", "build", "reinstall", "-purge", "-scheme",
 		},
 		// ⚠️ AND SHARING IT WOULD BE WORSE, which is the whole reason this
 		// entry exists rather than a shared package.

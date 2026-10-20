@@ -42,7 +42,7 @@ func buildAndInstall(root, work, scheme string, windowsGUI bool) (string, error)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("building shimp failed: %v\n%s", err, out)
 	}
-	if out, err := exec.Command(exe, "install", "-scheme", scheme).
+	if out, err := exec.Command(exe, "reinstall", "-scheme", scheme).
 		CombinedOutput(); err != nil {
 		return "", fmt.Errorf("install -scheme %s failed: %v\n%s", scheme, err, out)
 	}

@@ -7,6 +7,18 @@
 // which nothing runs. The apparatus was on the wrong module for five days.
 // Recorded here rather than quietly fixed, because the lesson is the ordering:
 // the audit surface belongs on whatever a link names, first.
+//
+// # WHAT AN AUDITOR SHOULD UNDERSTAND THIS MODULE TO BE
+//
+// It ensures an authenticated browser on a declared port, FOR ANY SITE. It is
+// not a ChatGPT accessory, and this file read like one until 20 Oct 2026: the
+// profile measured on the machine it was written for carried ClickUp,
+// DataAnnotation, Slack and iCloud sessions simultaneously.
+//
+// ⚠️ THAT WIDENS WHAT IS AT STAKE RATHER THAN NARROWING IT. The directory this
+// program creates can come to hold every session its user signs in to, so the
+// absences below -- no cookie reading, no credential store, no profile copying
+// -- are load-bearing for all of them at once, not for one account.
 package main
 
 // Caveats is what an auditor should be told, keyed by the surface reached.
@@ -25,9 +37,10 @@ var Caveats = map[string]string{
 		"profile this program created, ONE HOUR OLD, held 10 extensions and " +
 		"106MB of them (Grammarly at 47.8MB), active Sync Data, 272KB of " +
 		"history and 184KB of autofill. Nothing here read a credential: " +
-		"signing in to ChatGPT with \"Continue with Google\" signed the " +
+		"signing in to A SITE with \"Continue with Google\" signed the " +
 		"BROWSER in as well, and sync pulled the account into a directory a " +
-		"LINK had created.\n" +
+		"LINK had created. ⓘ The site measured happened to be ChatGPT; the " +
+		"mechanism is Google SSO and applies to any of them.\n" +
 		"⚠️ SO THE HONEST WARNING TO A USER IS: an SSO sign-in can bring " +
 		"account data with it. These two flags are the defence -- signin.allowed " +
 		"was measured as False with them and True without -- and a later " +

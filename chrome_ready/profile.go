@@ -3,14 +3,20 @@
 //
 // # THE DEFECT THIS FIXES
 //
-// ⚠️ THE PROFILE WAS UNDER os.TempDir(). The stated goal of the whole
-// capability is "a CDP Chrome with MY profile so I automatically access my
-// ChatGPT account", and a profile in the temp directory delivers the opposite:
-// a sign-in that works, persists for a while, and then vanishes on a disk
-// cleanup with no symptom except a capture that suddenly finds an empty
-// account. Found on 19 Oct 2026 while writing caveats.go, which is an argument
-// for writing caveats: describing a reach honestly meant reading what it
-// actually touched.
+// ⚠️ THE PROFILE WAS UNDER os.TempDir(). The point of this capability is a
+// browser already signed in to whatever the user uses it for, and a profile
+// in the temp directory delivers the opposite: a sign-in that works, persists
+// for a while, and then vanishes on a disk cleanup with no symptom except a
+// capability that suddenly finds an empty account.
+//
+// ⚠️ AND THE LOSS IS NOT ONE SITE'S. A profile holds every session on it --
+// the one measured on this machine carried ClickUp, DataAnnotation, Slack and
+// iCloud -- so a cleanup signs the user out of all of them at once, which is
+// the difference between an annoyance and a day.
+//
+// Found on 19 Oct 2026 while writing caveats.go, which is an argument for
+// writing caveats: describing a reach honestly meant reading what it actually
+// touched.
 //
 // # WHY NOT CHROME'S OWN DEFAULT PROFILE, WHICH WOULD NEED NO SIGN-IN
 //

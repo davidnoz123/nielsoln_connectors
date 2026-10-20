@@ -1,13 +1,30 @@
 // chrome_ready -- ensure a CDP-enabled Chrome is answering on a port.
 //
 //	go run github.com/davidnoz123/nielsoln_connectors/chrome_ready@<sha> \
-//	    -port 9222 -profile chrome_debug_profile
+//	    -port 9222 -profile <user_name>
 //
-// THE FIRST SHIMP CAPABILITY, and it was chosen because it is the first half
-// of what the user actually asked for: "make sure a CDP is open with my
-// profile so I automatically access my ChatGPT account". The scraping half
-// already exists in chatgpt_tools and needs no help; this is the part that
-// was a wish.
+// # WHAT IT IS FOR, AND IT IS NOT ONE SITE
+//
+// It ensures an authenticated browser exists on a declared port, for ANY site
+// the user has signed in to. ⚠️ ONE PROFILE PER PERSON, NOT PER SITE, and the
+// machine this was written on already proved why: the profile on port 9222
+// holds live ClickUp, DataAnnotation, Slack and iCloud sessions at once.
+//
+// That is not a convenience, it is forced and then free. Chrome allows one
+// process per `--user-data-dir`, so a profile per site would mean a browser
+// per site and 100-350 MB of Chrome state tree EACH, measured 20 Oct 2026.
+// And nothing is gained by separating them: cookies are per-origin already.
+//
+// ⓘ So `-profile` names a PERSON or an account, never a site. A link meant to
+// be handed to other people should omit it entirely and take the `default`,
+// which keeps one set of URI bytes and therefore one identity (s44).
+//
+// ⓘ PROVENANCE, kept because it explains the shape rather than the scope:
+// this was the first shimp capability, chosen as the first half of a specific
+// request -- "make sure a CDP is open with my profile so I automatically
+// access my ChatGPT account". ⚠️ The ChatGPT half of that was the ASKING
+// context, not the limit of the capability, and this header said otherwise
+// until 20 Oct 2026.
 //
 // ⚠️ A ONE-SHOT, DELIBERATELY. s46's three classes: this probes, possibly
 // launches, reports and exits. It holds no lock, keeps no state and needs
@@ -191,9 +208,10 @@ func main() {
 		// MEASURED 19 Oct 2026: a profile this program created, one hour old,
 		// held 10 extensions and 106MB of them (Grammarly at 47.8MB), active
 		// Sync Data, 272KB of history and 184KB of autofill. Nothing read a
-		// credential: signing in to ChatGPT with "Continue with Google"
-		// signed the BROWSER in too, and sync pulled the account down into a
-		// directory a link had created.
+		// credential: signing in to A SITE with "Continue with Google" signed
+		// the BROWSER in too, and sync pulled the account down into a
+		// directory a link had created. ⓘ The site measured happened to be
+		// ChatGPT; the mechanism is Google SSO and applies to any of them.
 		//
 		// --disable-sync stops the data flowing; --allow-browser-signin=false
 		// stops the browser sign-in that starts it. Both, because the first

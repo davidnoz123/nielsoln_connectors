@@ -80,6 +80,25 @@ func ownConsole() (syscall.Handle, error) {
 	if r, _, err := procAllocConsole.Call(); r == 0 {
 		return 0, fmt.Errorf("AllocConsole: %w", err)
 	}
+
+	// ⚠️ UTF-8 ON THE NEW CONSOLE, OR EVERY SYMBOL WE PRINT IS MOJIBAKE.
+	// A fresh console inherits the system OEM codepage -- measured 437 on the
+	// machine this was written for -- and Go writes UTF-8. So the first real
+	// click produced:
+	//
+	//	Γôÿ the Go toolchain fetches and compiles first ...
+	//	ΓÜá∩╕Å UNVERIFIED, and accepted only because ...
+	//
+	// ⚠️ THAT IS NOT COSMETIC. The ⚠️ and ⓘ markers are how this repo
+	// distinguishes a warning from an aside, and the refusal messages R2 and
+	// R6 produce are the ones a user most needs to read. Mangling them makes
+	// the careful wording worse than plain text would have been.
+	//
+	// The error is ignored on purpose: a console that will not take UTF-8 is
+	// still a usable console, and failing the consent prompt over a codepage
+	// would trade a cosmetic fault for a functional one.
+	procSetConsoleOutputCP.Call(uintptr(cpUTF8))
+
 	// Output rebound to the NEW console. AllocConsole alone leaves a window
 	// that stays empty, which console_windows.go already records.
 	co, err := os.OpenFile("CONOUT$", os.O_WRONLY, 0)

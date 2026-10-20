@@ -28,6 +28,10 @@ var (
 	kernel32             = syscall.NewLazyDLL("kernel32.dll")
 	procGetConsoleWindow = kernel32.NewProc("GetConsoleWindow")
 	procAllocConsole     = kernel32.NewProc("AllocConsole")
+	// ⚠️ A fresh console inherits the system OEM codepage, not UTF-8, so
+	// every symbol this program prints arrives mangled until this is called.
+	// Measured: codepage 437 on the machine this was written for.
+	procSetConsoleOutputCP = kernel32.NewProc("SetConsoleOutputCP")
 
 	user32                  = syscall.NewLazyDLL("user32.dll")
 	procIsWindowVisible     = user32.NewProc("IsWindowVisible")
@@ -83,6 +87,11 @@ func allocConsole() error {
 	if r, _, err := procAllocConsole.Call(); r == 0 {
 		return err
 	}
+	// ⚠️ THE SAME UTF-8 CALL AS consent_windows.go, and it is needed in BOTH
+	// because there are two places that allocate a console. Fixing only the
+	// consent path would leave the refusal messages mangled, which are the
+	// ones a reader most needs. Error ignored for the reason given there.
+	procSetConsoleOutputCP.Call(uintptr(cpUTF8))
 	out, err := os.OpenFile("CONOUT$", os.O_WRONLY, 0)
 	if err != nil {
 		return err
@@ -90,3 +99,10 @@ func allocConsole() error {
 	os.Stdout, os.Stderr = out, out
 	return nil
 }
+
+// cpUTF8 is CP_UTF8, the codepage identifier for UTF-8.
+//
+// ⚠️ Named rather than inlined, because 65001 on its own in a syscall reads
+// like a handle or a flag. A console allocated without it shows this repo's
+// ⚠️ and ⓘ markers as mojibake, measured on a codepage-437 console.
+const cpUTF8 = 65001

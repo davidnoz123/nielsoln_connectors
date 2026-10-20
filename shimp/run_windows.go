@@ -25,6 +25,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
@@ -126,9 +127,10 @@ func runLink(u *URI) int {
 	// This is the last thing that runs before the toolchain takes over, so it
 	// is the only place the wait can be explained.
 	//
-	// ⓘ No ticking heartbeat, deliberately: the child inherits this stdout,
-	// so a tick could land in the middle of a line the capability was
-	// writing, and nothing here can see when the child starts to speak.
+	// ⓘ AND A HEARTBEAT NOW DOES EXIST, below. This comment said there was
+	// deliberately none, on the grounds that a tick could interleave with the
+	// child's output. That objection was real and piping removed it; the
+	// comment is corrected rather than left to contradict the code.
 	fmt.Fprintf(os.Stdout, "\n  running  %s\n", strings.Join(argv, " "))
 	fmt.Fprintf(os.Stdout,
 		"  ⓘ the Go toolchain fetches and compiles first. A first run of a "+
@@ -137,13 +139,39 @@ func runLink(u *URI) int {
 			"pause here is expected, not a hang.\n\n")
 
 	cmd := exec.Command(argv[0], argv[1:]...)
-	// ⚠️ INHERITED, so the user watches it work. The alternative is capturing
-	// and replaying, which hides a long fetch: s49 measured `go run
-	// module@sha` at 27.4s cold, and a window showing nothing for half a
-	// minute is the flash problem again at a larger scale.
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	err := cmd.Run()
+	// ⚠️ PIPED AND RELAYED RATHER THAN INHERITED, so a heartbeat is possible.
+	//
+	// s49 chose inheritance because capturing output "hides a long fetch", and
+	// that reasoning was right about CAPTURING. Relaying line by line hides
+	// nothing: every byte still reaches the console, in order, as it arrives.
+	//
+	// What inheritance made impossible was knowing WHEN the child starts to
+	// speak -- and without that, a ticking progress line could land in the
+	// middle of a line the capability was writing. I used that as the reason
+	// not to have one. ⚠️ The owner's first real click was silent for 25
+	// seconds and he said so, which is better evidence than my argument: the
+	// objection was to interleaving, and piping removes it rather than
+	// trading it away.
+	//
+	// Safe for a Go child specifically: writes to os.Stdout are unbuffered,
+	// so relaying does not delay anything. A child that block-buffers when
+	// its stdout is not a terminal would appear later than it does now, and
+	// that is a real limit of this approach rather than a hidden one.
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return 1
+	}
+	cmd.Stderr = cmd.Stdout
+	if err := cmd.Start(); err != nil {
+		_log("click: cannot start: %v", err)
+		fmt.Fprintf(os.Stdout, "\n  FAILED to start: %v\n", err)
+		return 1
+	}
+
+	spoke := make(chan struct{})
+	go heartbeat(spoke)
+	relay(stdout, spoke)
+	err = cmd.Wait()
 
 	code := 0
 	if err != nil {
@@ -161,3 +189,75 @@ func runLink(u *URI) int {
 	waitForKeyOrTimeout(holdSeconds * time.Second)
 	return code
 }
+
+// heartbeat prints elapsed seconds until the child says something.
+//
+// ⚠️ IT STOPS AT THE FIRST BYTE, which is the whole design. Ticking alongside
+// the capability's own output would be noise competing with the thing the user
+// is trying to read; ticking only into silence is information.
+//
+// The first tick waits `firstTick` rather than firing immediately, so a warm
+// run -- measured at 1 to 5 seconds for a SHA already in the module cache --
+// usually prints nothing at all. A progress line on a fast run is clutter.
+func heartbeat(spoke <-chan struct{}) {
+	start := time.Now()
+	t := time.NewTicker(tickEvery)
+	defer t.Stop()
+	first := time.NewTimer(firstTick)
+	defer first.Stop()
+
+	select {
+	case <-spoke:
+		return
+	case <-first.C:
+	}
+	fmt.Fprintf(os.Stdout, "  ... still working, %ds elapsed. The Go "+
+		"toolchain is fetching or compiling.\n", int(time.Since(start).Seconds()))
+	for {
+		select {
+		case <-spoke:
+			return
+		case <-t.C:
+			fmt.Fprintf(os.Stdout, "  ... %ds\n",
+				int(time.Since(start).Seconds()))
+		}
+	}
+}
+
+// relay copies the child's output through, closing spoke on the first byte.
+//
+// ⚠️ Copied in SMALL READS rather than with io.Copy, because io.Copy would
+// not tell us when the first byte arrived without wrapping the reader anyway,
+// and the wrapper is the only thing this function is for.
+func relay(r io.Reader, spoke chan struct{}) {
+	buf := make([]byte, 4096)
+	closed := false
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			if !closed {
+				// Stop the heartbeat BEFORE writing, so a tick cannot land
+				// between here and the first line of real output.
+				close(spoke)
+				closed = true
+			}
+			os.Stdout.Write(buf[:n])
+		}
+		if err != nil {
+			if !closed {
+				close(spoke)
+			}
+			return
+		}
+	}
+}
+
+// firstTick and tickEvery pace the heartbeat.
+//
+// ⚠️ MEASURED, not chosen for feel. s49 put `go run module@sha` at 24-27s
+// cold and 1.1-4.8s warm, so a first tick at 4s stays silent through almost
+// every warm run and speaks early in a cold one.
+const (
+	firstTick = 4 * time.Second
+	tickEvery = 5 * time.Second
+)
